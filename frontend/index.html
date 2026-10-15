@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Buck 变换器波形分析、物理参数辨识与 AI 实验助手">
+  <title>Buck Lab · AI 实验工作台</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./workspace.css">
+  <script src="./config.js" defer></script><script src="./app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./"><span class="brand-mark">∿</span><span>Buck<span class="brand-light">Lab</span><small>POWER ELECTRONICS WORKSPACE</small></span></a>
+    <nav aria-label="工作台导航"><span class="nav-active">实验工作台</span><a href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">PE-GPT ↗</a></nav>
+    <div class="connection"><span id="connection-status" class="status"><i></i>正在连接</span><button class="button subtle small" id="open-settings">连接设置 <span aria-hidden="true">⚙</span></button></div>
+  </header>
+  <div class="workspace" id="workspace">
+    <aside class="sidebar">
+      <div class="side-heading"><span class="eyebrow">EXPERIMENT</span><h2>实验配置</h2><span class="tag">BUCK</span></div>
+      <section class="side-section">
+        <div class="section-heading"><h3><span class="step">01</span>导入波形</h3><button type="button" class="section-toggle" id="toggle-import" aria-controls="import-content" aria-expanded="true" aria-label="收起导入波形" title="收起导入波形">−</button></div>
+        <div id="import-content">
+        <label class="dropzone" id="dropzone" for="csv-file"><span class="upload-icon" aria-hidden="true">↥</span><strong>拖入 PLECS CSV</strong><span>或点击选择文件 · 最大 32 MB</span><input type="file" id="csv-file" accept=".csv,text/csv"></label>
+        <button class="button ghost full" id="load-demo">加载已有实验示例 <span>↗</span></button>
+        <div id="file-info" class="file-info" hidden><span id="file-name"></span><button id="clear-data" title="清除当前数据" aria-label="清除当前数据">×</button><small id="file-rows"></small></div>
+        <details id="mapping-details" class="mapping"><summary>信号与单位映射 <span>⌄</span></summary><div class="mapping-fields">
+          <label>时间<select id="map-time" aria-label="时间列"></select></label>
+          <label>电感电流<select id="map-current" aria-label="电感电流列"></select></label>
+          <label>输出电压<select id="map-voltage" aria-label="输出电压列"></select></label>
+          <label>PWM 开关状态<select id="map-pwm" aria-label="PWM 列"></select></label>
+          <div class="three-fields"><label>时间单位<select id="time-unit"><option>s</option><option>ms</option><option>us</option><option>ns</option></select></label><label>电流<select id="current-unit"><option>A</option><option>mA</option></select></label><label>电压<select id="voltage-unit"><option>V</option><option>mV</option></select></label></div>
+          <button id="apply-mapping" class="button secondary full" disabled>应用并检查数据</button>
+        </div></details>
+        </div>
+      </section>
+      <section class="side-section">
+        <div class="section-heading"><h3><span class="step">02</span>参数辨识</h3><button type="button" class="section-toggle" id="toggle-identification" aria-controls="identification-content" aria-expanded="true" aria-label="收起参数辨识" title="收起参数辨识">−</button></div>
+        <div id="identification-content">
+        <button type="button" id="enter-identification" class="button primary full" aria-controls="identification-form analysis-panel" aria-expanded="false">进入参数辨识 <span aria-hidden="true">→</span></button>
+        <div id="identification-form" hidden>
+        <div class="form-heading"><span>基本信息</span><button type="button" id="leave-identification" class="text-button">退出辨识</button></div>
+        <div class="two-fields"><label>输入电压<div class="unit-input"><input type="number" id="vin" value="28" min="0.1" max="2000" step="any"><span>V</span></div></label><label>开关频率<div class="unit-input"><input type="number" id="frequency" value="100" min="0.1" max="2000" step="any"><span>kHz</span></div></label></div>
+        <label>辨识目标<select id="fit-mode"><option value="LCR">L / C / R · 联合辨识</option><option value="LC">L / C · 固定负载 R</option></select></label>
+        <label id="fixed-r-label" hidden>已知负载电阻<div class="unit-input"><input id="fixed-r" type="number" value="6" min="0.011" step="any"><span>Ω</span></div></label>
+        <label>计算方法<select id="fit-method"><option value="integral">积分方程 · 轻量辨识</option><option value="pann" disabled>PANN · 需后端 PyTorch</option></select></label>
+        <div class="two-fields"><label>开始时间<div class="unit-input"><input type="number" id="start-ms" step="any" placeholder="起点"><span>ms</span></div></label><label>结束时间<div class="unit-input"><input type="number" id="end-ms" step="any" placeholder="终点"><span>ms</span></div></label></div>
+        <label class="range-label" for="train-fraction">训练区间占比 <span id="train-label">70%</span></label><input type="range" id="train-fraction" min="50" max="85" value="70" step="5">
+        <div class="split-legend"><span><i></i>前段训练</span><span><i></i>后段留出验证</span></div>
+        <p class="field-note">选择恒定负载区间。R 指负载电阻，非 ESR。示例推荐 0～0.8 ms。</p>
+        <button id="identify" class="button primary full" disabled><span>▷</span> 开始参数辨识</button>
+        <p id="job-status" class="job-status" aria-live="polite">等待导入实验数据</p>
+        </div>
+        </div>
+      </section>
+      <div class="side-footer"><span class="tiny-square"></span> 物理计算 × 专业知识 × AI 对话<br><span>Inspired by PE-GPT · 本地 / 云端</span></div>
+    </aside>
+    <main class="chat-panel" id="conversation-panel" aria-label="AI 实验助手">
+      <div class="chat-header"><div class="assistant-icon">✳</div><div><h1>AI 实验助手</h1><span id="chat-mode">正在检查服务</span></div><button class="icon-button" id="clear-chat" title="清空对话" aria-label="清空对话">↺</button></div>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div class="chat-messages" id="chat-messages" aria-live="polite">
+        <div class="welcome"><span class="eyebrow">LET’S INVESTIGATE</span><h3>把问题交给助手，<br>把结论交给证据。</h3><p>我可以结合波形和计算结果，帮你理解误差、规划下一轮实验，以及查阅器件知识。</p></div>
+        <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
+      </div>
+      <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
+      <p class="chat-footnote">计算摘要与对话将发送至已配置的 DeepSeek。<br>原始 CSV 保留在分析后端，默认 1 小时过期。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
+    </main>
+    <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>
+      <div class="page-heading"><div><span class="eyebrow">WAVEFORM INTELLIGENCE</span><h2>波形与辨识结果</h2><p>查看测量波形、模型预测与验证误差。</p></div><button type="button" id="close-analysis" class="icon-button" aria-label="退出参数辨识，返回对话" title="退出参数辨识">×</button></div>
+      <div class="metrics-grid" aria-label="波形统计">
+        <article class="metric"><span>平均输出电压</span><strong id="stat-voltage">—<small>V</small></strong><small>全段 · 时间加权</small><span class="metric-symbol">V</span></article>
+        <article class="metric"><span>电感电流 RMS</span><strong id="stat-current">—<small>A</small></strong><small>全段 · 时间加权</small><span class="metric-symbol">I</span></article>
+        <article class="metric"><span>数据时长</span><strong id="stat-duration">—<small>ms</small></strong><small id="stat-points">尚未导入数据</small><span class="metric-symbol">t</span></article>
+      </div>
+      <section class="card waveform-card">
+        <div class="card-heading"><div><h2>波形观测 <span class="live-dot"></span></h2><p id="wave-subtitle">PLECS 导出 · 电流与电压</p></div><div class="segmented"><button id="view-full" class="active">全段</button><button id="view-tail">末 10 周期</button></div></div>
+        <div class="chart-legend"><span><i class="line teal"></i>测量波形</span><span><i class="line orange dashed"></i>模型预测</span><span class="right-legend">拖动框选放大 · 双击还原</span></div>
+        <div id="chart-empty" class="chart-empty"><div class="empty-wave" aria-hidden="true">∿</div><h3>等待你的第一条波形</h3><p>上传仿真 CSV，或加载已有 PLECS 实验，<br>开始检查电路的动态响应。</p><button class="button secondary" id="empty-demo">加载实验示例 →</button></div>
+        <div id="chart-container" hidden>
+          <div class="chart-title"><span>电感电流 <b>i<sub>L</sub></b></span><small>A</small></div><div class="plot-wrap"><svg id="current-chart" role="img" aria-label="电感电流测量与预测波形"></svg></div>
+          <div class="chart-title"><span>输出电压 <b>v<sub>o</sub></b></span><small>V</small></div><div class="plot-wrap"><svg id="voltage-chart" role="img" aria-label="输出电压测量与预测波形"></svg></div>
+          <div class="chart-caption"><span id="chart-caption"></span><span>时间 / ms</span></div>
+        </div>
+      </section>
+      <section class="card results-card">
+        <div class="card-heading"><div><h2>参数辨识</h2><p>物理模型计算 · 同记录后段验证</p></div><span id="result-badge" class="badge">等待计算</span></div>
+        <div class="parameter-grid"><div><span>电感 L</span><strong id="result-l">—</strong><small>μH</small></div><div><span>电容 C</span><strong id="result-c">—</strong><small>μF</small></div><div><span id="r-label">负载电阻 R</span><strong id="result-r">—</strong><small>Ω</small></div></div>
+        <div id="validation" class="validation" hidden><div><span>留出电流 RMSE</span><strong id="rmse-i"></strong></div><div><span>留出电压 RMSE</span><strong id="rmse-v"></strong></div></div>
+        <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>
+        <details id="diagnostics" hidden><summary>查看计算条件与诊断</summary><pre id="diagnostic-text"></pre></details>
+        <div class="result-actions"><button class="button subtle small" id="ask-error" disabled>让助手分析结果 ↗</button><button class="button subtle small" id="download-report" disabled>↓ 导出实验报告</button></div>
+      </section>
+      <footer class="main-footer"><span>数值计算结果与 AI 解释分开呈现。</span></footer>
+    </aside>
+  </div>
+  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。应用口令仅保留在当前页面内存中。</p><button type="submit" class="button primary full">保存并连接</button><p id="settings-status" role="status"></p></form></dialog>
+  <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+</body>
+</html>

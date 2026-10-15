@@ -1,0 +1,134 @@
+/* Conversation is the primary workspace. Analysis opens only on explicit entry. */
+.workspace {
+  grid-template-columns: 258px minmax(0, 1fr);
+  grid-template-areas: "sidebar conversation";
+  max-width: none;
+}
+.workspace.identification-open {
+  grid-template-columns: 258px minmax(390px, 1.15fr) minmax(420px, 1fr);
+  grid-template-areas: "sidebar conversation analysis";
+}
+.workspace > .sidebar { grid-area: sidebar; }
+.workspace > .chat-panel {
+  grid-area: conversation;
+  min-width: 0;
+  border-left: 0;
+  border-top: 0;
+  background: #fff;
+  height: calc(100dvh - 79px);
+  min-height: 570px;
+  position: sticky;
+  top: 79px;
+}
+.workspace > .main-panel {
+  grid-area: analysis;
+  padding: 27px 20px 18px;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+  min-width: 0;
+}
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.section-heading h3 { margin: 0; }
+.section-toggle {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #dfe8e6;
+  border-radius: 6px;
+  background: #fff;
+  color: #65837b;
+  font-size: 18px;
+  line-height: 1;
+}
+.section-toggle:hover { background: var(--teal-light); color: var(--teal); }
+.form-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 17px; font-size: 11px; color: #7e9592; }
+.text-button { border: 0; background: none; padding: 4px 0; color: var(--teal); font-size: 10px; }
+#enter-identification { justify-content: space-between; }
+.chat-header { padding: 0 34px; height: 84px; }
+.chat-header h1 { font-size: 16px; margin: 0 0 6px; font-weight: 600; }
+.chat-header span { font-size: 10px; }
+.chat-panel > .notice { margin: 16px 30px 0; max-height: 135px; overflow: auto; flex-shrink: 0; }
+.chat-messages { padding: 35px max(32px, calc((100% - 760px) / 2)) 24px; }
+.chat-panel.is-empty .chat-messages { display: flex; flex-direction: column; justify-content: center; }
+.welcome { margin-bottom: 26px; }
+.welcome .eyebrow { font-size: 10px; letter-spacing: 2px; }
+.welcome h3 { font-size: 33px; line-height: 1.6; margin: 17px 0; }
+.welcome p { font-size: 13px; line-height: 2; max-width: 620px; }
+.suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.suggestions button { font-size: 11px; line-height: 1.8; padding: 15px 12px; align-items: center; }
+.chat-compose { margin: 12px max(28px, calc((100% - 760px) / 2)) 0; border-radius: 13px; }
+.chat-compose textarea { font-size: 14px; padding: 17px 17px 8px; }
+.compose-bottom { padding: 5px 14px 13px; }
+.compose-bottom span { font-size: 10px; max-width: 80%; }
+.send-button { height: 33px; width: 33px; }
+.chat-footnote { font-size: 9px; margin: 14px 24px 22px; }
+.chat-footnote a { margin-left: 5px; }
+.message { margin-bottom: 26px; }
+.message-content { font-size: 13px; line-height: 2; }
+.message-label { font-size: 10px; }
+.message-mode, .message-tools, .message-sources a, .message-sources span { font-size: 9px; }
+.identification-open .chat-header { padding: 0 24px; }
+.identification-open .chat-messages { padding: 30px 25px 22px; }
+.identification-open .welcome h3 { font-size: 26px; }
+.identification-open .suggestions { grid-template-columns: 1fr; }
+.identification-open .chat-compose { margin: 12px 22px 0; }
+.main-panel .page-heading { align-items: flex-start; margin-bottom: 20px; }
+.main-panel .page-heading h2 { font-size: 20px; font-weight: 600; margin: 8px 0; }
+.main-panel .metrics-grid { gap: 8px; }
+.main-panel .metric { padding: 15px 12px; }
+.main-panel .metric .metric-symbol { display: none; }
+.main-panel .metric strong { font-size: 24px; }
+.main-panel .card-heading { padding: 18px 16px 12px; }
+.main-panel .chart-legend { padding: 7px 16px 10px; }
+.main-panel .right-legend { display: none; }
+.main-panel .plot-wrap { height: 156px; }
+.main-panel .parameter-grid { padding: 10px 16px 20px; }
+.main-panel .parameter-grid > div { padding-left: 13px; }
+.main-panel .parameter-grid > div:first-child { padding-left: 0; }
+.main-panel .parameter-grid strong { font-size: 23px; }
+.main-panel .parameter-grid small { margin-left: 4px; }
+.main-panel .validation { padding: 12px 16px; gap: 16px; }
+.main-panel .validation > div { display: block; }
+.main-panel .validation strong { display: block; margin-top: 6px; }
+.main-panel .result-notes { padding: 13px 16px; }
+.main-panel .result-actions { padding: 12px 16px; gap: 8px; }
+@media (min-width: 1700px) {
+  .workspace { grid-template-columns: 278px minmax(0, 1fr); }
+  .workspace.identification-open { grid-template-columns: 278px minmax(500px, 1.2fr) minmax(480px, 1fr); }
+  .workspace > .main-panel { padding: 30px 26px 18px; }
+}
+@media (min-width: 761px) and (max-width: 1190px) {
+  .workspace { grid-template-columns: 225px minmax(0, 1fr); }
+  .workspace.identification-open { grid-template-columns: 225px minmax(0, 1fr); grid-template-areas: "sidebar conversation" "sidebar analysis"; }
+  .workspace > .sidebar { padding: 25px 16px; }
+  .workspace > .chat-panel { grid-column: auto; }
+  .workspace.identification-open > .chat-panel { position: static; min-height: 610px; height: calc(100dvh - 79px); }
+  .workspace > .main-panel { border-top: 1px solid var(--line); }
+  .chat-messages { padding: 28px; }
+  .chat-compose { margin: 12px 28px 0; }
+  .suggestions { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .workspace, .workspace.identification-open { display: flex; flex-direction: column; }
+  .workspace > .sidebar { order: 0; width: 100%; padding: 17px 18px 0; border: 0; border-bottom: 1px solid var(--line); }
+  .sidebar .side-heading { margin-bottom: 13px; }
+  .sidebar .side-section { margin-bottom: 17px; padding-top: 13px; }
+  .sidebar .side-footer { display: none; }
+  .workspace > .chat-panel { order: 1; position: static; height: 650px; min-height: 570px; border-bottom: 1px solid var(--line); }
+  .workspace > .main-panel { order: 2; width: 100%; padding: 23px 16px 10px; border-left: 0; }
+  .chat-header, .identification-open .chat-header { padding: 0 22px; height: 70px; }
+  .chat-panel > .notice { margin: 12px 18px 0; }
+  .chat-messages, .identification-open .chat-messages { padding: 24px 22px; }
+  .welcome h3, .identification-open .welcome h3 { font-size: 25px; }
+  .welcome p { font-size: 12px; }
+  .suggestions { grid-template-columns: 1fr; }
+  .suggestions button { padding: 11px 12px; }
+  .chat-compose, .identification-open .chat-compose { margin: 10px 18px 0; }
+  .chat-compose textarea { font-size: 13px; }
+  .chat-footnote { font-size: 8px; margin: 12px 18px 17px; }
+}

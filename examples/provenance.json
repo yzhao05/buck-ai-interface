@@ -1,0 +1,6 @@
+{
+  "source_csv": "D:\\开学作业\\ST4001\\仿真\\buck_converter_with_parameter_sweep\\test\\case16A_L60uH_C500uF_PWM.csv",
+  "sha256": "dfd8764c25f4bb3c5ae23b63fe6cb5f7954fd554905f58f5dc8e945debed026d",
+  "source_archive_sha256": "02b651b89b8600d5af581d8ef4c59d140687059abe739b0ce91b85e1357a128f",
+  "note": "Original PLECS CSV, not synthetic. Nominal component values are not supplied to the fitter. The complete waveform contains a load step at 1 ms; default demo selects 0–0.8 ms."
+}

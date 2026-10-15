@@ -1,0 +1,47 @@
+name: Deploy interface to GitHub Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate JavaScript
+        run: node --check frontend/app.js
+      - name: Set public backend address
+        env:
+          RENDER_API_URL: ${{ vars.RENDER_API_URL }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const apiBaseUrl = process.env.RENDER_API_URL || '';
+          if (apiBaseUrl && new URL(apiBaseUrl).protocol !== 'https:') {
+            throw new Error('RENDER_API_URL must be HTTPS');
+          }
+          fs.writeFileSync('frontend/config.js', 'window.BUCK_CONFIG = ' + JSON.stringify({
+            apiBaseUrl,
+            sourceUrl: 'https://github.com/' + process.env.REPOSITORY
+          }) + ';\n');
+          JS
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: frontend
+      - id: deployment
+        uses: actions/deploy-pages@v4
