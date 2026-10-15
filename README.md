@@ -36,7 +36,7 @@ DEEPSEEK_MODEL=deepseek-flash
 
 ## 从零部署 GitHub Pages + Render
 
-**只将 `pe-ai-interface` 文件夹作为新仓库根目录；不要上传整个 ST4001、虚拟环境、reference 或 .env。**
+**只将 `buck-ai-interface` 文件夹作为新仓库根目录；不要上传整个 ST4001、虚拟环境、reference 或 .env。**
 
 1. 在 GitHub 新建仓库，例如 `buck-ai-interface`。把本项目文件提交到其 `main` 分支。`.github`、`.gitignore` 等隐藏文件也要保留。
 2. 在 Render 选择 **New → Blueprint**，连接这个仓库，使用根目录 `render.yaml`。也可手动建立 Python Web Service：构建命令 `pip install -r requirements-lock.txt`，启动命令 `uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1`，健康检查 `/api/health`。
@@ -68,8 +68,31 @@ DEEPSEEK_MODEL=deepseek-flash
 - 积分辨识：L/C/R 联合拟合，或固定负载 R 的 L/C 拟合；非均匀采样；排除电感辨识中的零电流关断区间；正值边界与条件数检查。
 - 验证：按时间分训练/留出。使用实测 PWM，从所选区间起点连续前向仿真，后段不重置到测量状态。
 - 可选 PANN：使用压缩包里的物理递归网络，训练段积分估计初始化，再用波形损失微调。
-- DeepSeek：波形摘要、读取辨识结果、启动真实辨识任务、检索小型专业知识库；调用失败显式降级。
+- DeepSeek：波形摘要、读取辨识结果、启动真实辨识任务、检索专业知识库；调用失败显式降级。
 - 数据/结果按随机会话隔离；数据默认 1 小时过期；任务单工作线程排队；上传 32 MB / 350000 行上限；生产环境强制应用口令。
+
+## Buck 公式知识层
+
+[完整公式手册](backend/knowledge_base/FORMULAS.md)包含 24 个主题，每项注明适用条件、符号和来源。依据本地 PLECS 参数扫描原模型、Case16A/B 和独立 Case17 的连接与参数整理，[模型证据](backend/knowledge_base/model_evidence.json)保留源文件 SHA-256、元件参数和连接记录。未执行新的 PLECS 仿真。
+
+- 功率级：开关分段方程、CCM/DCM、负载跳变、纹波与选值、RMS 应力、寄生与损耗、平均状态空间、小信号传递函数。
+- 控制级：实际 R1～R4、C2/C3 与有限增益运放的节点方程、完整四状态方程、补偿器传函及零极点、PWM/限幅、直流目标、含反馈取电的闭环传函。
+- 辨识与验证：L/C/R 积分回归、可辨识性、噪声偏差和时间加权误差。离散控制与硬件热模型明确标为扩展知识。
+
+原电路的输出理论目标约为 **15.2128 V**（理想 CCM、未限幅），12 V 是电容初值；参考元件值不是任意上传 CSV 的参数真值。
+
+借鉴 [PE-GPT](https://github.com/XinzeLee/PE-GPT) 的文档分块、检索、工具问答结构，本项目使用本地中英文 BM25 检索，无需向量数据库或额外 embedding API。DeepSeek 可通过 `search_knowledge(query)` 查询具体主题；未配置 Key 时，公式问题也能直接显示相关条目，已有 CSV 不会覆盖公式回答。仅询问公式或原理不会启动辨识；明确要求“先辨识参数，再解释公式”时，会在已进入辨识模式且数据配置有效后执行。
+
+可直接提问：“推导 R1、R2、R3、R4、C2、C3 控制电路的节点方程”“模拟补偿器传递函数和零极点是什么？”“Buck 的 CCM/DCM 临界条件是什么？”“LCR 积分辨识公式及适用条件是什么？”
+
+维护时修改 `backend/knowledge_base/buck.py`，再运行：
+
+```powershell
+.\.venv\Scripts\python.exe tests/build_formula_reference.py
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+仅当本地 PLECS 源模型有变化时，重新核对电路并运行 `tests/build_plecs_evidence.py` 更新证据；它只读取模型文本，不执行初始化命令。知识层随后端部署更新，上传 GitHub 后需要等待 Render 重新部署。
 
 ## 计算边界
 
@@ -104,6 +127,7 @@ backend/pann_adapter.py   上游 PANN 的新适配层
 backend/vendor/           保留作者说明的上游模型
 backend/chat.py           DeepSeek 受控工具调用
 backend/knowledge.py      可检查的检索资料与来源
+backend/knowledge_base/   功率/控制公式、完整手册与 PLECS 证据
 examples/                 真实 PLECS CSV 与来源记录
 tests/                    数值、数据泄漏、API 与隔离测试
 render.yaml               Render 部署配置

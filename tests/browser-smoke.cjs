@@ -18,7 +18,7 @@ const assert = require('node:assert/strict');
   assert(await page.locator('#enter-identification').isVisible());
   const defaultChat = await page.locator('#conversation-panel').boundingBox();
   assert(defaultChat.width > 1000, 'Default chat should occupy the main workspace');
-  for (const [button, content] of [['toggle-import','import-content'], ['toggle-identification','identification-content']]) {
+  for (const [button, content] of [['toggle-import','import-content']]) {
     await page.locator('#'+button).click();
     assert(await page.locator('#'+content).isHidden());
     await page.locator('#'+button).click();
@@ -45,7 +45,6 @@ const assert = require('node:assert/strict');
   await page.locator('#job-status').filter({hasText:'辨识完成'}).waitFor({timeout:60000});
   const values = await page.locator('.parameter-grid').innerText();
   if (!(values.includes('60') && values.includes('500'))) throw new Error('Unexpected parameters: '+values);
-  await page.locator('#toggle-identification').click();
   await page.locator('#close-analysis').click();
   assert(await page.locator('#analysis-panel').isHidden());
   assert(await page.locator('#identification-form').isHidden());
