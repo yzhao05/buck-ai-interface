@@ -56,14 +56,13 @@
       <div class="side-footer"><span class="tiny-square"></span> 物理计算 × 专业知识 × AI 对话<br><span>Inspired by PE-GPT · 本地 / 云端</span></div>
     </aside>
     <main class="chat-panel" id="conversation-panel" aria-label="AI 实验助手">
-      <div class="chat-header"><div class="assistant-icon">✳</div><div><h1>AI 实验助手</h1><span id="chat-mode">正在检查服务</span></div><button class="icon-button" id="clear-chat" title="清空对话" aria-label="清空对话">↺</button></div>
       <div id="notice" class="notice" role="status" hidden></div>
       <div class="chat-messages" id="chat-messages" aria-live="polite">
         <div class="welcome"><span class="eyebrow">LET’S INVESTIGATE</span><h3>把问题交给助手，<br>把结论交给证据。</h3><p>我可以结合波形和计算结果，帮你理解误差、规划下一轮实验，以及查阅器件知识。</p></div>
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
-      <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
-      <p class="chat-footnote">计算摘要与对话将发送至已配置的 DeepSeek。<br>原始 CSV 保留在分析后端，默认 1 小时过期。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
+      <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
+      <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="清空对话" aria-label="清空对话">↺</button> 计算摘要与对话将发送至已配置的 DeepSeek。<br>原始 CSV 保留在分析后端，默认 1 小时过期。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
     </main>
     <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>
       <div class="page-heading"><div><span class="eyebrow">WAVEFORM INTELLIGENCE</span><h2>波形与辨识结果</h2><p>查看测量波形、模型预测与验证误差。</p></div><button type="button" id="close-analysis" class="icon-button" aria-label="退出参数辨识，返回对话" title="退出参数辨识">×</button></div>

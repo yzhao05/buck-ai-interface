@@ -14,7 +14,7 @@ const fs = require('node:fs/promises');
     await page.locator('#chat-input').fill('保留我的草稿');
     await page.locator('#language-toggle').click();
     assert.equal(await page.locator('html').getAttribute('lang'),'en');
-    assert.equal(await page.locator('#conversation-panel h1').textContent(),'AI Lab Assistant');
+    assert.equal(await page.locator('#conversation-panel').getAttribute('aria-label'),'AI Lab Assistant');
     assert.equal(await page.locator('#chat-input').inputValue(),'保留我的草稿');
     assert.equal(await page.locator('#connection-status').textContent(),'Backend connected');
     assert.equal(await page.locator('#language-toggle').getAttribute('aria-label'),'Switch to Chinese');
