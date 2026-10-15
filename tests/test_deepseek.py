@@ -6,6 +6,16 @@ import pytest
 
 from backend import chat
 from backend.schemas import ChatRequest
+from backend.task_router import make_route, rule_selection
+
+
+@pytest.fixture(autouse=True)
+def isolate_executor_from_classifier(monkeypatch):
+    # These tests cover the answering/tool loop. Real classifier-to-executor
+    # round trips are covered separately in test_task_router.py.
+    async def classify(request):
+        return make_route(rule_selection(request.message), request.message, "rules")
+    monkeypatch.setattr(chat, "classify", classify)
 
 
 @pytest.mark.parametrize("message", ["请识别参数", "请先辨识参数，再解释公式",

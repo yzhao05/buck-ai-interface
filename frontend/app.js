@@ -273,6 +273,13 @@ async function sendMessage(value) {
     pending.remove();
     const article = message("assistant", (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer,
       response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+    if (response.route) {
+      const task = document.createElement("div"); task.className = "message-tools message-task";
+      task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
+      if (response.route.mode !== "agent") task.append(document.createTextNode(" · "), window.BuckI18n.node(
+        response.route.mode === "fallback" ? "分类服务暂不可用，使用本地规则" : "本地规则分类"));
+      article.querySelector(".message-label").after(task);
+    }
     if (response.tool_calls?.length) {
       const log = document.createElement("div"); log.className = "message-tools";
       ui(log, response.tool_calls.map(t => `${tools[t.name] || t.name} · ${t.status}`).join("\n")); article.append(log);

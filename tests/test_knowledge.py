@@ -53,7 +53,7 @@ def test_formula_after_upload_does_not_start_fit(monkeypatch, message):
     request = ChatRequest(message=message, dataset_id="uploaded", identification_enabled=True,
                           mapping={"time": "t", "current": "i", "voltage": "v"})
     response = asyncio.run(chat.answer(request, invoke))
-    assert calls == ["get_waveform_summary"]
+    assert calls == []  # Formula route does not depend on the uploaded dataset.
     assert response["job_id"] is None
     assert "buck-identification-formulas" in response["answer"]
 

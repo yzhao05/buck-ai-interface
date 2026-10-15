@@ -2,6 +2,10 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "任务：": "Task: ", "使用指导": "Usage guidance", "公式知识": "Circuit knowledge",
+    "波形分析": "Waveform analysis", "误差诊断": "Error diagnosis", "硬件寿命": "Hardware & lifetime",
+    "一般问答": "General assistance", "本地规则分类": "Local rule routing",
+    "分类服务暂不可用，使用本地规则": "Classifier unavailable; local rules used", "未执行": "Not executed",
     "切换为英文": "Switch to Chinese", "测量": "Measured", "预测": "Predicted",
     "Buck Lab · AI 实验工作台": "Buck Lab · AI Workspace",
     "Buck 变换器波形分析、物理参数辨识与 AI 实验助手": "Buck converter waveform analysis, parameter identification and AI assistance",

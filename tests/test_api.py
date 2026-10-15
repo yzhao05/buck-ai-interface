@@ -64,3 +64,33 @@ def test_no_fake_lifetime(client):
     assert data["mode"]=="local"
     assert "不能" in data["answer"] and "器件型号" in data["answer"]
     assert any(s["id"]=="capacitor-life" for s in data["sources"])
+    assert data["route"]["task"] == "hardware" and data["route"]["mode"] == "rules"
+
+
+def test_formula_route_does_not_require_live_dataset(client):
+    response = client.post("/api/chat", json={"message": "推导补偿器传递函数", "dataset_id": "expired",
+        "mapping": {"time": "t", "current": "i", "voltage": "v"}})
+    assert response.status_code == 200
+    assert response.json()["route"]["task"] == "knowledge"
+    assert response.json()["job_id"] is None
+
+
+def test_identification_route_preserves_entry_and_data_checks(client):
+    blocked = client.post("/api/chat", json={"message": "开始参数辨识"}).json()
+    assert blocked["route"]["task"] == "identification" and blocked["job_id"] is None
+    assert "进入参数辨识" in blocked["answer"]
+    missing = client.post("/api/chat", json={"message": "开始参数辨识", "identification_enabled": True}).json()
+    assert missing["job_id"] is None and "CSV" in missing["answer"]
+
+
+@pytest.mark.parametrize("message", ["查看辨识结果", "参数辨识按钮在哪里？", "停止辨识", "辨识已经完成了"])
+def test_non_execution_requests_never_queue_identification(client, monkeypatch, message):
+    def unexpected_fit(*args, **kwargs):
+        raise AssertionError("Read-only request reached start_fit")
+    monkeypatch.setattr(main, "start_fit", unexpected_fit)
+    data = client.post("/api/demo").json()
+    response = client.post("/api/chat", json={"message": message, "identification_enabled": True,
+        "dataset_id": data["dataset_id"], "mapping": data["suggested_mapping"]})
+    assert response.status_code == 200
+    assert response.json()["job_id"] is None
+    assert response.json()["route"]["task"] != "identification"

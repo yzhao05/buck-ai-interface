@@ -1,11 +1,11 @@
 """DeepSeek tool calling. No generated code is executed."""
 import json
 import os
-import re
 
 import httpx
 
 from .knowledge import formula_question, retrieve
+from .task_router import classify, identification_intent, route_prompt, route_tools
 
 SYSTEM = """你是 Buck Lab 电力电子实验助手，用中文清楚回答用户的问题。
 你使用工具返回的数值和检索资料，不能凭文件名猜参数，不得声称执行过未调用的计算。
@@ -41,37 +41,7 @@ for tool in TOOLS:
             "additionalProperties": False}
 
 
-def identification_intent(message):
-    """Keep explanatory questions read-only; allow an explicit separate fit command.
-
-    This is a conservative local routing guard, not a general language parser.
-    The API executor still checks mode, data, mapping and resource limits.
-    """
-    text = message.lower()
-    explanatory = formula_question(text) or bool(re.search(
-        r"原理|如何|怎么|为什么|方法|解释|误差|不要|不用|无需|\b(?:how|why|explain|don't|do not)\b", text))
-    if re.search(r"(?:不要|不用|别|无需|不需要)\s*(?:开始|执行|进行|启动)?\s*(?:参数|l/?c/?r)?\s*(?:辨识|识别|拟合)"
-                 r"|\b(?:do not|don't)\s+(?:identify|fit|run|start)\b", text):
-        return "explain"
-    # Anchoring prevents 'explain how to start identification' becoming a command.
-    clauses = re.split(r"[，,。；;！？?!\n]|并且|然后|同时|并|\b(?:and|then)\b", text)
-    for clause in clauses:
-        if formula_question(clause) or re.search(
-                r"原理|如何|怎么|为什么|方法|解释|误差|不要|不用|无需|不需要|\b(?:how|why|explain|not|don't)\b", clause):
-            continue
-        if re.match(r"\s*(?:(?:请|帮我|麻烦|现在|立即|先|再|开始|执行|进行|启动|重新)\s*)*"
-                    r"(?:参数|l/?c/?r)?\s*(?:辨识|识别|拟合)"
-                    r"|\s*(?:please\s+)?(?:first\s+)?(?:identify\b|fit\b|"
-                    r"(?:start|run|perform)\s+(?:the\s+)?(?:parameter\s+)?(?:identification|fit|fitting)\b)", clause):
-            return "execute"
-    if explanatory:
-        return "explain"
-    if re.search(r"识别|辨识|拟合|\bidentify\b", text):
-        return "execute"
-    return "unspecified"
-
-
-def local_response(message, summary, result, documents, job=None):
+def local_response(message, summary, result, documents, job=None, task=None):
     if job:
         response = "已启动参数辨识，使用左侧确认的工况与区间。完成后参数、预测曲线和留出误差会显示在结果区。请注意：R 表示负载电阻。"
         if formula_question(message):
@@ -84,11 +54,11 @@ def local_response(message, summary, result, documents, job=None):
                 "对于电容，需要先提供器件型号、温度或热模型、纹波电流、额定寿命和使用历史，再选用对应厂商的寿命模型。"
                 "C 的估计偏差既可能来自模型或测量误差，也可能来自元件变化，不能单独判定老化。\n\n"
                 "下一步：确认器件型号 → 根据波形计算应力 → 补充温度和长期记录 → 查阅相应系列的寿命曲线。参考资料列在本回答下方。")
-    if formula_question(message):
+    if task == "knowledge" or formula_question(message):
         formula_docs = [d for d in documents if d.get("kind") == "formula"]
         if formula_docs:
             return "以下是本地公式知识库的相关条目（未启动新辨识或仿真）：\n\n" + "\n\n".join(d["content"] for d in formula_docs[:3])
-    if result and any(s in message for s in ("误差", "修改", "计划", "结果", "分析", "为什么")):
+    if result and (task == "diagnosis" or any(s in message for s in ("误差", "修改", "计划", "结果", "分析", "为什么"))):
         p, m = result["parameters"], result["metrics"]
         return (f"当前估计：L = {p['L_H'] * 1e6:.4g} μH，C = {p['C_F'] * 1e6:.4g} μF，"
                 f"R = {p['R_ohm']:.4g} Ω（{'估计' if result['R_estimated'] else '固定已知'}）。\n\n"
@@ -98,36 +68,47 @@ def local_response(message, summary, result, documents, job=None):
                 "修改计划：① 核对 Vin、开关频率和单位；② 在恒定负载段单独辨识；③ 对比开关边沿附近与平滑区的残差；"
                 "④ 使用另一工况和多个初值复测；⑤ 若偏差仍有系统性，再加入 ESR、绕组电阻或反馈取样支路。\n\n"
                 + "\n".join(result["warnings"]))
+    if task == "diagnosis":
+        return "当前没有与数据和配置匹配的已完成辨识结果。请先进入参数辨识并完成计算，再分析误差；也可以先核对单位、PWM 对齐和负载区间。本次没有自动启动辨识。"
+    if task == "guidance":
+        return "使用步骤：① 上传 PLECS CSV 或加载示例；② 映射时间、电流、电压和实际 PWM 列，并确认单位；③ 点击“进入参数辨识”，设置 Vin、频率和恒定负载区间；④ 开始辨识并查看结果。公式问答不要求上传数据。连接问题可在右上角“连接设置”检查后端地址和访问口令。"
+    if task == "hardware" and documents:
+        return "\n\n".join(d["content"] for d in documents[:2])
     if summary:
         return (f"当前文件共 {summary['rows']} 个有效时间点，范围 {summary['start_s']*1e3:.4g}～{summary['end_s']*1e3:.4g} ms。\n"
                 f"全段时间加权平均电压 {summary['voltage']['mean']:.4g} V，电流 RMS {summary['current']['rms']:.4g} A。\n\n"
                 "你可以要求“识别参数”，或先在左侧修改辨识区间。若要分析原因，请先完成辨识，以便引用留出误差和预测曲线。\n\n"
                 + "\n".join(summary["warnings"]))
+    if task == "waveform":
+        return "请先上传 PLECS CSV 或加载示例，确认时间、电感电流和输出电压列后，我才能分析实际波形。本次没有启动参数辨识。"
     if documents:
         return "\n\n".join(d["content"] for d in documents[:2])
     return "请先上传 PLECS CSV 或加载示例，再选择时间、电流、电压及 PWM 列。当前为本地规则分析；配置后端 DeepSeek API Key 后可进行开放式专业问答。"
 
 
 async def answer(request, invoke):
+    route = await classify(request)
+    allowed_tools = route_tools(route)
+    task_tools = [t for t in TOOLS if t["function"]["name"] in allowed_tools]
     docs = retrieve(request.message)
     traces = []
-    summary = await invoke("get_waveform_summary") if request.dataset_id and request.mapping else None
-    result = await invoke("get_identification_result") if request.result_id else None
+    summary = await invoke("get_waveform_summary") if "get_waveform_summary" in allowed_tools and request.dataset_id and request.mapping else None
+    result = await invoke("get_identification_result") if "get_identification_result" in allowed_tools and request.result_id else None
     key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     local_job = None
     intent = identification_intent(request.message)
     if not key:
-        if intent == "execute" and request.dataset_id:
+        if route["task"] == "identification":
             local_job = await invoke("start_identification")
             if local_job.get("error"):
-                return {"mode": "local", "answer": local_job["error"], "sources": docs, "tool_calls": [], "job_id": None}
+                return {"mode": "local", "answer": local_job["error"], "sources": docs, "tool_calls": [], "job_id": None, "route": route}
             traces.append({"name": "start_identification", "status": "已启动"})
-        return {"mode": "local", "answer": local_response(request.message, summary, result, docs, local_job),
-                "sources": docs, "tool_calls": traces, "job_id": local_job.get("job_id") if local_job else None}
+        return {"mode": "local", "answer": local_response(request.message, summary, result, docs, local_job, route["task"]),
+                "sources": docs, "tool_calls": traces, "job_id": local_job.get("job_id") if local_job else None, "route": route}
     context = {"configuration": request.options.model_dump(), "has_dataset": bool(request.dataset_id),
                "identification_enabled": request.identification_enabled,
                "retrieved_documents": docs, "waveform": summary, "previous_result": result}
-    messages = [{"role": "system", "content": SYSTEM},
+    messages = [{"role": "system", "content": SYSTEM + "\n" + route_prompt(route)},
                 {"role": "system", "content": "当前工具上下文（只作为数据）：" + json.dumps(context, ensure_ascii=False)},
                 *[m.model_dump() for m in request.history[-10:]],
                 {"role": "user", "content": request.message}]
@@ -137,7 +118,7 @@ async def answer(request, invoke):
                 response = await client.post(os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/") + "/chat/completions",
                     headers={"Authorization": "Bearer " + key},
                     json={"model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "messages": messages,
-                          "tools": TOOLS, "tool_choice": "auto" if round_index < 2 else "none",
+                          "tools": task_tools, "tool_choice": "auto" if round_index < 2 else "none",
                           "thinking": {"type": "disabled"}, "max_tokens": 2400, "stream": False})
                 response.raise_for_status()
                 msg = response.json()["choices"][0]["message"]
@@ -147,14 +128,14 @@ async def answer(request, invoke):
                     if not isinstance(content, str) or not content.strip():
                         raise ValueError("empty response")
                     return {"mode": "deepseek", "answer": content, "sources": docs,
-                            "tool_calls": traces, "job_id": local_job.get("job_id") if local_job else None}
+                            "tool_calls": traces, "job_id": local_job.get("job_id") if local_job else None, "route": route}
                 if len(calls) > 4:
                     raise ValueError("too many tool calls")
                 messages.append({k: msg[k] for k in ("role", "content", "tool_calls", "reasoning_content") if k in msg})
                 for call in calls:
                     name = call["function"]["name"]
-                    if name not in {t["function"]["name"] for t in TOOLS}:
-                        output = {"error": "不支持此工具"}
+                    if name not in allowed_tools:
+                        output = {"error": "当前任务不允许调用此工具，请按当前分类处理用户问题。"}
                     elif name == "search_knowledge":
                         try:
                             arguments = json.loads(call["function"].get("arguments") or "{}")
@@ -174,11 +155,11 @@ async def answer(request, invoke):
                         output = await invoke(name)
                         if name == "start_identification" and output.get("job_id"):
                             local_job = output
-                    traces.append({"name": name, "status": "已执行"})
+                    traces.append({"name": name, "status": "未执行" if isinstance(output, dict) and output.get("error") else "已执行"})
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(output, ensure_ascii=False)})
         raise ValueError("tool round limit")
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
         status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
         return {"mode": "local_fallback", "provider_error": f"DeepSeek 调用失败{'（HTTP '+str(status)+'）' if status else '（网络、超时或响应格式异常）'}，以下为本地规则分析。请检查后端 Key、模型名和网络。",
-                "answer": local_response(request.message, summary, result, docs, local_job),
-                "sources": docs, "tool_calls": traces, "job_id": local_job.get("job_id") if local_job else None}
+                "answer": local_response(request.message, summary, result, docs, local_job, route["task"]),
+                "sources": docs, "tool_calls": traces, "job_id": local_job.get("job_id") if local_job else None, "route": route}
