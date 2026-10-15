@@ -71,6 +71,7 @@ window.BuckI18n = (() => {
     "请求失败，请检查后端服务。": "Request failed. Check the backend service.",
     "请先在连接设置中填写 Render 后端地址，或本地启动后端。": "Enter your Render backend URL in Connection settings, or start the backend locally.",
     "请求超时。Render 服务可能正在唤醒，请稍后重试。": "Request timed out. Render may be waking up; please retry shortly.",
+    "辨识结果与当前数据或配置不一致，请重新辨识。": "The identification result does not match the current data or settings. Run identification again.",
     "无法连接后端。请检查服务地址、启动状态及 CORS_ORIGINS 设置。": "Cannot reach the backend. Check its URL, service status and CORS_ORIGINS setting.",
     "不选择（仅分析波形）": "None (waveform analysis only)", "正在读取并检查数据…": "Reading and checking data…",
     "请选择不超过 32 MB 的 CSV 文件。": "Choose a CSV file no larger than 32 MB.",
@@ -130,6 +131,14 @@ window.BuckI18n = (() => {
     "训练或留出段采样不足，请调整区间。": "Not enough samples in the training or validation segment. Adjust the interval."
   };
   Object.assign(english, {
+    "抗噪加权积分 · 直接辨识":"Noise-aware weighted integral · Direct fit",
+    "直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。":"Use the weighted-integral estimate directly, without PANN refinement or PyTorch.",
+    "从加权积分初值继续优化窗口状态和参数；不保证比积分结果更准确。":"Refine window states and parameters from the weighted-integral estimate; accuracy may not improve.",
+    "自动（训练噪声）":"Auto (training noise)",
+    "窗口初值":"Window initial states", "从含噪数据联合估计（推荐）":"Joint estimation from noisy data (recommended)",
+    "固定测量初值（对照）":"Fixed measured states (comparison)", "窗口长度":"Window length", "训练轮数":"Training epochs",
+    "1 个开关周期":"1 switching cycle", "2 个开关周期":"2 switching cycles", "3 个开关周期":"3 switching cycles",
+    "只用训练段估计初值；留出验证连续运行，不重置状态。窗口更长不一定更准确。":"Estimate states from training data only; validation runs continuously without resets. Longer windows are not always more accurate.",
     "历史会话":"Chat history", "新会话":"New conversation", "＋ 新建会话":"＋ New conversation",
     "新建会话，保留当前历史":"New conversation, keep current history",
     "收起实验配置":"Collapse experiment settings", "展开实验配置":"Expand experiment settings",

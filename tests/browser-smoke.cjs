@@ -35,6 +35,7 @@ const assert = require('node:assert/strict');
   assert(await page.locator('#analysis-panel').isHidden());
   // Keep this conversation's CSV for the identification flow. New chat intentionally isolates data.
   await page.locator('#enter-identification').click();
+  await page.locator('#fit-method').selectOption('weighted_integral');
   assert(await page.locator('#identification-form').isVisible());
   assert(await page.locator('#analysis-panel').isVisible());
   const chatBox = await page.locator('#conversation-panel').boundingBox();

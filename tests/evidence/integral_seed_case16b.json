@@ -1,0 +1,381 @@
+{
+  "archive": "case16b/training_inputs.npz",
+  "archive_sha256": "d32a2022bbd95e894990a8f57761f19e5a9338f39fa5aa7b0e7ec428004ef6ce",
+  "code_sha256": {
+    "backend/pann_adapter.py": "3f2fff7236e1e82194698daba8688b2875bae75a247df08fd804131f5c8d046e",
+    "backend/identification.py": "fc47794b5b866c6334cba7a0208dc11565ec7ae7ab04d20832697ad32624afcb",
+    "tests/benchmark_pann_noise.py": "6574c32765e1ee62d1a89643dc693ac32735cdfae3879435eb24883cd2f0c8d8"
+  },
+  "options": {
+    "vin": 28,
+    "frequency_hz": 100000,
+    "start_s": null,
+    "end_s": null,
+    "train_fraction": 0.7,
+    "mode": "LC",
+    "resistance_ohm": 6.0,
+    "method": "pann",
+    "epochs": 100,
+    "pann_initial_state": "joint",
+    "pann_window_cycles": 1
+  },
+  "seed_only": true,
+  "evaluation_truth_H_F_ohm": [
+    3.9999999999999996e-05,
+    0.00075,
+    6.0
+  ],
+  "protocol": "All archived 0–0.8 ms training measurements; actual gate=drive[:,:,0]/Vin (ZOH); no clean states, clean reference, feedback current or truth passed to fitting. Same weighted-integral seed for both state modes. Best noisy training loss selects parameters AND states. No holdout or autonomous closed-loop validation in this benchmark; LC only, R fixed. All requested seeds retained.",
+  "runs": [
+    {
+      "label": "clean",
+      "index": 0,
+      "initial_state_mode": "initialization_only",
+      "initial_parameters": [
+        3.999268314412222e-05,
+        0.0007500143268376528,
+        6.0
+      ],
+      "old_integral_parameters": [
+        4.002028908701379e-05,
+        0.0007500161349787554,
+        6.0
+      ],
+      "initial_error_pct": [
+        -0.01829213969443133,
+        0.0019102450203645205,
+        0.0
+      ],
+      "old_integral_error_pct": [
+        0.05072271753447932,
+        0.002151330500721471,
+        0.0
+      ],
+      "seed_diagnostics": {
+        "windows": 180,
+        "L_windows": 126,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "parameters": [
+        3.999268314412222e-05,
+        0.0007500143268376528,
+        6.0
+      ],
+      "error_pct": [
+        -0.01829213969443133,
+        0.0019102450203645205,
+        0.0
+      ],
+      "diagnostics": {
+        "windows": 180,
+        "L_windows": 126,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "label": "noise01_seed12",
+      "index": 1,
+      "initial_state_mode": "initialization_only",
+      "initial_parameters": [
+        4.00048787543847e-05,
+        0.0007497949857252184,
+        6.0
+      ],
+      "old_integral_parameters": [
+        4.002356849406908e-05,
+        0.000502856601964606,
+        6.0
+      ],
+      "initial_error_pct": [
+        0.012196885961768267,
+        -0.027335236637549,
+        0.0
+      ],
+      "old_integral_error_pct": [
+        0.0589212351727042,
+        -32.95245307138587,
+        0.0
+      ],
+      "seed_diagnostics": {
+        "windows": 180,
+        "L_windows": 119,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "parameters": [
+        4.00048787543847e-05,
+        0.0007497949857252184,
+        6.0
+      ],
+      "error_pct": [
+        0.012196885961768267,
+        -0.027335236637549,
+        0.0
+      ],
+      "diagnostics": {
+        "windows": 180,
+        "L_windows": 119,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "label": "noise01_seed13",
+      "index": 2,
+      "initial_state_mode": "initialization_only",
+      "initial_parameters": [
+        3.999348091919863e-05,
+        0.0007502928887445546,
+        6.0
+      ],
+      "old_integral_parameters": [
+        3.9970564938376e-05,
+        0.0005031231763370747,
+        6.0
+      ],
+      "initial_error_pct": [
+        -0.01629770200340941,
+        0.039051832607284176,
+        0.0
+      ],
+      "old_integral_error_pct": [
+        -0.07358765405999224,
+        -32.91690982172337,
+        0.0
+      ],
+      "seed_diagnostics": {
+        "windows": 180,
+        "L_windows": 121,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "parameters": [
+        3.999348091919863e-05,
+        0.0007502928887445546,
+        6.0
+      ],
+      "error_pct": [
+        -0.01629770200340941,
+        0.039051832607284176,
+        0.0
+      ],
+      "diagnostics": {
+        "windows": 180,
+        "L_windows": 121,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "label": "noise01_seed14",
+      "index": 3,
+      "initial_state_mode": "initialization_only",
+      "initial_parameters": [
+        3.999121590873952e-05,
+        0.0007502757662180724,
+        6.0
+      ],
+      "old_integral_parameters": [
+        3.9938288653269855e-05,
+        0.0004922509098969352,
+        6.0
+      ],
+      "initial_error_pct": [
+        -0.02196022815119658,
+        0.03676882907632795,
+        0.0
+      ],
+      "old_integral_error_pct": [
+        -0.15427836682535556,
+        -34.3665453470753,
+        0.0
+      ],
+      "seed_diagnostics": {
+        "windows": 180,
+        "L_windows": 119,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "parameters": [
+        3.999121590873952e-05,
+        0.0007502757662180724,
+        6.0
+      ],
+      "error_pct": [
+        -0.02196022815119658,
+        0.03676882907632795,
+        0.0
+      ],
+      "diagnostics": {
+        "windows": 180,
+        "L_windows": 119,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "label": "noise03_seed12",
+      "index": 4,
+      "initial_state_mode": "initialization_only",
+      "initial_parameters": [
+        4.0018861790747565e-05,
+        0.0007478238574622546,
+        6.0
+      ],
+      "old_integral_parameters": [
+        3.9739681756987656e-05,
+        0.00013329195617679202,
+        6.0
+      ],
+      "initial_error_pct": [
+        0.04715447686891583,
+        -0.2901523383660565,
+        0.0
+      ],
+      "old_integral_error_pct": [
+        -0.6507956075308519,
+        -82.22773917642773,
+        0.0
+      ],
+      "seed_diagnostics": {
+        "windows": 180,
+        "L_windows": 110,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "parameters": [
+        4.0018861790747565e-05,
+        0.0007478238574622546,
+        6.0
+      ],
+      "error_pct": [
+        0.04715447686891583,
+        -0.2901523383660565,
+        0.0
+      ],
+      "diagnostics": {
+        "windows": 180,
+        "L_windows": 110,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "label": "noise03_seed13",
+      "index": 5,
+      "initial_state_mode": "initialization_only",
+      "initial_parameters": [
+        3.9999955692471735e-05,
+        0.0007489885584956473,
+        6.0
+      ],
+      "old_integral_parameters": [
+        3.960447374532422e-05,
+        0.00013934252151118884,
+        6.0
+      ],
+      "initial_error_pct": [
+        -0.00011076882064919857,
+        -0.134858867247023,
+        0.0
+      ],
+      "old_integral_error_pct": [
+        -0.988815636689433,
+        -81.42099713184149,
+        0.0
+      ],
+      "seed_diagnostics": {
+        "windows": 180,
+        "L_windows": 110,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "parameters": [
+        3.9999955692471735e-05,
+        0.0007489885584956473,
+        6.0
+      ],
+      "error_pct": [
+        -0.00011076882064919857,
+        -0.134858867247023,
+        0.0
+      ],
+      "diagnostics": {
+        "windows": 180,
+        "L_windows": 110,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "elapsed_s": 0.0
+    },
+    {
+      "label": "noise03_seed14",
+      "index": 6,
+      "initial_state_mode": "initialization_only",
+      "initial_parameters": [
+        3.99774615651853e-05,
+        0.0007490372587196764,
+        6.0
+      ],
+      "old_integral_parameters": [
+        3.948414569619104e-05,
+        0.0001312210451432452,
+        6.0
+      ],
+      "initial_error_pct": [
+        -0.05634608703675159,
+        -0.12836550404315972,
+        0.0
+      ],
+      "old_integral_error_pct": [
+        -1.2896357595223784,
+        -82.50386064756731,
+        0.0
+      ],
+      "seed_diagnostics": {
+        "windows": 180,
+        "L_windows": 110,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "parameters": [
+        3.99774615651853e-05,
+        0.0007490372587196764,
+        6.0
+      ],
+      "error_pct": [
+        -0.05634608703675159,
+        -0.12836550404315972,
+        0.0
+      ],
+      "diagnostics": {
+        "windows": 180,
+        "L_windows": 110,
+        "CR_condition_number": 1.0,
+        "parameter_at_bound": false,
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"
+      },
+      "elapsed_s": 0.0
+    }
+  ]
+}

@@ -91,7 +91,11 @@ function controls() {
   document.querySelectorAll(".history-item").forEach(button => button.disabled = waiting);
   $("leave-identification").disabled = waiting;
   $("close-analysis").disabled = waiting;
-  for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","start-ms","end-ms","train-fraction"]) $(id).disabled = waiting;
+  $("pann-settings").hidden = $("fit-method").value !== "pann";
+  ui($("method-hint"), $("fit-method").value === "pann"
+    ? "从加权积分初值继续优化窗口状态和参数；不保证比积分结果更准确。"
+    : "直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。");
+  for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).disabled = waiting;
 }
 async function connect() {
   $("connection-status").className = "status";
@@ -105,7 +109,10 @@ async function connect() {
     const pannOption = $("fit-method").querySelector('[value="pann"]');
     pannOption.disabled = !health.pann_available;
     ui(pannOption, health.pann_available ? "PANN · 物理网络微调" : "PANN · 需后端 PyTorch");
-    if (!health.pann_available) $("fit-method").value = "integral";
+    if (!health.pann_available && $("fit-method").value !== "weighted_integral") {
+      $("fit-method").value = "weighted_integral";
+      invalidateResult();
+    }
     const source = health.source_url || config.sourceUrl;
     if (source && /^https:\/\//.test(source)) { $("source-link").href = source; ui($("source-link"), "本项目源码 ↗"); }
     if (health.requires_token && !accessToken) notice("后端已连接。请在连接设置中输入应用访问口令后上传数据。");
@@ -133,7 +140,15 @@ function options() {
     start_s:$("start-ms").value === "" ? null : Number($("start-ms").value)/1000,
     end_s:$("end-ms").value === "" ? null : Number($("end-ms").value)/1000,
     train_fraction:Number($("train-fraction").value)/100, mode:$("fit-mode").value,
-    resistance_ohm:numeric("fixed-r"), method:$("fit-method").value, epochs:60};
+    resistance_ohm:numeric("fixed-r"), method:$("fit-method").value,
+    epochs:$("fit-method").value === "pann" ? numeric("pann-epochs") : 100,
+    pann_initial_state:$("pann-state").value, pann_window_cycles:Number($("pann-cycles").value)};
+}
+function resultMatchesCurrent(result) {
+  return Boolean(result && state.dataset && state.mapping
+    && result.file_sha256 === state.dataset.sha256
+    && Object.entries(options()).every(([key,value]) => result.options?.[key] === value)
+    && Object.entries(state.mapping).every(([key,value]) => result.mapping?.[key] === value));
 }
 function invalidateResult() {
   state.result = null; state.resultId = null;
@@ -213,6 +228,10 @@ async function watchJob(id) {
       const response = await api(`/api/jobs/${id}`);
       ui($("job-status"), response.status === "queued" ? "任务已排队…" : `正在拟合与验证 · ${Math.round((Date.now()-started)/1000)} 秒`);
       if (response.status === "complete") {
+        if (!resultMatchesCurrent(response.result)) {
+          invalidateResult();
+          throw new Error("辨识结果与当前数据或配置不一致，请重新辨识。");
+        }
         state.result = response.result; state.resultId = id; displayResult();
         ui($("job-status"), `辨识完成 · 用时 ${response.result.elapsed_s} 秒`);
         return;
@@ -385,7 +404,7 @@ $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
 $("dropzone").ondrop = event => {event.preventDefault();$("dropzone").classList.remove("dragover");if(event.dataTransfer.files[0])void importData(event.dataTransfer.files[0]);};
 $("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await applyMapping();notice("列映射已应用。",true);}catch(e){notice(e.message);}finally{state.busy=false;persistConversation();controls();}};
 for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();ui($("job-status"), "映射已更改，请点击应用并检查数据");controls();};
-for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{invalidateResult();$("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");};
+for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{invalidateResult();$("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");controls();};
 $("identify").onclick=()=>void startFit();
 $("enter-identification").onclick=()=>setIdentificationOpen(true);
 $("leave-identification").onclick=$("close-analysis").onclick=()=>setIdentificationOpen(false);

@@ -22,7 +22,7 @@ const assert=require('node:assert/strict');
     const first=await page.locator('.history-item[aria-current=true]').getAttribute('data-conversation-id');
     await page.locator('#load-demo').click();await ready(page);
     assert.equal(await page.locator('.message').count(),2,'Import keeps conversation');
-    await page.locator('#enter-identification').click();await page.locator('#identify').click();await ready(page);
+    await page.locator('#enter-identification').click();await page.locator('#fit-method').selectOption('weighted_integral');await page.locator('#identify').click();await ready(page);
     assert.equal(await page.locator('#result-l').textContent(),'60');
     for(let i=0;i<6;i++)await send(page,'问题 '+i);
     assert.equal(await page.locator('.message').count(),14);

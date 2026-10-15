@@ -19,7 +19,7 @@ def client(monkeypatch):
 def test_upload_fit_chat_and_isolation(client):
     demo=client.post("/api/demo"); assert demo.status_code==200
     data=demo.json()
-    body={"dataset_id":data["dataset_id"],"mapping":data["suggested_mapping"],"options":{"end_s":.0008}}
+    body={"dataset_id":data["dataset_id"],"mapping":data["suggested_mapping"],"options":{"end_s":.0008,"method":"weighted_integral"}}
     assert client.post("/api/analyze",json={k:body[k] for k in ("dataset_id","mapping")}).status_code==200
     blocked=client.post("/api/chat",json={**body,"message":"开始参数辨识"})
     assert blocked.status_code==200
@@ -36,7 +36,7 @@ def test_upload_fit_chat_and_isolation(client):
     assert response.status_code==200
     assert "RMSE" in response.json()["answer"]
     assert response.json()["mode"]=="local"
-    changed=client.post("/api/chat",json={**body,"options":{"end_s":.0007},"result_id":job_id,"message":"分析结果误差"})
+    changed=client.post("/api/chat",json={**body,"options":{"end_s":.0007,"method":"weighted_integral"},"result_id":job_id,"message":"分析结果误差"})
     assert "当前估计" not in changed.json()["answer"]  # stale config cannot reuse fit
     other={"X-Session-ID":str(uuid.uuid4())}
     assert client.get("/api/jobs/"+job_id,headers=other).status_code==404

@@ -29,8 +29,11 @@ class FitOptions(StrictModel):
     train_fraction: float = Field(default=0.7, ge=0.5, le=0.85)
     mode: Literal["LC", "LCR"] = "LCR"
     resistance_ohm: float = Field(default=6, gt=0.01, le=100000)
-    method: Literal["integral", "pann"] = "integral"
-    epochs: int = Field(default=60, ge=10, le=150)
+    # "integral" remains available for reproducing older reports/API clients.
+    method: Literal["weighted_integral", "pann", "integral"] = "pann"
+    epochs: int = Field(default=100, ge=10, le=300)
+    pann_initial_state: Literal["joint", "measured"] = "joint"
+    pann_window_cycles: int = Field(default=0, ge=0, le=3, description="0: training-noise heuristic; 1/2/3: explicit cycles")
 
 
 class FitRequest(AnalysisRequest):

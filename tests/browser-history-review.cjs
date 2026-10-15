@@ -24,17 +24,35 @@ const assert=require('node:assert/strict');
     await a.reload();await ready(a);
     assert.equal(await a.locator('#time-unit').inputValue(),'ms','Unapplied mapping edits must survive reload');
     await a.locator('#enter-identification').click();
+    await a.locator('#fit-method').selectOption('weighted_integral');
     assert(await a.locator('#identify').isDisabled(),'Restoration must not auto-apply unconfirmed mapping');
     assert(await a.locator('#file-info').isVisible(),'Unconfirmed mapping must remain editable');
     await a.locator('#time-unit').selectOption('s');await a.locator('#apply-mapping').click();await ready(a);
     await a.locator('#identify').click();await ready(a);
     assert.equal(await a.locator('#result-l').textContent(),'60');
+    // A restored pending job must also be checked when it eventually completes.
+    const pendingContext=await browser.newContext({storageState:await context.storageState()});
+    try {
+      let polls=0;
+      await pendingContext.route('**/api/jobs/*',async route=>{
+        const response=await route.fetch(),body=await response.json();
+        if (++polls === 1) { body.status='running'; body.result=null; }
+        else body.result.options.method='pann';
+        await route.fulfill({json:body});
+      });
+      const pending=await pendingContext.newPage();await pending.goto('http://127.0.0.1:8001');
+      await pending.waitForFunction(()=>document.querySelector('#job-status').textContent.includes('任务未完成'));
+      await ready(pending);
+      assert(polls>=2,'Restore must resume polling the pending job');
+      assert.equal(await pending.locator('#result-l').textContent(),'—','Reject mismatched results when a restored job finishes');
+      assert(await pending.locator('#download-report').isDisabled(),'Mismatched results must not be downloadable');
+    } finally { await pendingContext.close(); }
     await a.route('**/api/jobs/*',async route=>{
       const response=await route.fetch(),body=await response.json();body.result.options.vin=999;
       await route.fulfill({json:body});
     });
     await a.reload();await ready(a);
     assert.equal(await a.locator('#result-l').textContent(),'—','Do not restore results with incompatible settings');
-    console.log('PASS: stale/concurrent tabs preserve messages, unconfirmed mapping survives, incompatible results are rejected.');
+    console.log('PASS: stale/concurrent tabs preserve messages, unconfirmed mapping survives, incompatible completed and pending results are rejected.');
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

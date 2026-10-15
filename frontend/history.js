@@ -4,8 +4,8 @@ let activeConversation = null;
 let conversationPrefix = "";
 let pendingAttachment = null;
 const conversationCache = new Map();
-const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "start-ms", "end-ms", "train-fraction"];
-const experimentDefaults = {vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"integral", "start-ms":"", "end-ms":"", "train-fraction":"70"};
+const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction"];
+const experimentDefaults = {vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"100", "start-ms":"", "end-ms":"", "train-fraction":"70"};
 function historyWarning(text = "") {
   ui($("history-status"), text); $("history-status").hidden = !text;
 }
@@ -129,8 +129,7 @@ async function restoreAttachment(attachment) {
     if (jobId && attachment.mapping) {
       try {
         const job=await api(`/api/jobs/${jobId}`);
-        if (job.status === "complete" && Object.entries(options()).every(([k,v])=>job.result.options?.[k]===v)
-          && Object.entries(state.mapping).every(([k,v])=>job.result.mapping?.[k]===v) && job.result.file_sha256===state.dataset.sha256) {
+        if (job.status === "complete" && resultMatchesCurrent(job.result)) {
           state.result=job.result; state.resultId=jobId; displayResult();
         }
         else if (["running","queued"].includes(job.status)) void watchJob(jobId);
@@ -153,7 +152,9 @@ async function openConversation(id, saveCurrent = true) {
   notice(); resetExperiment(); clearChat();
   pendingAttachment=record.attachment;
   for (const field of experimentFields) $(field).value=record.fields?.[field] ?? experimentDefaults[field];
-  if (state.connected && $("fit-method").selectedOptions[0]?.disabled) $("fit-method").value="integral";
+  // A legacy "integral" value is no longer in the selector. The new identifier
+  // also prevents restoreAttachment from relabelling an old result as weighted.
+  if (!$("fit-method").value || (state.connected && $("fit-method").selectedOptions[0]?.disabled)) $("fit-method").value="weighted_integral";
   $("fixed-r-label").hidden=$("fit-mode").value!=="LC";
   ui($("train-label"),$("train-fraction").value+"%");
   $("chat-input").value=record.draft || "";

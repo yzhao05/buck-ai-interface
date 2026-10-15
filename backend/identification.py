@@ -13,10 +13,10 @@ from .data import Dataset, chart_data, extract
 from .schemas import FitOptions, Mapping
 
 
-def window_indices(t, fs):
+def window_indices(t, fs, cycles_list=(0.45, 1.4, 4.2), maximum=700):
     pairs = []
-    for cycles in (0.45, 1.4, 4.2):
-        starts = np.linspace(t[0], t[-1] - cycles / fs, min(700, len(t) // 4))
+    for cycles in cycles_list:
+        starts = np.linspace(t[0], t[-1] - cycles / fs, min(maximum, len(t) // 4))
         if len(starts) == 0 or starts[-1] <= starts[0]:
             continue
         left = np.searchsorted(t, starts)
@@ -26,6 +26,62 @@ def window_indices(t, fs):
     if len(pairs) < 20:
         raise ValueError("训练段太短或采样太稀；需要至少约 10 个开关周期及充分的周期内采样。")
     return np.array(pairs).T
+
+
+def weak_integral_seed(train, options):
+    """Standalone weighted-integral estimation, also used to initialize PANN.
+
+    phi(u)=u^2(1-u)^2. Integration by parts replaces noisy endpoint differences
+    with -integral(phi' * measurement). Three-point Gauss quadrature exactly
+    integrates the piecewise-linear measurements times this quartic weight.
+    PWM stays ZOH. No smoothing targets or known component values are supplied.
+    """
+    t = train[:, 0]
+    left, right = window_indices(t, options.frequency_hz, (2., 5., 10.), 60)
+    nodes, weights = np.polynomial.legendre.leggauss(3)
+    fractions = (nodes + 1) / 2
+    rows, l_rows = [], []
+    inactive = (train[:, 1] <= max(1e-6, np.max(np.abs(train[:, 1])) * .003)) & (train[:, 3] == 0)
+    for a, b in zip(left, right):
+        times = t[a:b + 1]
+        span = times[-1] - times[0]
+        dt = np.diff(times)
+        u = (times[:-1, None] + dt[:, None] * fractions - times[0]) / span
+        phi = u ** 2 * (1-u) ** 2
+        dphi = (2*u - 6*u**2 + 4*u**3) / span
+        measured = train[a:b, None, 1:3] + fractions[None, :, None] * np.diff(train[a:b+1, 1:3], axis=0)[:, None, :]
+        quadrature = dt[:, None] * weights / 2
+        integrals = np.sum((quadrature * phi)[:, :, None] * measured, axis=(0, 1))
+        change = -np.sum((quadrature * dphi)[:, :, None] * measured, axis=(0, 1))
+        pwm_integral = np.sum(quadrature * phi * train[a:b, 3, None])
+        rows.append((change[1], integrals[1], integrals[0]))
+        if not inactive[a:b+1].any():
+            l_rows.append((change[0], options.vin * pwm_integral - integrals[1]))
+    if len(l_rows) < 12:
+        raise ValueError("加权积分初始化的有效电感窗口不足。")
+    l_rows = np.asarray(l_rows)
+    rows = np.asarray(rows)
+    if np.linalg.norm(l_rows[:, 0]) < 1e-10 or np.linalg.norm(rows[:, 0]) < 1e-10:
+        raise ValueError("加权积分初始化缺少足够的电流或电压动态。")
+    l_fit = lsq_linear(l_rows[:, :1] * 1e-4, l_rows[:, 1], bounds=([.001], [1000]))
+    design = np.column_stack((rows[:, 0] * 1e-3, rows[:, 1]))
+    if options.mode == "LC":
+        target = rows[:, 2] - rows[:, 1] / options.resistance_ohm
+        c_fit = lsq_linear(design[:, :1], target, bounds=([.00001], [1000]))
+        capacitance, resistance, condition = c_fit.x[0]*1e-3, options.resistance_ohm, 1.
+    else:
+        norms = np.linalg.norm(design, axis=0)
+        if (norms < 1e-14).any():
+            raise ValueError("加权积分初始化缺少足够的电压动态。")
+        condition = float(np.linalg.cond(design/norms))
+        if not np.isfinite(condition) or condition > 1e5:
+            raise ValueError("加权积分初始化的 C/R 回归病态，请增加动态激励。")
+        c_fit = lsq_linear(design, rows[:, 2], bounds=([.00001, 1e-5], [1000, 100]))
+        capacitance, resistance = c_fit.x[0]*1e-3, 1/c_fit.x[1]
+    return np.array([l_fit.x[0]*1e-4, capacitance, resistance]), {
+        "windows": len(rows), "L_windows": len(l_rows), "CR_condition_number": condition,
+        "parameter_at_bound": bool(np.any(l_fit.active_mask) or np.any(c_fit.active_mask)),
+        "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"}
 
 
 def integral_fit(train, options):
@@ -71,7 +127,7 @@ def integral_fit(train, options):
     }
 
 
-def rollout(a, params, vin):
+def rollout(a, params, vin, initial_state=None):
     """Continuous rollout with observed PWM. No measurement reset after x0.
 
     Solve separately between observed gate edges; DCM zero-current events
@@ -82,7 +138,9 @@ def rollout(a, params, vin):
     edges = np.r_[0, np.flatnonzero(np.diff(gate)) + 1, len(a) - 1]
     edges = np.unique(edges)
     out = np.zeros((len(a), 2))
-    state = a[0, 1:3].copy()
+    state = a[0, 1:3].copy() if initial_state is None else np.asarray(initial_state, dtype=float).copy()
+    if state.shape != (2,) or not np.isfinite(state).all():
+        raise ValueError("前向验证初始状态无效。")
     out[0] = state
     def zero_current(tt, xx):
         return xx[0]
@@ -137,25 +195,48 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions):
         raise ValueError("选定区间需要至少 100 个采样点和 15 个开关周期。")
     if (a[-1, 0] - a[0, 0]) * options.frequency_hz > 3000:
         raise ValueError("单次最多分析 3000 个开关周期，请缩小辨识区间。")
-    if np.min(a[:, 1]) < -max(0.02 * np.ptp(a[:, 1]), 1e-5):
-        raise ValueError("检测到明显负电流：当前模型是非同步 Buck，请检查信号方向或使用适配模型。")
     split_time = a[0, 0] + options.train_fraction * (a[-1, 0] - a[0, 0])
     split = int(np.searchsorted(a[:, 0], split_time))
     train = a[:split + 1]
     valid = a[split:]
     if min(len(train), len(valid)) < 20:
         raise ValueError("训练或留出段采样不足，请调整区间。")
-    params, diagnostics = integral_fit(train, options)
+    negative_tolerance = max(0.02 * np.ptp(train[:, 1]), 1e-5)
+    if options.method in ("weighted_integral", "pann"):
+        from .pann_adapter import measurement_noise_std
+        negative_tolerance = max(negative_tolerance, 5 * measurement_noise_std(train)[0])
+    if np.min(train[:, 1]) < -negative_tolerance or np.mean(train[:, 1]) < 0:
+        raise ValueError("检测到明显负电流：当前模型是非同步 Buck，请检查信号方向或使用适配模型。")
+    if options.method == "pann" and np.any(train[:, 1] < 0):
+        notes.append("保留训练测量中的负向噪声；窗口初值联合估计时约束非负，训练目标不截断。局部噪声估计不能证明信号方向正确。")
+    params, diagnostics = integral_fit(train, options) if options.method == "integral" else weak_integral_seed(train, options)
+    initial_state = None
+    if options.method == "weighted_integral":
+        diagnostics["method"] = "抗噪加权积分辨识（端点零权重，2/5/10周期窗口，无PANN微调）"
+        initial_state = np.maximum(a[0, 1:3], 0).tolist()
+        notes.append("直接采用加权积分参数，不进行 PANN 微调。连续验证从首个测量状态的非负投影出发，后段不重置；波形误差仍可能受初始测量噪声影响。")
     if options.method == "pann":
         from .pann_adapter import refine
         params, training = refine(train, params, options)
         diagnostics["pann"] = training
+        diagnostics["parameter_at_bound"] |= training.get("parameter_at_bound", False)
         diagnostics["method"] += " → PANN 波形损失微调"
-    predicted = rollout(a, params, options.vin)
+        initial_state = training["rollout_initial_state_A_V"]
+        if training["stop_reason"] == "time_budget" or training["best_at_budget_end"]:
+            notes.append("PANN 达到训练预算或最佳轮次在预算末端，不能视为已经充分收敛；请比较不同窗口长度和训练轮数。")
+        if options.pann_initial_state == "measured":
+            notes.append("当前为固定含噪测量初值的对照模式；Case14/15 表明该设置可能放大电容辨识偏差。")
+        else:
+            notes.append("PANN 联合估计窗口初值与参数；连续验证仅采用首窗口同轮次估计初值，后续不重置到测量。")
+    diagnostics["rollout_initial_state_A_V"] = list(initial_state) if initial_state is not None else a[0, 1:3].tolist()
+    diagnostics["rollout_initial_state_source"] = "training-only joint window estimate" if options.method == "pann" and options.pann_initial_state == "joint" else "first observed sample"
+    if options.method == "weighted_integral":
+        diagnostics["rollout_initial_state_source"] = "nonnegative projection of first observed sample"
+    predicted = rollout(a, params, options.vin, initial_state)
     metrics = metric(valid[:, 0], valid[:, 1:3], predicted[split:])
     train_metrics = metric(train[:, 0], train[:, 1:3], predicted[:split + 1])
     if diagnostics["parameter_at_bound"]:
-        notes.append("积分估计触及参数边界：模型或数据可能不匹配，不应直接采用参数。")
+        notes.append("辨识或初始化触及参数边界：模型或数据可能不匹配，不应直接采用参数。")
     if diagnostics["CR_condition_number"] > 100:
         notes.append("C/R 相关性较高，参数可能对噪声敏感；建议增加动态激励并更换初值复测。")
     rises = np.flatnonzero(np.diff(a[:, 3]) > 0.5) + 1
@@ -168,6 +249,8 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions):
     quality = "需复核" if (max(metrics["current_nrmse_pct"], metrics["voltage_nrmse_pct"]) > 5 or diagnostics["parameter_at_bound"] or diagnostics["CR_condition_number"] > 100) else "模型内拟合一致"
     if quality == "需复核":
         notes.append("留出误差或可辨识性检查未通过经验阈值；检查负载突变、PWM 对齐、初始状态及模型遗漏。")
+    if options.method == "pann" and (training["stop_reason"] == "time_budget" or training["best_at_budget_end"]):
+        quality = "需复核"
     notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
     return {"parameters": {"L_H": float(params[0]), "C_F": float(params[1]), "R_ohm": float(params[2])},
             "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality,

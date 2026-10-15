@@ -6,6 +6,17 @@ from collections import Counter
 from .knowledge_base.buck import FORMULA_DOCUMENTS
 
 DOCUMENTS = [
+    {"id": "pann-noisy-window-states", "title": "含噪 PLECS 窗口初值：Case14–16 的结论与当前适配", "url": None,
+     "tags": "pann 噪声 初值 窗口 电容 偏差 联合估计 noise window initial states",
+     "content": (
+         "本地 Case14 用干净窗口状态作原因诊断：原 Case13B 在3%噪声下电容最大误差6725.72%，替换状态后1.96%；干净状态是诊断特权信息，不能用于部署。"
+         "Case15 仅从含噪数据联合估计窗口初始电流、电压与L/C，3%噪声三种子电容最大误差6.94%；Case16A/B相应为3.50%/4.50%。这是每组独立辨识、同记录闭环留出评价，不证明硬件或任意数据可靠。"
+         "界面提供抗噪加权积分与PANN两种方法：weighted_integral直接输出端点零权重积分参数，无需PyTorch；pann才继续微调，不保证更准确。"
+         "PANN借鉴联合估计机制，以训练段端点零权重积分估计参数初值，先固定参数估计50轮窗口状态，再默认联合训练100轮；固定含噪初值仅作对照。"
+         "自动窗口只用训练噪声估计：任一通道噪声达到信号RMS的0.5%时优先3周期，否则1周期，短记录缩短窗口保留至少4个。此为经验规则，非最优保证；可手选1/2/3周期比较。"
+         "使用实际PWM、训练段全范围分布的非重叠窗口、非负可训练状态、同一轮次保存参数与状态。连续验证只取首窗口估计初值，不在留出段重置。"
+         "当前两状态模型未包含原实验反馈支路，不可套用原实验误差。低训练损失不等于参数准确，PANN微调可能比积分初值更偏；预热或加轮数不能保证消除短窗C偏差。最优轮次在预算末端需复核。"
+         "Case17噪声辨识尚未完成，不作为成功证据。来源：本项目 noise_evidence.json 中记录的本地实验汇总与SHA256；当前适配器成对重测见tests/evidence。")},
     {"id": "pe-gpt", "title": "PE-GPT：任务调度与计算工具", "url": "https://github.com/XinzeLee/PE-GPT",
      "tags": "pegpt pe-gpt 架构 agent 原理 模型",
      "content": "本项目借鉴 PE-GPT 的界面、任务调度、专业知识与物理模型协作方式。LLM 解释工具结果，不能代替数值算法。本项目是 Buck 专用改编，不是原 DAB 设计流程的完整复现。"},

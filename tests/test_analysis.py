@@ -18,9 +18,10 @@ def case():
     return data, Mapping(**suggest_mapping(data))
 
 
-def test_real_plecs_joint_parameters_and_holdout(case):
+@pytest.mark.parametrize("method", ["weighted_integral", "integral"])
+def test_real_plecs_joint_parameters_and_holdout(case, method):
     data, mapping = case
-    result = identify(data, mapping, FitOptions(end_s=.0008))
+    result = identify(data, mapping, FitOptions(end_s=.0008, method=method))
     p = result["parameters"]
     # Truth is used here only for independent assessment, never passed to fit.
     assert p["L_H"] == pytest.approx(60e-6, rel=.02)
@@ -29,12 +30,13 @@ def test_real_plecs_joint_parameters_and_holdout(case):
     assert result["metrics"]["current_rmse_A"] < .02
     assert result["metrics"]["voltage_rmse_V"] < .02
     assert result["parameter_error"] is None
+    assert result["method"] == method
     assert result["train_end_s"] < result["validation_end_s"]
 
 
 def test_holdout_and_filename_cannot_leak_into_fit(case):
     data, mapping = case
-    options = FitOptions(end_s=.0008)
+    options = FitOptions(end_s=.0008, method="weighted_integral")
     original = identify(data, mapping, options)
     # Poison only the held-out measurements. Estimates must be identical.
     data.name = "L999uH_C999uF_R999.csv"
@@ -48,13 +50,13 @@ def test_holdout_and_filename_cannot_leak_into_fit(case):
 
 def test_load_step_is_not_silently_accepted(case):
     data, mapping = case
-    result = identify(data, mapping, FitOptions())
+    result = identify(data, mapping, FitOptions(method="weighted_integral"))
     assert result["quality"] == "需复核"
 
 
 def test_fixed_resistance_stays_fixed(case):
     data, mapping = case
-    result = identify(data, mapping, FitOptions(mode="LC", resistance_ohm=6, end_s=.0008))
+    result = identify(data, mapping, FitOptions(mode="LC", resistance_ohm=6, end_s=.0008, method="weighted_integral"))
     assert result["parameters"]["R_ohm"] == 6
     assert result["R_estimated"] is False
 
