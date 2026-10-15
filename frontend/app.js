@@ -1,6 +1,8 @@
 /* Buildless frontend: safe text rendering, server-owned results, no provider key. */
 "use strict";
 const $ = (id) => document.getElementById(id);
+const ui = window.BuckI18n.text;
+const tr = window.BuckI18n.translate;
 const local = ["localhost", "127.0.0.1"].includes(location.hostname);
 const config = window.BUCK_CONFIG || {};
 function savedValue(key) {
@@ -26,14 +28,14 @@ const state = { dataset: null, mapping: null, summary: null, result: null, resul
   identificationOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
 const tools = {get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
-function notice(text = "", success = false) { $("notice").textContent = text; $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
+function notice(text = "", success = false) { ui($("notice"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
   const button = $(buttonId), content = $(contentId);
   const open = expanded ?? content.hidden;
   content.hidden = !open;
   button.setAttribute("aria-expanded", String(open));
-  button.setAttribute("aria-label", `${open ? "收起" : "展开"}${label}`);
-  button.title = `${open ? "收起" : "展开"}${label}`;
+  window.BuckI18n.attr(button,"aria-label",`${open ? "收起" : "展开"}${label}`);
+  window.BuckI18n.attr(button,"title",`${open ? "收起" : "展开"}${label}`);
   button.textContent = open ? "−" : "+";
 }
 function setIdentificationOpen(open) {
@@ -43,7 +45,6 @@ function setIdentificationOpen(open) {
   $("identification-form").hidden = !open;
   $("enter-identification").hidden = open;
   $("enter-identification").setAttribute("aria-expanded", String(open));
-  toggleSection("toggle-identification", "identification-content", "参数辨识", true);
   if (open) {
     $("vin").focus({preventScroll:true});
     requestAnimationFrame(drawCharts);
@@ -93,26 +94,26 @@ function controls() {
 }
 async function connect() {
   $("connection-status").className = "status";
-  $("connection-status").replaceChildren(document.createElement("i"), document.createTextNode("正在连接"));
+  $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("正在连接"));
   try {
     const health = await api("/api/health", {timeout: 60000});
     state.connected = true;
     $("connection-status").className = "status connected";
-    $("connection-status").replaceChildren(document.createElement("i"), document.createTextNode("后端已连接"));
-    $("chat-mode").textContent = health.chat_mode === "deepseek" ? `DeepSeek · ${health.model}` : "本地规则分析 · 未配置 API Key";
+    $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("后端已连接"));
+    ui($("chat-mode"), health.chat_mode === "deepseek" ? `DeepSeek · ${health.model}` : "本地规则分析 · 未配置 API Key");
     const pannOption = $("fit-method").querySelector('[value="pann"]');
     pannOption.disabled = !health.pann_available;
-    pannOption.textContent = health.pann_available ? "PANN · 物理网络微调" : "PANN · 需后端 PyTorch";
+    ui(pannOption, health.pann_available ? "PANN · 物理网络微调" : "PANN · 需后端 PyTorch");
     if (!health.pann_available) $("fit-method").value = "integral";
     const source = health.source_url || config.sourceUrl;
-    if (source && /^https:\/\//.test(source)) { $("source-link").href = source; $("source-link").textContent = "本项目源码 ↗"; }
+    if (source && /^https:\/\//.test(source)) { $("source-link").href = source; ui($("source-link"), "本项目源码 ↗"); }
     if (health.requires_token && !accessToken) notice("后端已连接。请在连接设置中输入应用访问口令后上传数据。");
     else notice();
     return true;
   } catch (error) {
     state.connected = false;
-    $("connection-status").replaceChildren(document.createElement("i"), document.createTextNode("尚未连接"));
-    $("chat-mode").textContent = "等待连接分析后端";
+    $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("尚未连接"));
+    ui($("chat-mode"), "等待连接分析后端");
     notice(error.message);
     return false;
   } finally { controls(); }
@@ -135,9 +136,9 @@ function options() {
 }
 function invalidateResult() {
   state.result = null; state.resultId = null;
-  for (const key of ["result-l", "result-c", "result-r"]) $(key).textContent = "—";
-  $("result-badge").textContent = "等待计算"; $("result-badge").className = "badge";
-  $("result-notes").textContent = "拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。";
+  for (const key of ["result-l", "result-c", "result-r"]) ui($(key), "—");
+  ui($("result-badge"), "等待计算"); $("result-badge").className = "badge";
+  ui($("result-notes"), "拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。");
   $("validation").hidden = true; $("diagnostics").hidden = true;
   $("ask-error").disabled = true; $("download-report").disabled = true;
   if (state.summary) { state.chart = state.summary.chart; drawCharts(); }
@@ -145,7 +146,7 @@ function invalidateResult() {
 function fillMappings(dataset) {
   for (const [name, id] of [["time","map-time"],["current","map-current"],["voltage","map-voltage"],["pwm","map-pwm"]]) {
     const select = $(id); select.replaceChildren();
-    if (name === "pwm") select.add(new Option("不选择（仅分析波形）", ""));
+    if (name === "pwm") { const option = new Option("", ""); ui(option,"不选择（仅分析波形）"); select.add(option); }
     dataset.columns.forEach(c => select.add(new Option(c, c)));
     select.value = dataset.suggested_mapping[name] || "";
   }
@@ -154,7 +155,7 @@ function fillMappings(dataset) {
 async function importData(file = null) {
   if (state.busy || state.job || state.chatBusy) return;
   state.busy = true; controls(); notice();
-  $("job-status").textContent = "正在读取并检查数据…";
+  ui($("job-status"), "正在读取并检查数据…");
   try {
     let uploaded;
     if (file) {
@@ -165,14 +166,14 @@ async function importData(file = null) {
     state.dataset = uploaded; state.mapping = null; state.summary = null; state.chart = null; state.zoom = null;
     invalidateResult(); clearChat(); fillMappings(uploaded);
     $("file-info").hidden = false; $("file-name").textContent = uploaded.filename;
-    $("file-rows").textContent = `${uploaded.rows.toLocaleString()} 行 · CSV 已读取`;
-    $("chat-context").textContent = `已关联：${uploaded.filename}`;
+    ui($("file-rows"), `${uploaded.rows.toLocaleString()} 行 · CSV 已读取`);
+    ui($("chat-context"), `已关联：${uploaded.filename}`);
     $("start-ms").value = file ? "" : "0"; $("end-ms").value = file ? "" : "0.8";
     if (!file) { $("vin").value = "28"; $("frequency").value = "100"; }
     await applyMapping();
     $("mapping-details").open = Boolean(file);
     if (!file) notice("已加载真实 PLECS Case16A 数据。已将辨识区间设为 0～0.8 ms，避开 1 ms 的负载突变。", true);
-  } catch (error) { notice(error.message); $("job-status").textContent = "数据读取或检查未完成"; }
+  } catch (error) { notice(error.message); ui($("job-status"), "数据读取或检查未完成"); }
   finally { state.busy = false; $("csv-file").value = ""; controls(); }
 }
 async function applyMapping() {
@@ -181,12 +182,12 @@ async function applyMapping() {
   const summary = await api("/api/analyze", {method:"POST", body:{dataset_id:state.dataset.dataset_id, mapping:selected}});
   state.mapping = selected; state.summary = summary; state.chart = summary.chart; state.zoom = null;
   invalidateResult();
-  function stat(id, value, unit) { $(id).replaceChildren(document.createTextNode(fmt(value)), Object.assign(document.createElement("small"), {textContent:unit})); }
+  function stat(id, value, unit) { $(id).replaceChildren(window.BuckI18n.node(fmt(value)), Object.assign(document.createElement("small"), {textContent:unit})); }
   stat("stat-voltage", summary.voltage.mean, "V"); stat("stat-current", summary.current.rms, "A"); stat("stat-duration", summary.duration_s*1000, "ms");
-  $("stat-points").textContent = `${summary.rows.toLocaleString()} 个有效采样点`;
+  ui($("stat-points"), `${summary.rows.toLocaleString()} 个有效采样点`);
   $("wave-subtitle").textContent = state.dataset.filename;
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
-  $("job-status").textContent = selected.pwm ? "数据就绪 · 可开始辨识" : "可分析波形 · 辨识还需要 PWM";
+  ui($("job-status"), selected.pwm ? "数据就绪 · 可开始辨识" : "可分析波形 · 辨识还需要 PWM");
   drawCharts(); controls();
 }
 async function startFit() {
@@ -194,11 +195,11 @@ async function startFit() {
   try {
     const fitOptions = options();
     state.busy = true; controls(); invalidateResult(); notice();
-    $("job-status").textContent = "正在提交辨识任务…";
+    ui($("job-status"), "正在提交辨识任务…");
     const response = await api("/api/identify", {method:"POST", body:{dataset_id:state.dataset.dataset_id,mapping:state.mapping,options:fitOptions}});
     state.busy = false;
     await watchJob(response.job_id);
-  } catch (error) { notice(error.message); $("job-status").textContent = "辨识未完成"; }
+  } catch (error) { notice(error.message); ui($("job-status"), "辨识未完成"); }
   finally { state.busy = false; controls(); }
 }
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -209,28 +210,28 @@ async function watchJob(id) {
   try {
     for (let attempt = 0; attempt < 600; attempt++) {
       const response = await api(`/api/jobs/${id}`);
-      $("job-status").textContent = response.status === "queued" ? "任务已排队…" : `正在拟合与验证 · ${Math.round((Date.now()-started)/1000)} 秒`;
+      ui($("job-status"), response.status === "queued" ? "任务已排队…" : `正在拟合与验证 · ${Math.round((Date.now()-started)/1000)} 秒`);
       if (response.status === "complete") {
         state.result = response.result; state.resultId = id; displayResult();
-        $("job-status").textContent = `辨识完成 · 用时 ${response.result.elapsed_s} 秒`;
+        ui($("job-status"), `辨识完成 · 用时 ${response.result.elapsed_s} 秒`);
         return;
       }
       if (response.status === "failed") throw new Error(response.error);
       await pause(1200);
     }
     throw new Error("任务等待超时，请检查后端日志。");
-  } catch (error) { notice(error.message); $("job-status").textContent = "任务未完成，请检查提示"; }
+  } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); }
   finally { state.job = null; controls(); }
 }
 function displayResult() {
   const r = state.result, p = r.parameters;
-  $("result-l").textContent = fmt(p.L_H*1e6,5); $("result-c").textContent = fmt(p.C_F*1e6,5); $("result-r").textContent = fmt(p.R_ohm,5);
-  $("r-label").textContent = r.R_estimated ? "负载电阻 R · 估计" : "负载电阻 R · 固定";
-  $("result-badge").textContent = r.quality; $("result-badge").className = "badge " + (r.quality === "需复核" ? "warning" : "good");
-  $("validation").hidden = false; $("rmse-i").textContent = fmt(r.metrics.current_rmse_A) + " A"; $("rmse-v").textContent = fmt(r.metrics.voltage_rmse_V*1000) + " mV";
-  $("result-notes").textContent = `${r.validation_kind}\n${r.parameter_error_note}`;
+  ui($("result-l"), fmt(p.L_H*1e6,5)); ui($("result-c"), fmt(p.C_F*1e6,5)); ui($("result-r"), fmt(p.R_ohm,5));
+  ui($("r-label"), r.R_estimated ? "负载电阻 R · 估计" : "负载电阻 R · 固定");
+  ui($("result-badge"), r.quality); $("result-badge").className = "badge " + (r.quality === "需复核" ? "warning" : "good");
+  $("validation").hidden = false; ui($("rmse-i"), fmt(r.metrics.current_rmse_A) + " A"); ui($("rmse-v"), fmt(r.metrics.voltage_rmse_V*1000) + " mV");
+  ui($("result-notes"), `${r.validation_kind}\n${r.parameter_error_note}`);
   $("diagnostics").hidden = false;
-  $("diagnostic-text").textContent = JSON.stringify({方法:r.diagnostics,工况:r.options,警告:r.warnings,留出误差:r.metrics}, null, 2);
+  ui($("diagnostic-text"), JSON.stringify({method:r.diagnostics,conditions:r.options,warnings:r.warnings,validation_errors:r.metrics}, null, 2));
   $("ask-error").disabled = false; $("download-report").disabled = false;
   state.chart = r.chart; state.zoom = null; drawCharts();
 }
@@ -245,8 +246,8 @@ function message(role, content, mode = "") {
   const article = document.createElement("article"); article.className = `message ${role}`;
   const label = document.createElement("div"); label.className = "message-label";
   if (role === "assistant") { const icon = document.createElement("span"); icon.className = "assistant-icon"; icon.textContent = "✳"; label.append(icon); }
-  label.append(document.createTextNode(role === "user" ? "你" : "实验助手"));
-  if (mode) { const badge = document.createElement("span"); badge.className = "message-mode"; badge.textContent = mode; label.append(badge); }
+  label.append(window.BuckI18n.node(role === "user" ? "你" : "实验助手"));
+  if (mode) { const badge = document.createElement("span"); badge.className = "message-mode"; ui(badge, mode); label.append(badge); }
   const text = document.createElement("div"); text.className = "message-content"; text.textContent = content;
   article.append(label, text); $("chat-messages").append(article);
   $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
@@ -264,7 +265,7 @@ async function sendMessage(value) {
   $("chat-input").value = "";
   $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
   message("user", text);
-  const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing");
+  const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
     const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:state.history.slice(-10),
       dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,options:fitOptions,result_id:fitOptions ? state.resultId : null,
@@ -274,7 +275,7 @@ async function sendMessage(value) {
       response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
     if (response.tool_calls?.length) {
       const log = document.createElement("div"); log.className = "message-tools";
-      log.textContent = response.tool_calls.map(t => `${tools[t.name] || t.name} · ${t.status}`).join("\n"); article.append(log);
+      ui(log, response.tool_calls.map(t => `${tools[t.name] || t.name} · ${t.status}`).join("\n")); article.append(log);
     }
     if (response.sources?.length) {
       const sources = document.createElement("div"); sources.className = "message-sources";
@@ -315,7 +316,7 @@ function drawChart(id, channel, predictedChannel) {
     svg.append(svgNode("rect", {x:sx,y:top,width:Math.max(0,w-right-sx),height:h-top-bottom,fill:"#f1f6f9"}));
     if (state.result.train_end_s >= lo) {
       svg.append(svgNode("line",{x1:sx,y1:top,x2:sx,y2:h-bottom,stroke:"#b6c9cf","stroke-dasharray":"3 4"}));
-      svg.append(svgNode("text",{x:sx+5,y:top+9,fill:"#91a5af","font-size":"8"},"留出验证"));
+      svg.append(svgNode("text",{x:sx+5,y:top+9,fill:"#91a5af","font-size":"8"},tr("留出验证")));
     }
   }
   for(let k=0;k<4;k++) {
@@ -342,7 +343,7 @@ function drawChart(id, channel, predictedChannel) {
     if(drag!==null) {selection.setAttribute("x",x(Math.min(time,drag)));selection.setAttribute("width",Math.abs(x(time)-x(drag)));}
     let l=0,r=t.length-1;while(l<r){const mid=(l+r)>>1;if(t[mid]<time)l=mid+1;else r=mid;}
     const tip=$("chart-tooltip"); tip.hidden=false;
-    tip.textContent=`${fmt(t[l]*1000,5)} ms\n测量 ${fmt(ys[l],5)} ${channel==='current_A'?'A':'V'}`+(ps?`\n预测 ${fmt(ps[l],5)}`:"");
+    tip.textContent=`${fmt(t[l]*1000,5)} ms\n${tr("测量")} ${fmt(ys[l],5)} ${channel==='current_A'?'A':'V'}`+(ps?`\n${tr("预测")} ${fmt(ps[l],5)}`:"");
     tip.style.left=Math.min(event.clientX+12,window.innerWidth-150)+"px";tip.style.top=Math.max(10,event.clientY-70)+"px";
   };
   overlay.onpointerup = event => {
@@ -355,7 +356,7 @@ function drawChart(id, channel, predictedChannel) {
 }
 function drawCharts() {
   drawChart("current-chart","current_A","predicted_current_A"); drawChart("voltage-chart","voltage_V","predicted_voltage_V");
-  if(state.chart) $("chart-caption").textContent = `${state.chart.original_points.toLocaleString()} 计算点 · ${state.chart.display_points.toLocaleString()} 显示点${state.chart.decimated?'（显示已抽样）':''}`;
+  if(state.chart) ui($("chart-caption"), `${state.chart.original_points.toLocaleString()} 计算点 · ${state.chart.display_points.toLocaleString()} 显示点${state.chart.decimated?'（显示已抽样）':''}`);
   $("view-full").classList.toggle("active",!state.zoom); $("view-tail").classList.toggle("active",Boolean(state.zoom));
 }
 function downloadReport() {
@@ -370,35 +371,34 @@ $("dropzone").ondragover = event => {event.preventDefault();$("dropzone").classL
 $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
 $("dropzone").ondrop = event => {event.preventDefault();$("dropzone").classList.remove("dragover");if(event.dataTransfer.files[0])void importData(event.dataTransfer.files[0]);};
 $("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await applyMapping();notice("列映射已应用。",true);}catch(e){notice(e.message);}finally{state.busy=false;controls();}};
-for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();$("job-status").textContent="映射已更改，请点击应用并检查数据";controls();};
-for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{invalidateResult();$("fixed-r-label").hidden=$("fit-mode").value!=="LC";$("train-label").textContent=$("train-fraction").value+"%";};
+for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();ui($("job-status"), "映射已更改，请点击应用并检查数据");controls();};
+for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{invalidateResult();$("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");};
 $("identify").onclick=()=>void startFit();
 $("enter-identification").onclick=()=>setIdentificationOpen(true);
 $("leave-identification").onclick=$("close-analysis").onclick=()=>setIdentificationOpen(false);
 $("toggle-import").onclick=()=>toggleSection("toggle-import","import-content","导入波形");
-$("toggle-identification").onclick=()=>toggleSection("toggle-identification","identification-content","参数辨识");
 $("view-full").onclick=()=>{state.zoom=null;drawCharts();};
 $("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;state.zoom=[Math.max(t[0],t[t.length-1]-10/(Number($("frequency").value)*1000)),t[t.length-1]];drawCharts();}};
 $("chat-form").onsubmit=event=>{event.preventDefault();void sendMessage($("chat-input").value);};
 $("chat-input").onkeydown=event=>{if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing){event.preventDefault();void sendMessage($("chat-input").value);}};
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));
-$("ask-error").onclick=()=>void sendMessage("请分析当前辨识结果的误差，并给出有依据的修改计划。");
+$("ask-error").onclick=()=>void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"));
 $("clear-chat").onclick=clearChat;$("download-report").onclick=downloadReport;
-$("clear-data").onclick=async()=>{try{await api(`/api/datasets/${state.dataset.dataset_id}`,{method:"DELETE"});state.dataset=null;state.mapping=null;state.summary=null;state.chart=null;invalidateResult();clearChat();$("file-info").hidden=true;$("chart-empty").hidden=false;$("chart-container").hidden=true;$("chat-context").textContent="未关联实验数据";$("job-status").textContent="等待导入实验数据";for(const id of ["stat-voltage","stat-current","stat-duration"])$(id).textContent="—";$("stat-points").textContent="尚未导入数据";controls();}catch(e){notice(e.message);}};
-$("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;$("settings-status").textContent="";$("settings-dialog").showModal();};
+$("clear-data").onclick=async()=>{try{await api(`/api/datasets/${state.dataset.dataset_id}`,{method:"DELETE"});state.dataset=null;state.mapping=null;state.summary=null;state.chart=null;invalidateResult();clearChat();$("file-info").hidden=true;$("chart-empty").hidden=false;$("chart-container").hidden=true;ui($("chat-context"), "未关联实验数据");ui($("job-status"), "等待导入实验数据");for(const id of ["stat-voltage","stat-current","stat-duration"])ui($(id),"—");ui($("stat-points"), "尚未导入数据");controls();}catch(e){notice(e.message);}};
+$("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;ui($("settings-status"), "");$("settings-dialog").showModal();};
 $("api-url").oninput=()=>{
   // Never carry the previous backend's credential into a different connection.
   $("access-token").value=tokenKey($("api-url").value.trim())===tokenKey(base) ? accessToken : savedToken($("api-url").value.trim());
 };
 $("forget-access-token").onclick=()=>{
   const key=tokenKey($("api-url").value.trim());
-  if(!key){$("settings-status").textContent="请先填写有效的后端地址。";return;}
+  if(!key){ui($("settings-status"), "请先填写有效的后端地址。");return;}
   try {
     localStorage.removeItem(key);
     $("access-token").value="";
     if(key===tokenKey(base))accessToken="";
-    $("settings-status").textContent="已清除这个后端在当前浏览器中记住的口令。";
-  }catch{$("settings-status").textContent="浏览器不允许清除存储，请在浏览器设置中清除此网站的数据。";}
+    ui($("settings-status"), "已清除这个后端在当前浏览器中记住的口令。");
+  }catch{ui($("settings-status"), "浏览器不允许清除存储，请在浏览器设置中清除此网站的数据。");}
 };
 $("close-settings").onclick=()=>$("settings-dialog").close();
 $("settings-form").onsubmit=async event=>{
@@ -417,14 +417,15 @@ $("settings-form").onsubmit=async event=>{
       if(accessToken)localStorage.setItem(tokenKey(base),accessToken);
       else localStorage.removeItem(tokenKey(base));
     }catch{remembered=false;}
-    $("settings-status").textContent="正在连接…";
+    ui($("settings-status"), "正在连接…");
     if(await connect()){
-      $("settings-dialog").close();$("settings-status").textContent="";
+      $("settings-dialog").close();ui($("settings-status"), "");
       if(!remembered)notice("已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。");
     }
-    else $("settings-status").textContent="连接未成功，请检查页面提示。";
-  }catch(e){$("settings-status").textContent=e.message;}
+    else ui($("settings-status"), "连接未成功，请检查页面提示。");
+  }catch(e){ui($("settings-status"), e.message);}
 };
+document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; drawCharts(); });
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");
 controls();void connect();

@@ -12,7 +12,7 @@ ALLOWED_FILES = {".env.example", ".gitignore", "LICENSE", "README.md", "THIRD_PA
 
 
 def build():
-    destination = ROOT.parent / "pe-ai-interface-github.zip"
+    destination = ROOT.parent / f"{ROOT.name}-github.zip"
     files = []
     for folder in ALLOWED_DIRS:
         files.extend(p for p in (ROOT / folder).rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")

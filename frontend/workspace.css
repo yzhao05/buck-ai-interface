@@ -1,4 +1,16 @@
 /* Conversation is the primary workspace. Analysis opens only on explicit entry. */
+.language-toggle { min-width: 43px; font-weight: 600; white-space: nowrap; }
+html[lang="en"] .split-legend { flex-wrap: wrap; gap: 7px; }
+html[lang="en"] .welcome h3 { font-size: clamp(23px, 2.2vw, 33px); }
+html[lang="en"] .result-actions { flex-wrap: wrap; }
+@media (max-width: 700px) {
+  .topbar { display: grid; grid-template-columns: auto minmax(0, 1fr); height: auto; min-height: 76px; padding: 10px 12px; gap: 8px; }
+  .topbar .connection { display: grid; grid-template-columns: auto auto; margin-left: auto; gap: 7px; }
+  .topbar .connection .status { order: 3; grid-column: 1 / -1; justify-self: end; text-align: right; }
+  .topbar .brand small { display: none; }
+  .topbar .brand { font-size: 18px; gap: 6px; }
+  .topbar .brand-mark { width: 30px; height: 30px; line-height: 26px; }
+}
 .workspace {
   grid-template-columns: 258px minmax(0, 1fr);
   grid-template-areas: "sidebar conversation";

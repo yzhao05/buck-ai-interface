@@ -7,13 +7,13 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="./"><span class="brand-mark">∿</span><span>Buck<span class="brand-light">Lab</span><small>POWER ELECTRONICS WORKSPACE</small></span></a>
     <nav aria-label="工作台导航"><span class="nav-active">实验工作台</span><a href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">PE-GPT ↗</a></nav>
-    <div class="connection"><span id="connection-status" class="status"><i></i>正在连接</span><button class="button subtle small" id="open-settings">连接设置 <span aria-hidden="true">⚙</span></button></div>
+    <div class="connection"><button type="button" id="language-toggle" class="button subtle small language-toggle" aria-label="切换为英文" title="切换为英文">EN</button><span id="connection-status" class="status"><i></i>正在连接</span><button class="button subtle small" id="open-settings">连接设置 <span aria-hidden="true">⚙</span></button></div>
   </header>
   <div class="workspace" id="workspace">
     <aside class="sidebar">
@@ -35,7 +35,7 @@
         </div>
       </section>
       <section class="side-section">
-        <div class="section-heading"><h3><span class="step">02</span>参数辨识</h3><button type="button" class="section-toggle" id="toggle-identification" aria-controls="identification-content" aria-expanded="true" aria-label="收起参数辨识" title="收起参数辨识">−</button></div>
+        <div class="section-heading"><h3><span class="step">02</span>参数辨识</h3></div>
         <div id="identification-content">
         <button type="button" id="enter-identification" class="button primary full" aria-controls="identification-form analysis-panel" aria-expanded="false">进入参数辨识 <span aria-hidden="true">→</span></button>
         <div id="identification-form" hidden>
