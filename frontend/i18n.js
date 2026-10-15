@@ -129,6 +129,17 @@ window.BuckI18n = (() => {
     "检测到明显负电流：当前模型是非同步 Buck，请检查信号方向或使用适配模型。": "Significant negative current detected. This model is an asynchronous Buck; check signal direction or use a compatible model.",
     "训练或留出段采样不足，请调整区间。": "Not enough samples in the training or validation segment. Adjust the interval."
   };
+  Object.assign(english, {
+    "历史会话":"Chat history", "新会话":"New conversation", "＋ 新建会话":"＋ New conversation",
+    "新建会话，保留当前历史":"New conversation, keep current history",
+    "收起实验配置":"Collapse experiment settings", "展开实验配置":"Expand experiment settings",
+    "收起历史会话":"Collapse chat history", "展开历史会话":"Expand chat history",
+    "对话长期保存在当前浏览器，清除网站数据会删除历史；不会跨设备同步。":"Conversations stay in this browser until site data is cleared. They do not sync across devices.",
+    "对话保存在此浏览器，不自动过期；后端 CSV 默认 1 小时过期。":"Conversations stay in this browser without automatic expiry; backend CSV data expires after 1 hour by default.",
+    "历史保存失败：浏览器存储不可用或已满。当前对话仍可使用，请勿关闭页面。":"History could not be saved: browser storage is unavailable or full. You can keep chatting, but do not close this page.",
+    "历史 CSV 需重新关联":"Historical CSV needs reconnecting",
+    "历史对话已恢复；CSV 已过期或不可用。如需重新分析，请再次上传 CSV。":"Conversation restored; the CSV has expired or is unavailable. Upload it again to rerun analysis."
+  });
   const patterns = [
     [/^(.+) 行 · CSV 已读取$/, "$1 rows · CSV loaded"],
     [/^已关联：(.+)$/, "Attached: $1"],

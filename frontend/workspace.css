@@ -47,6 +47,16 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   margin-bottom: 16px;
 }
 .section-heading h3 { margin: 0; }
+.section-heading h2 { margin: 0; font-size: 17px; }
+.experiment-heading h2 { margin-top: 7px; }
+.history-section { margin-top: 24px; }
+#history-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; max-height: 340px; overflow-y: auto; }
+.history-item { display: flex; flex-direction: column; gap: 5px; text-align: left; width: 100%; min-width: 0; padding: 11px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #627c80; }
+.history-item:hover { background: #f0f5f3; }
+.history-item[aria-current="true"] { background: var(--teal-light); border-color: #cce1db; color: var(--teal); }
+.history-item strong { font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.history-item time { font-size: 9px; color: #829795; }
+#history-status { color: #9a6223; }
 .section-toggle {
   width: 26px;
   height: 26px;

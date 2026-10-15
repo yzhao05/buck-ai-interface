@@ -21,8 +21,7 @@ function savedToken(address) {
 }
 let base = savedValue("buck-api-url") || config.apiBaseUrl || (local ? location.origin : "");
 let accessToken = savedToken(base);
-let sessionId = sessionStorage.getItem("buck-session");
-if (!sessionId) { sessionId = crypto.randomUUID(); sessionStorage.setItem("buck-session", sessionId); }
+let sessionId = crypto.randomUUID();
 const state = { dataset: null, mapping: null, summary: null, result: null, resultId: null,
   history: [], connected: false, busy: false, chatBusy: false, job: null, chart: null, zoom: null,
   identificationOpen: false };
@@ -70,7 +69,7 @@ async function api(path, {method = "GET", body, timeout = 90000} = {}) {
     const response = await fetch(base.replace(/\/$/, "") + path, {method, headers,
       body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, signal: controller.signal});
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(errorText(data));
+    if (!response.ok) throw Object.assign(new Error(errorText(data)), {status:response.status});
     return data;
   } catch (error) {
     if (error.name === "AbortError") throw new Error("请求超时。Render 服务可能正在唤醒，请稍后重试。");
@@ -86,8 +85,10 @@ function controls() {
   $("empty-demo").disabled = waiting;
   $("csv-file").disabled = waiting;
   $("clear-data").disabled = waiting;
-  $("send-chat").disabled = state.chatBusy || !state.connected;
-  $("clear-chat").disabled = state.chatBusy;
+  $("send-chat").disabled = waiting || !state.connected || !activeConversation;
+  $("clear-chat").disabled = waiting;
+  $("new-chat").disabled = waiting;
+  document.querySelectorAll(".history-item").forEach(button => button.disabled = waiting);
   $("leave-identification").disabled = waiting;
   $("close-analysis").disabled = waiting;
   for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","start-ms","end-ms","train-fraction"]) $(id).disabled = waiting;
@@ -164,7 +165,7 @@ async function importData(file = null) {
       uploaded = await api("/api/datasets", {method:"POST", body:form});
     } else uploaded = await api("/api/demo", {method:"POST"});
     state.dataset = uploaded; state.mapping = null; state.summary = null; state.chart = null; state.zoom = null;
-    invalidateResult(); clearChat(); fillMappings(uploaded);
+    invalidateResult(); fillMappings(uploaded);
     $("file-info").hidden = false; $("file-name").textContent = uploaded.filename;
     ui($("file-rows"), `${uploaded.rows.toLocaleString()} 行 · CSV 已读取`);
     ui($("chat-context"), `已关联：${uploaded.filename}`);
@@ -174,7 +175,7 @@ async function importData(file = null) {
     $("mapping-details").open = Boolean(file);
     if (!file) notice("已加载真实 PLECS Case16A 数据。已将辨识区间设为 0～0.8 ms，避开 1 ms 的负载突变。", true);
   } catch (error) { notice(error.message); ui($("job-status"), "数据读取或检查未完成"); }
-  finally { state.busy = false; $("csv-file").value = ""; controls(); }
+  finally { state.busy = false; $("csv-file").value = ""; persistConversation(); controls(); }
 }
 async function applyMapping() {
   if (!state.dataset) return;
@@ -205,7 +206,7 @@ async function startFit() {
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function watchJob(id) {
   if (state.job) return;
-  state.job = id; controls();
+  state.job = id; persistConversation(); controls();
   const started = Date.now();
   try {
     for (let attempt = 0; attempt < 600; attempt++) {
@@ -221,7 +222,7 @@ async function watchJob(id) {
     }
     throw new Error("任务等待超时，请检查后端日志。");
   } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); }
-  finally { state.job = null; controls(); }
+  finally { state.job = null; persistConversation(); controls(); }
 }
 function displayResult() {
   const r = state.result, p = r.parameters;
@@ -253,26 +254,7 @@ function message(role, content, mode = "") {
   $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
   return article;
 }
-async function sendMessage(value) {
-  const text = value.trim(); if (!text || state.chatBusy) return;
-  if (!state.connected) { notice("请先连接分析后端。"); return; }
-  let fitOptions;
-  try { fitOptions = options(); } catch (error) {
-    if (state.identificationOpen) { notice(error.message); return; }
-  }
-  state.chatBusy = true; controls();
-  $("conversation-panel").classList.remove("is-empty");
-  $("chat-input").value = "";
-  $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
-  message("user", text);
-  const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
-  try {
-    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:state.history.slice(-10),
-      dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,options:fitOptions,result_id:fitOptions ? state.resultId : null,
-      identification_enabled:state.identificationOpen}});
-    pending.remove();
-    const article = message("assistant", (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer,
-      response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+function decorateResponse(article, response) {
     if (response.route) {
       const task = document.createElement("div"); task.className = "message-tools message-task";
       task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
@@ -293,10 +275,34 @@ async function sendMessage(value) {
         sources.append(link);
       }); article.append(sources);
     }
-    state.history.push({role:"user", content:text}, {role:"assistant", content:response.answer});
-    state.history = state.history.slice(-10);
+}
+async function sendMessage(value) {
+  const text = value.trim(); if (!text || historyLocked() || !activeConversation) return;
+  if (!state.connected) { notice("请先连接分析后端。"); return; }
+  let fitOptions;
+  try { fitOptions = options(); } catch (error) {
+    if (state.identificationOpen) { notice(error.message); return; }
+  }
+  state.chatBusy = true; controls();
+  $("conversation-panel").classList.remove("is-empty");
+  $("chat-input").value = "";
+  $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
+  message("user", text);
+  const previousHistory = readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
+    .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000)}));
+  rememberMessage("user", text);
+  const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
+  try {
+    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,
+      dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,options:fitOptions,result_id:fitOptions ? state.resultId : null,
+      identification_enabled:state.identificationOpen}});
+    pending.remove();
+    const article = message("assistant", (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer,
+      response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+    decorateResponse(article, response);
+    rememberMessage("assistant", article.querySelector(".message-content").textContent, {route:response.route, tool_calls:response.tool_calls, sources:response.sources}, response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
-  } catch (error) { pending.remove(); message("assistant", error.message, "请求未完成"); }
+  } catch (error) { pending.remove(); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
   finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; }
 }
 function svgNode(name, attrs = {}, text = null) {
@@ -377,7 +383,7 @@ $("load-demo").onclick = $("empty-demo").onclick = () => void importData();
 $("dropzone").ondragover = event => {event.preventDefault();$("dropzone").classList.add("dragover");};
 $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
 $("dropzone").ondrop = event => {event.preventDefault();$("dropzone").classList.remove("dragover");if(event.dataTransfer.files[0])void importData(event.dataTransfer.files[0]);};
-$("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await applyMapping();notice("列映射已应用。",true);}catch(e){notice(e.message);}finally{state.busy=false;controls();}};
+$("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await applyMapping();notice("列映射已应用。",true);}catch(e){notice(e.message);}finally{state.busy=false;persistConversation();controls();}};
 for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();ui($("job-status"), "映射已更改，请点击应用并检查数据");controls();};
 for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{invalidateResult();$("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");};
 $("identify").onclick=()=>void startFit();
@@ -390,8 +396,17 @@ $("chat-form").onsubmit=event=>{event.preventDefault();void sendMessage($("chat-
 $("chat-input").onkeydown=event=>{if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing){event.preventDefault();void sendMessage($("chat-input").value);}};
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));
 $("ask-error").onclick=()=>void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"));
-$("clear-chat").onclick=clearChat;$("download-report").onclick=downloadReport;
-$("clear-data").onclick=async()=>{try{await api(`/api/datasets/${state.dataset.dataset_id}`,{method:"DELETE"});state.dataset=null;state.mapping=null;state.summary=null;state.chart=null;invalidateResult();clearChat();$("file-info").hidden=true;$("chart-empty").hidden=false;$("chart-container").hidden=true;ui($("chat-context"), "未关联实验数据");ui($("job-status"), "等待导入实验数据");for(const id of ["stat-voltage","stat-current","stat-duration"])ui($(id),"—");ui($("stat-points"), "尚未导入数据");controls();}catch(e){notice(e.message);}};
+$("clear-chat").onclick=$("new-chat").onclick=()=>void newConversation();$("download-report").onclick=downloadReport;
+$("clear-data").onclick=async()=>{
+  if (historyLocked() || !state.dataset) return;
+  state.busy=true; controls();
+  try {
+    try { await api(`/api/datasets/${state.dataset.dataset_id}`,{method:"DELETE"}); }
+    catch(error) { if(error.status!==404) throw error; }
+    resetExperiment(); persistConversation();
+  }catch(error){notice(error.message);}
+  finally {state.busy=false;controls();}
+};
 $("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;ui($("settings-status"), "");$("settings-dialog").showModal();};
 $("api-url").oninput=()=>{
   // Never carry the previous backend's credential into a different connection.
@@ -417,6 +432,8 @@ $("settings-form").onsubmit=async event=>{
     if(state.job||state.busy||state.chatBusy)throw new Error("请等待当前请求结束后切换连接。");
     const next=url.toString().replace(/\/$/,"");
     if(base&&next!==base&&state.dataset)throw new Error("切换后端前请先清除当前数据。");
+    const backendChanged=next!==base;
+    if(backendChanged)persistConversation();
     base=next;accessToken=$("access-token").value.trim();
     let remembered=true;
     try {
@@ -425,14 +442,25 @@ $("settings-form").onsubmit=async event=>{
       else localStorage.removeItem(tokenKey(base));
     }catch{remembered=false;}
     ui($("settings-status"), "正在连接…");
+    if(backendChanged){state.connected=false;await initializeHistory();}
     if(await connect()){
+      if(!state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
       $("settings-dialog").close();ui($("settings-status"), "");
       if(!remembered)notice("已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。");
     }
     else ui($("settings-status"), "连接未成功，请检查页面提示。");
   }catch(e){ui($("settings-status"), e.message);}
 };
-document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; drawCharts(); });
+$("chat-input").addEventListener("input",persistConversation);
+$("experiment-content").addEventListener("change",persistConversation);
+for (const [button,content,label] of [["toggle-experiment","experiment-content","实验配置"],["toggle-history","history-content","历史会话"]]) {
+  $(button).onclick=()=>{
+    toggleSection(button,content,label);
+    try {localStorage.setItem(`buck-panel:${new URL(".",location.href).pathname}:${button}`,$(content).hidden ? "closed" : "open");} catch {}
+  };
+}
+document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; drawCharts(); renderHistory(); });
+window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");
-controls();void connect();
+controls();void (async()=>{await initializeHistory();if(await connect())await restoreAttachment(activeConversation?.attachment);})();

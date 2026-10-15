@@ -22,7 +22,10 @@ jobs:
         with:
           node-version: '22'
       - name: Validate JavaScript
-        run: node --check frontend/app.js
+        run: |
+          node --check frontend/app.js
+          node --check frontend/history.js
+          node --check frontend/i18n.js
       - name: Set public backend address
         env:
           RENDER_API_URL: ${{ vars.RENDER_API_URL }}

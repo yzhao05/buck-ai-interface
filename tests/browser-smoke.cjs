@@ -33,7 +33,7 @@ const assert = require('node:assert/strict');
   await page.locator('#send-chat').click();
   await page.locator('.message.assistant').filter({hasText:'进入参数辨识'}).waitFor();
   assert(await page.locator('#analysis-panel').isHidden());
-  await page.locator('#clear-chat').click();
+  // Keep this conversation's CSV for the identification flow. New chat intentionally isolates data.
   await page.locator('#enter-identification').click();
   assert(await page.locator('#identification-form').isVisible());
   assert(await page.locator('#analysis-panel').isVisible());
