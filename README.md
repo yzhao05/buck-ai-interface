@@ -53,7 +53,7 @@ DEEPSEEK_MODEL=deepseek-flash
 4. Render 成功后记下 `https://你的服务.onrender.com`。先访问它的 `/api/health` 确认 `status: ok`。
 5. GitHub 仓库 **Settings → Secrets and variables → Actions → Variables** 新建 `RENDER_API_URL`，值为上述服务地址。它是公开地址，不是 Secret。不要在 GitHub Variables 中放 DeepSeek Key。
 6. GitHub **Settings → Pages → Source** 选择 **GitHub Actions**。在 Actions 手动运行 `Deploy interface to GitHub Pages`。该流程只发布 `frontend/`。
-7. 打开 Pages 地址，点“连接设置”，输入 Render 中的 `APP_ACCESS_TOKEN`。这是你的应用口令，不是 DeepSeek Key。浏览器仅在当前页面内存保存口令，刷新后需要重新输入。
+7. 打开 Pages 地址，点“连接设置”，输入 Render 中的 `APP_ACCESS_TOKEN`，点击“保存并连接”。这是你的应用口令，不是 DeepSeek Key。当前浏览器会自动记住口令，刷新或下次打开时自动使用；换浏览器、无痕模式或清除网站数据后需要重新输入。口令按当前项目路径和后端地址分别保存，切换后端不会沿用另一个后端的口令。在“连接设置”点击“清除已记住的口令”可以删除记忆；Render 口令变更后在此重新填写并保存。
 8. 加载示例、辨识、提问并导出报告，确认整条链路。
 
 也可直接在页面“连接设置”填写后端地址；地址保存在当前浏览器中，会覆盖 config.js 的默认地址。换后端前先清除当前数据。Render 的资源配额或休眠可能导致首次请求等待，页面会显示连接/超时状态。

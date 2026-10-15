@@ -3,8 +3,22 @@
 const $ = (id) => document.getElementById(id);
 const local = ["localhost", "127.0.0.1"].includes(location.hostname);
 const config = window.BUCK_CONFIG || {};
-let base = localStorage.getItem("buck-api-url") || config.apiBaseUrl || (local ? location.origin : "");
-let accessToken = "";
+function savedValue(key) {
+  try { return localStorage.getItem(key) || ""; } catch { return ""; }
+}
+function tokenKey(address) {
+  try {
+    const url = new URL(address);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    return `buck-access-token:${new URL(".", location.href).pathname}:${url.href.replace(/\/$/, "")}`;
+  } catch { return null; }
+}
+function savedToken(address) {
+  const key = tokenKey(address);
+  return key ? savedValue(key) : "";
+}
+let base = savedValue("buck-api-url") || config.apiBaseUrl || (local ? location.origin : "");
+let accessToken = savedToken(base);
 let sessionId = sessionStorage.getItem("buck-session");
 if (!sessionId) { sessionId = crypto.randomUUID(); sessionStorage.setItem("buck-session", sessionId); }
 const state = { dataset: null, mapping: null, summary: null, result: null, resultId: null,
@@ -371,7 +385,21 @@ document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>vo
 $("ask-error").onclick=()=>void sendMessage("请分析当前辨识结果的误差，并给出有依据的修改计划。");
 $("clear-chat").onclick=clearChat;$("download-report").onclick=downloadReport;
 $("clear-data").onclick=async()=>{try{await api(`/api/datasets/${state.dataset.dataset_id}`,{method:"DELETE"});state.dataset=null;state.mapping=null;state.summary=null;state.chart=null;invalidateResult();clearChat();$("file-info").hidden=true;$("chart-empty").hidden=false;$("chart-container").hidden=true;$("chat-context").textContent="未关联实验数据";$("job-status").textContent="等待导入实验数据";for(const id of ["stat-voltage","stat-current","stat-duration"])$(id).textContent="—";$("stat-points").textContent="尚未导入数据";controls();}catch(e){notice(e.message);}};
-$("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;$("settings-dialog").showModal();};
+$("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;$("settings-status").textContent="";$("settings-dialog").showModal();};
+$("api-url").oninput=()=>{
+  // Never carry the previous backend's credential into a different connection.
+  $("access-token").value=tokenKey($("api-url").value.trim())===tokenKey(base) ? accessToken : savedToken($("api-url").value.trim());
+};
+$("forget-access-token").onclick=()=>{
+  const key=tokenKey($("api-url").value.trim());
+  if(!key){$("settings-status").textContent="请先填写有效的后端地址。";return;}
+  try {
+    localStorage.removeItem(key);
+    $("access-token").value="";
+    if(key===tokenKey(base))accessToken="";
+    $("settings-status").textContent="已清除这个后端在当前浏览器中记住的口令。";
+  }catch{$("settings-status").textContent="浏览器不允许清除存储，请在浏览器设置中清除此网站的数据。";}
+};
 $("close-settings").onclick=()=>$("settings-dialog").close();
 $("settings-form").onsubmit=async event=>{
   event.preventDefault();
@@ -382,9 +410,18 @@ $("settings-form").onsubmit=async event=>{
     if(state.job||state.busy||state.chatBusy)throw new Error("请等待当前请求结束后切换连接。");
     const next=url.toString().replace(/\/$/,"");
     if(base&&next!==base&&state.dataset)throw new Error("切换后端前请先清除当前数据。");
-    base=next;accessToken=$("access-token").value.trim();localStorage.setItem("buck-api-url",base);
+    base=next;accessToken=$("access-token").value.trim();
+    let remembered=true;
+    try {
+      localStorage.setItem("buck-api-url",base);
+      if(accessToken)localStorage.setItem(tokenKey(base),accessToken);
+      else localStorage.removeItem(tokenKey(base));
+    }catch{remembered=false;}
     $("settings-status").textContent="正在连接…";
-    if(await connect()){$("settings-dialog").close();$("settings-status").textContent="";}
+    if(await connect()){
+      $("settings-dialog").close();$("settings-status").textContent="";
+      if(!remembered)notice("已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。");
+    }
     else $("settings-status").textContent="连接未成功，请检查页面提示。";
   }catch(e){$("settings-status").textContent=e.message;}
 };
