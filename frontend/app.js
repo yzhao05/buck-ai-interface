@@ -27,7 +27,7 @@ const state = { dataset: null, csvFile: null, mapping: null, summary: null, resu
   identificationOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
 const tools = {get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
-function notice(text = "", success = false) { ui($("notice"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
+function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
   const button = $(buttonId), content = $(contentId);
   const open = expanded ?? content.hidden;
@@ -79,6 +79,15 @@ async function api(path, {method = "GET", body, timeout = 90000, asBlob = false,
     throw error;
   } finally { clearTimeout(timer); }
 }
+function pwmSource() {
+  const selected = $("pwm-source").value;
+  return selected === "auto" ? (state.mapping && !state.mapping.pwm ? "controller" : "measured") : selected;
+}
+function prepareControllerDefaults() {
+  if (pwmSource() !== "controller") return;
+  if (!$("start-ms").value) $("start-ms").value = "0";
+  if (!$("end-ms").value) $("end-ms").value = "0.8";
+}
 function controls() {
   const waiting = historyLocked();
   $("chat-input").disabled = state.syncBusy;
@@ -98,10 +107,15 @@ function controls() {
   $("leave-identification").disabled = waiting;
   $("close-analysis").disabled = waiting;
   $("pann-settings").hidden = $("fit-method").value !== "pann";
+  const reconstructed = pwmSource() === "controller";
+  $("controller-settings").hidden = !reconstructed;
+  $("fit-mode").querySelector('[value="LCR"]').disabled = reconstructed;
+  if (reconstructed) $("fit-mode").value = "LC";
+  $("fixed-r-label").hidden = $("fit-mode").value !== "LC";
   ui($("method-hint"), $("fit-method").value === "pann"
     ? "从加权积分初值继续优化窗口状态和参数；不保证比积分结果更准确。"
     : "直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。");
-  for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).disabled = waiting;
+  for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction","pwm-source","controller-confirmed"]) $(id).disabled = waiting;
 }
 async function connect() {
   $("connection-status").className = "status";
@@ -138,6 +152,11 @@ function mappingFromForm() {
   return {time:$("map-time").value, current:$("map-current").value, voltage:$("map-voltage").value,
     pwm:$("map-pwm").value || null, time_unit:$("time-unit").value, current_unit:$("current-unit").value, voltage_unit:$("voltage-unit").value};
 }
+function readyStatus() {
+  ui($("job-status"), pwmSource() === "controller"
+    ? ($("controller-confirmed").value === "yes" ? "三列数据就绪 · 固定 R 辨识 L/C" : "请确认已知控制电路配置后开始辨识")
+    : state.mapping?.pwm ? "数据就绪 · 可开始辨识" : "无 PWM 列：请在基本信息选择已知控制器重建并确认配置，或补充实际 PWM。");
+}
 function options() {
   const numeric = (id) => {
     const el = $(id);
@@ -145,6 +164,7 @@ function options() {
     return Number(el.value);
   };
   return {vin:numeric("vin"), frequency_hz:numeric("frequency")*1000,
+    pwm_source:pwmSource(), controller_confirmed:$("controller-confirmed").value === "yes",
     start_s:$("start-ms").value === "" ? null : Number($("start-ms").value)/1000,
     end_s:$("end-ms").value === "" ? null : Number($("end-ms").value)/1000,
     train_fraction:Number($("train-fraction").value)/100, mode:$("fit-mode").value,
@@ -170,7 +190,7 @@ function invalidateResult() {
 function fillMappings(dataset) {
   for (const [name, id] of [["time","map-time"],["current","map-current"],["voltage","map-voltage"],["pwm","map-pwm"]]) {
     const select = $(id); select.replaceChildren();
-    if (name === "pwm") { const option = new Option("", ""); ui(option,"不选择（仅分析波形）"); select.add(option); }
+    if (name === "pwm") { const option = new Option("", ""); ui(option,"不选择（无 PWM 列）"); select.add(option); }
     dataset.columns.forEach(c => select.add(new Option(c, c)));
     select.value = dataset.suggested_mapping[name] || "";
   }
@@ -191,6 +211,7 @@ async function importData(file = null) {
     state.csvFile = null;
     await archiveCurrentCsv(file);
     invalidateResult(); fillMappings(uploaded);
+    $("controller-confirmed").value = "no";
     $("file-info").hidden = false; $("file-name").textContent = uploaded.filename;
     ui($("file-rows"), `${uploaded.rows.toLocaleString()} 行 · CSV 已读取`);
     ui($("chat-context"), `已关联：${uploaded.filename}`);
@@ -208,14 +229,19 @@ async function applyMapping() {
   const selected = mappingFromForm();
   const summary = await api("/api/analyze", {method:"POST", body:{dataset_id:state.dataset.dataset_id, mapping:selected}});
   state.mapping = selected; state.summary = summary; state.chart = summary.chart; state.zoom = null;
+  prepareControllerDefaults(); controls();
   invalidateResult();
+  displaySummary(); readyStatus();
+  drawCharts(); controls();
+}
+function displaySummary() {
+  if (!state.summary || !state.dataset) return;
+  const summary = state.summary;
   function stat(id, value, unit) { $(id).replaceChildren(window.BuckI18n.node(fmt(value)), Object.assign(document.createElement("small"), {textContent:unit})); }
   stat("stat-voltage", summary.voltage.mean, "V"); stat("stat-current", summary.current.rms, "A"); stat("stat-duration", summary.duration_s*1000, "ms");
   ui($("stat-points"), `${summary.rows.toLocaleString()} 个有效采样点`);
   $("wave-subtitle").textContent = state.dataset.filename;
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
-  ui($("job-status"), selected.pwm ? "数据就绪 · 可开始辨识" : "可分析波形 · 辨识还需要 PWM");
-  drawCharts(); controls();
 }
 async function startFit() {
   if (!state.identificationOpen || !state.mapping || state.busy || state.job) return;
@@ -238,7 +264,9 @@ async function watchJob(id) {
   try {
     for (let attempt = 0; attempt < 600; attempt++) {
       const response = await api(`/api/jobs/${id}`);
-      ui($("job-status"), response.status === "queued" ? "任务已排队…" : `正在拟合与验证 · ${Math.round((Date.now()-started)/1000)} 秒`);
+      const stages = {checking:"正在检查数据与电路配置…", pwm_reconstruction:"正在重建 PWM，获取训练段开关信息…",
+        initialization:"正在计算参数初值…", pann_training:"正在使用开关信息训练 PANN…", validation:"正在验证预测波形…"};
+      ui($("job-status"), response.status === "queued" ? "任务已排队…" : stages[response.stage] || `正在拟合与验证 · ${Math.round((Date.now()-started)/1000)} 秒`);
       if (response.status === "complete") {
         if (!resultMatchesCurrent(response.result)) {
           invalidateResult();
@@ -261,11 +289,21 @@ function displayResult() {
   ui($("r-label"), r.R_estimated ? "负载电阻 R · 估计" : "负载电阻 R · 固定");
   ui($("result-badge"), r.quality); $("result-badge").className = "badge " + (r.quality === "需复核" ? "warning" : "good");
   $("validation").hidden = false; ui($("rmse-i"), fmt(r.metrics.current_rmse_A) + " A"); ui($("rmse-v"), fmt(r.metrics.voltage_rmse_V*1000) + " mV");
-  ui($("result-notes"), `${r.validation_kind}\n${r.parameter_error_note}`);
+  const driveNote = r.diagnostics.pwm_reconstruction?.status === "complete"
+    ? "PWM 重建已完成：仅使用训练段电压与已知控制器生成 0/1 开关信息，再固定 R 识别 L、C。\n" : "";
+  ui($("result-notes"), `${driveNote}${r.validation_kind}\n${r.parameter_error_note}`);
   $("diagnostics").hidden = false;
-  ui($("diagnostic-text"), JSON.stringify({method:r.diagnostics,conditions:r.options,warnings:r.warnings,validation_errors:r.metrics}, null, 2));
+  displayDiagnostics();
   $("ask-error").disabled = false; $("download-report").disabled = false;
   state.chart = r.chart; state.zoom = null; drawCharts();
+}
+function displayDiagnostics() {
+  if (!state.result) return;
+  const r = state.result;
+  // Translate display strings only. Keep the result and exported report intact.
+  $("diagnostic-text").textContent = JSON.stringify(
+    {method:r.diagnostics,conditions:r.options,warnings:r.warnings,validation_errors:r.metrics},
+    (_key,value)=>typeof value === "string" ? tr(value) : value, 2);
 }
 function clearChat() {
   state.history = [];
@@ -411,6 +449,7 @@ function downloadReport() {
   const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`buck-report-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 $("csv-file").onchange = event => { if(event.target.files[0]) void importData(event.target.files[0]); };
+$("close-notice").onclick = () => notice();
 $("load-demo").onclick = $("empty-demo").onclick = () => void importData();
 $("dropzone").ondragover = event => {event.preventDefault();$("dropzone").classList.add("dragover");};
 $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
@@ -418,6 +457,11 @@ $("dropzone").ondrop = event => {event.preventDefault();$("dropzone").classList.
 $("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await applyMapping();notice("列映射已应用。",true);}catch(e){notice(e.message);}finally{state.busy=false;persistConversation();controls();}};
 for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();ui($("job-status"), "映射已更改，请点击应用并检查数据");controls();};
 for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{invalidateResult();$("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");controls();};
+$("pwm-source").onchange=()=>{
+  prepareControllerDefaults();
+  invalidateResult(); controls(); if (state.mapping) readyStatus(); persistConversation();
+};
+$("controller-confirmed").onchange=()=>{invalidateResult();if(state.mapping)readyStatus();persistConversation();};
 $("identify").onclick=()=>void startFit();
 $("enter-identification").onclick=()=>setIdentificationOpen(true);
 $("leave-identification").onclick=$("close-analysis").onclick=()=>setIdentificationOpen(false);
@@ -505,7 +549,7 @@ for (const [button,content,label] of [["toggle-experiment","experiment-content",
     try {localStorage.setItem(`buck-panel:${new URL(".",location.href).pathname}:${button}`,$(content).hidden ? "closed" : "open");} catch {}
   };
 }
-document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; drawCharts(); renderHistory(); });
+document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; displaySummary(); displayDiagnostics(); drawCharts(); renderHistory(); });
 window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");

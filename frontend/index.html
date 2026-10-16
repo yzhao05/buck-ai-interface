@@ -29,7 +29,8 @@
           <label>时间<select id="map-time" aria-label="时间列"></select></label>
           <label>电感电流<select id="map-current" aria-label="电感电流列"></select></label>
           <label>输出电压<select id="map-voltage" aria-label="输出电压列"></select></label>
-          <label>PWM 开关状态<select id="map-pwm" aria-label="PWM 列"></select></label>
+          <label>PWM 开关状态（可选）<select id="map-pwm" aria-label="PWM 列"></select></label>
+          <p class="field-note">可在同一 CSV 中附带实际 0/1 PWM 列；没有该列时，可确认已知控制电路后重建开关信息。</p>
           <div class="three-fields"><label>时间单位<select id="time-unit"><option>s</option><option>ms</option><option>us</option><option>ns</option></select></label><label>电流<select id="current-unit"><option>A</option><option>mA</option></select></label><label>电压<select id="voltage-unit"><option>V</option><option>mV</option></select></label></div>
           <button id="apply-mapping" class="button secondary full" disabled>应用并检查数据</button>
         </div></details>
@@ -41,6 +42,13 @@
         <button type="button" id="enter-identification" class="button primary full" aria-controls="identification-form analysis-panel" aria-expanded="false">进入参数辨识 <span aria-hidden="true">→</span></button>
         <div id="identification-form" hidden>
         <div class="form-heading"><span>基本信息</span><button type="button" id="leave-identification" class="text-button">退出辨识</button></div>
+        <label>PWM 来源<select id="pwm-source"><option value="auto">自动：有 PWM 列则使用，否则重建</option><option value="measured">CSV 实际开关状态</option><option value="controller">三列 CSV · 已知控制器重建</option></select></label>
+        <div id="controller-settings" hidden>
+          <p class="field-note">计算流程：重建 PWM 开关信息 → 固定 R 识别 L、C → 自主闭环验证。</p>
+          <p class="field-note">仅适用于原 Case09/10 控制电路：R1=11 kΩ，R2=85 kΩ，R3=120 kΩ，R4=47 kΩ，C2=1.1 nF，C3=2.7 nF；运放增益 10⁶，参考电压 5 V；调制增益 0.25，占空比限幅 0.1～0.9，100 kHz 上升锯齿载波从零相位开始；C2/C3 初始电压为 0。</p>
+          <label>确认电路配置<select id="controller-confirmed"><option value="no">尚未确认</option><option value="yes">我的仿真与上述配置一致</option></select></label>
+          <p class="field-note">CSV 必须从 t=0 开始。固定已知负载 R，仅识别 L、C；区间内负载须恒定，结束时间小于 1 ms，建议 0～0.8 ms。训练段重建 PWM，留出段自主闭环验证。</p>
+        </div>
         <div class="two-fields"><label>输入电压<div class="unit-input"><input type="number" id="vin" value="28" min="0.1" max="2000" step="any"><span>V</span></div></label><label>开关频率<div class="unit-input"><input type="number" id="frequency" value="100" min="0.1" max="2000" step="any"><span>kHz</span></div></label></div>
         <label>辨识目标<select id="fit-mode"><option value="LCR">L / C / R · 联合辨识</option><option value="LC">L / C · 固定负载 R</option></select></label>
         <label id="fixed-r-label" hidden>已知负载电阻<div class="unit-input"><input id="fixed-r" type="number" value="6" min="0.011" step="any"><span>Ω</span></div></label>
@@ -69,8 +77,9 @@
       </section>
       <div class="side-footer"><span class="tiny-square"></span> 物理计算 × 专业知识 × AI 对话<br><span><a href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">Inspired by PE-GPT ↗</a></span></div>
     </aside>
+    <div class="workspace-content">
     <main class="chat-panel" id="conversation-panel" aria-label="AI 实验助手">
-      <div id="notice" class="notice" role="status" hidden></div>
+      <div id="notice" class="notice" hidden><span id="notice-text" role="status"></span><button type="button" id="close-notice" class="icon-button notice-close" aria-label="关闭提示" title="关闭提示">×</button></div>
       <div class="chat-messages" id="chat-messages" aria-live="polite">
         <div class="welcome"><span class="eyebrow">LET’S INVESTIGATE</span><h3>上传仿真波形，<br>识别电感、电容和电阻。</h3><p>选择 PANN 或加权积分方法计算 L、C、R，向 AI 提问，分析辨识误差并获取参数调整建议。</p></div>
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
@@ -105,6 +114,7 @@
       </section>
       <footer class="main-footer"><span>数值计算结果与 AI 解释分开呈现。</span></footer>
     </aside>
+    </div>
   </div>
   <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。</p><label>同步恢复码<input id="sync-code" type="password" autocomplete="off" spellcheck="false" minlength="64" maxlength="64"></label><p class="field-note">自动生成并记住。请复制保管，换浏览器或清空本地后可用它恢复备份；不要分享给他人。</p><button type="button" id="copy-sync-code" class="button ghost full">复制同步恢复码</button><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p></form></dialog>
   <div id="chart-tooltip" class="chart-tooltip" hidden></div>

@@ -86,7 +86,7 @@ def extract(dataset: Dataset, mapping: Mapping):
     if np.max(dt) > 1.05 * np.min(dt):
         notes.append("非均匀时间采样：统计使用时间加权；积分法保留原时间轴，PWM 按前值保持。")
     if not mapping.pwm:
-        notes.append("未选择 PWM 列：可以分析波形，L/C/R 辨识需要实际开关状态。")
+        notes.append("未选择 PWM 列：可分析波形；固定 R 的 L/C 辨识可选择已知控制器重建，需确认电路配置。")
     return a, notes
 
 

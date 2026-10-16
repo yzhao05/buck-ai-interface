@@ -54,7 +54,11 @@ def weak_integral_seed(train, options):
         integrals = np.sum((quadrature * phi)[:, :, None] * measured, axis=(0, 1))
         change = -np.sum((quadrature * dphi)[:, :, None] * measured, axis=(0, 1))
         pwm_integral = np.sum(quadrature * phi * train[a:b, 3, None])
-        rows.append((change[1], integrals[1], integrals[0]))
+        sense_integral = 0.
+        if train.shape[1] == 5:
+            sense = train[a:b, None, 4] + fractions * np.diff(train[a:b+1, 4])[:, None]
+            sense_integral = np.sum(quadrature * phi * sense)
+        rows.append((change[1], integrals[1], integrals[0]-sense_integral))
         if not inactive[a:b+1].any():
             l_rows.append((change[0], options.vin * pwm_integral - integrals[1]))
     if len(l_rows) < 12:
@@ -181,11 +185,21 @@ def metric(t, actual, predicted):
             "voltage_nrmse_pct": float(100 * rmse[1] / max(rms[1], 1e-9))}
 
 
-def identify(dataset: Dataset, mapping: Mapping, options: FitOptions):
+def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progress=None):
     started = time.perf_counter()
+    def stage(name):
+        if progress is not None:
+            progress(name)
+    stage("checking")
     a, notes = extract(dataset, mapping)
-    if a.shape[1] != 4:
-        raise ValueError("参数辨识需要 PWM 列。请从 PLECS 导出实际 0/1 开关状态。")
+    reconstructed = options.pwm_source == "controller"
+    if reconstructed:
+        from .controller import PROFILE, validate_profile, reconstruct_training, closed_loop_rollout
+        validate_profile(a, options)
+        a = a[:, :3]
+        notes = [n for n in notes if not n.startswith("未选择 PWM 列")]
+    elif a.shape[1] != 4:
+        raise ValueError("实测 PWM 模式需要 CSV 开关状态列；三列 CSV 请改选已知控制器重建并确认电路配置。")
     lower = a[0, 0] if options.start_s is None else options.start_s
     upper = a[-1, 0] if options.end_s is None else options.end_s
     if upper <= lower or lower < a[0, 0] - 1e-12 or upper > a[-1, 0] + 1e-12:
@@ -201,6 +215,10 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions):
     valid = a[split:]
     if min(len(train), len(valid)) < 20:
         raise ValueError("训练或留出段采样不足，请调整区间。")
+    if reconstructed:
+        stage("pwm_reconstruction")
+        train = reconstruct_training(train)
+    stage("initialization")
     negative_tolerance = max(0.02 * np.ptp(train[:, 1]), 1e-5)
     if options.method in ("weighted_integral", "pann"):
         from .pann_adapter import measurement_noise_std
@@ -216,6 +234,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions):
         initial_state = np.maximum(a[0, 1:3], 0).tolist()
         notes.append("直接采用加权积分参数，不进行 PANN 微调。连续验证从首个测量状态的非负投影出发，后段不重置；波形误差仍可能受初始测量噪声影响。")
     if options.method == "pann":
+        stage("pann_training")
         from .pann_adapter import refine
         params, training = refine(train, params, options)
         diagnostics["pann"] = training
@@ -232,14 +251,32 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions):
     diagnostics["rollout_initial_state_source"] = "training-only joint window estimate" if options.method == "pann" and options.pann_initial_state == "joint" else "first observed sample"
     if options.method == "weighted_integral":
         diagnostics["rollout_initial_state_source"] = "nonnegative projection of first observed sample"
-    predicted = rollout(a, params, options.vin, initial_state)
+    stage("validation")
+    if reconstructed:
+        predicted = closed_loop_rollout(a[:, 0], params, options.vin,
+                                       a[0, 1:3] if initial_state is None else initial_state)
+        diagnostics["controller"] = dict(PROFILE)
+        diagnostics["drive_source"] = "known controller reconstructed from training voltage only"
+        diagnostics["controller_reconstruction_end_s"] = float(train[-1, 0])
+        diagnostics["sampling_branch_included"] = True
+        diagnostics["pwm_reconstruction"] = {
+            "status": "complete", "source": "training_voltage_and_known_controller",
+            "start_s": float(train[0, 0]), "end_s": float(train[-1, 0]),
+            "dt_s": PROFILE["dt_s"], "samples": len(train),
+            "rising_edges": int(np.count_nonzero(np.diff(train[:, 3]) > 0)),
+            "falling_edges": int(np.count_nonzero(np.diff(train[:, 3]) < 0)),
+            "uses_heldout_measurements": False,
+        }
+    else:
+        predicted = rollout(a, params, options.vin, initial_state)
+        diagnostics["drive_source"] = "measured PWM"
     metrics = metric(valid[:, 0], valid[:, 1:3], predicted[split:])
-    train_metrics = metric(train[:, 0], train[:, 1:3], predicted[:split + 1])
+    train_metrics = metric(a[:split+1, 0], a[:split+1, 1:3], predicted[:split+1])
     if diagnostics["parameter_at_bound"]:
         notes.append("辨识或初始化触及参数边界：模型或数据可能不匹配，不应直接采用参数。")
     if diagnostics["CR_condition_number"] > 100:
         notes.append("C/R 相关性较高，参数可能对噪声敏感；建议增加动态激励并更换初值复测。")
-    rises = np.flatnonzero(np.diff(a[:, 3]) > 0.5) + 1
+    rises = np.flatnonzero(np.diff(a[:, 3]) > 0.5) + 1 if not reconstructed else []
     if len(rises) > 1:
         observed_fs = 1 / np.median(np.diff(a[rises, 0]))
         if abs(observed_fs / options.frequency_hz - 1) > 0.15:
@@ -251,13 +288,17 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions):
         notes.append("留出误差或可辨识性检查未通过经验阈值；检查负载突变、PWM 对齐、初始状态及模型遗漏。")
     if options.method == "pann" and (training["stop_reason"] == "time_budget" or training["best_at_budget_end"]):
         quality = "需复核"
-    notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
+    if reconstructed:
+        notes.append("PWM 由已确认的控制电路和训练段电压重建；含噪电压、控制器初态或载波相位不匹配会影响结果。")
+        notes.append("已计入反馈取样支路电流；忽略 ESR、绕组电阻、死区和器件压降。R 为用户提供的恒定负载电阻，未参与估计。")
+    else:
+        notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
     return {"parameters": {"L_H": float(params[0]), "C_F": float(params[1]), "R_ohm": float(params[2])},
             "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality,
             "metrics": metrics, "training_metrics": train_metrics, "diagnostics": diagnostics,
             "options": options.model_dump(), "mapping": mapping.model_dump(),
             "train_start_s": float(a[0, 0]), "train_end_s": float(a[split, 0]), "validation_end_s": float(a[-1, 0]),
-            "validation_kind": "同一记录后段留出；从区间起点连续仿真，后段无测量状态重置，输入使用实测 PWM。不是自主闭环或独立工况验证。",
+            "validation_kind": "同一记录后段留出；已知控制器自主闭环预测，不使用留出电压或实测 PWM 驱动，不是独立工况验证。" if reconstructed else "同一记录后段留出；从区间起点连续仿真，后段无测量状态重置，输入使用实测 PWM。不是自主闭环或独立工况验证。",
             "parameter_error": None, "parameter_error_note": "未提供真值，不能计算参数真实误差；波形误差不等于参数误差。",
             "warnings": list(dict.fromkeys(notes)), "chart": chart_data(a, predicted),
             "file_sha256": dataset.sha256, "filename": dataset.name,

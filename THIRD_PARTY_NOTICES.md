@@ -16,6 +16,8 @@
 
 PANN 论文：Temporal Modeling for Power Converters With Physics-in-Architecture Recurrent Neural Network，DOI 10.1109/TIE.2024.3352119。
 
-`backend/pann_adapter.py` 为新的适配层，固定 Vin，训练正值 L/C/R 参数，使用训练段积分估计初始化，再按波形损失微调。不等同于用户现有 Case15/16 中的反馈支路建模、窗口初始状态联合估计或自主闭环评价。
+`backend/pann_adapter.py` 为新的适配层，固定 Vin，训练正值 L/C/R 参数，使用训练段积分估计初始化，再按波形损失微调。默认实测 PWM 模式忽略反馈支路；已知控制器模式计入该支路并执行自主闭环验证。两种模式均不把旧 Case15/16 的误差数字视为新接口的验证结果。
 
 `examples/plecs_buck_case16a.csv` 复制自 ST4001 的实际 PLECS 实验，未伪造或重新合成；来源及 SHA-256 见相邻 provenance.json。拟合器不读取文件名中的参数真值，也不读取 provenance.json。
+
+`backend/controller.py` 的已知 RC 控制器方程与自主闭环离散模型改编自用户本地 `PANN-main/closed_loop_identification.py` 和 `closed_loop_buck.py`（Case09/10）。仅新增明确确认的控制器配置模式，固定用户输入的 R；原参考文件与上游 vendor 源码未修改。反馈支路修正由适配层实现，三列 CSV 的重建输入不冒充实测 PWM。

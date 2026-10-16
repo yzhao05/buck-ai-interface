@@ -14,9 +14,10 @@ SYSTEM = """你是 Buck Lab 电力电子实验助手，用中文清楚回答用�
 只有 identification_enabled 为 true 才能执行参数辨识；否则引导用户点击左侧“进入参数辨识”并确认基本信息。普通问答和波形分析不需要进入辨识模式。
 已有结果的问题先查询 get_identification_result。说明误差时区分事实、假设、验证方法；提出可操作的单因素修改实验。
 波形误差不是参数真值误差；同记录的后段留出、使用实测 PWM 的预测不是自主闭环验证或独立工况泛化。
-R 指负载电阻，不是 ESR。当前理想非同步 Buck 模型忽略寄生与反馈支路，负载在辨识区间应恒定。
+R 指负载电阻，不是 ESR。理想非同步 Buck 功率模型忽略寄生，负载在辨识区间应恒定。
+PWM 来源由界面 pwm_source 指定：measured 使用 CSV 实际 PWM，忽略反馈取样支路；controller 仅在确认 Case09/10 控制电路匹配时支持三列 CSV，固定用户已知 R 识别 L/C，计入取样支路电流。controller 模式须从 t=0 开始、100 kHz、结束于 1 ms 前且负载恒定。训练 PWM 仅由训练段电压重建；验证使用已知控制器自主闭环预测，不用留出电压或实测 PWM，但仍不是独立工况验证。不能擅自替用户确认配置，也不能把重建 PWM 描述为测量值。
 PANN 默认联合估计窗口初始电流、电压与参数；固定测量初值仅作对照。参数和窗口初值取自同一最小含噪训练损失轮次，不使用干净状态或留出段选轮次。检查 diagnostics.pann 的最佳轮次、训练预算、状态修正和窗口设置；预算用尽不能声称充分收敛。原 Case15/16 的误差数字不是本次上传数据的验证结果。
-回答电路公式时，优先检索 Buck 公式知识库并说明符号、单位、适用条件；区分完整 PLECS 四状态控制电路与网页当前两状态辨识器。
+回答电路公式时，优先检索 Buck 公式知识库并说明符号、单位、适用条件；区分实测 PWM 两状态模型与已确认控制器配置的闭环模型。
 知识库中的 Case16/Case17、R1～R4、C2/C3 等值只是已指定参考电路的设定，不是未知 CSV 的测量值或参数辨识真值，不能自动套用。
 用户只询问原理、公式或推导时不得启动数值辨识。控制器由运放和实际 RC 连接决定，不能虚构通用 PI/PID 参数或声称已经运行新的闭环仿真。
 公式回答引用知识条目 id/标题，并给出条目 references 中适用的来源；本地推导说明为本项目按连接关系推导，不冒充厂商原文。
@@ -73,7 +74,7 @@ def local_response(message, summary, result, documents, job=None, task=None):
     if task == "diagnosis":
         return "当前没有与数据和配置匹配的已完成辨识结果。请先进入参数辨识并完成计算，再分析误差；也可以先核对单位、PWM 对齐和负载区间。本次没有自动启动辨识。"
     if task == "guidance":
-        return "使用步骤：① 上传 PLECS CSV 或加载示例；② 映射时间、电流、电压和实际 PWM 列，并确认单位；③ 点击“进入参数辨识”，设置 Vin、频率和恒定负载区间；④ 开始辨识并查看结果。公式问答不要求上传数据。连接问题可在右上角“连接设置”检查后端地址和访问口令。"
+        return "使用步骤：① 上传 PLECS CSV 或加载示例；② 映射时间、电流、电压并确认单位，有实际 PWM 时一并映射；③ 点击“进入参数辨识”，设置 Vin、频率和恒定负载区间；只有三列时，可选择已知控制器重建，确认 Case09/10 电路配置，固定已知 R 辨识 L/C；④ 开始辨识并查看结果。公式问答不要求上传数据。连接问题可在右上角“连接设置”检查后端地址和访问口令。"
     if task == "hardware" and documents:
         return "\n\n".join(d["content"] for d in documents[:2])
     if summary:
@@ -85,7 +86,7 @@ def local_response(message, summary, result, documents, job=None, task=None):
         return "请先上传 PLECS CSV 或加载示例，确认时间、电感电流和输出电压列后，我才能分析实际波形。本次没有启动参数辨识。"
     if documents:
         return "\n\n".join(d["content"] for d in documents[:2])
-    return "请先上传 PLECS CSV 或加载示例，再选择时间、电流、电压及 PWM 列。当前为本地规则分析；配置后端 DeepSeek API Key 后可进行开放式专业问答。"
+    return "请先上传 PLECS CSV 或加载示例，再选择时间、电流、电压列；有 PWM 时一并选择，三列 CSV 可在确认匹配已知控制电路后固定 R 辨识 L/C。当前为本地规则分析；配置后端 DeepSeek API Key 后可进行开放式专业问答。"
 
 
 async def answer(request, invoke):

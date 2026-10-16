@@ -193,15 +193,18 @@ def start_fit(body: FitRequest, owner):
             if removable:
                 del jobs[removable]
         identifier = uuid.uuid4().hex
-        jobs[identifier] = {"owner": owner, "created": time.time(), "status": "queued",
+        jobs[identifier] = {"owner": owner, "created": time.time(), "status": "queued", "stage": "queued",
                             "dataset_id": body.dataset_id, "config": body.model_dump(), "result": None, "error": None}
     def execute():
+        def progress(stage):
+            with lock:
+                jobs[identifier]["stage"] = stage
         with lock:
             jobs[identifier]["status"] = "running"
         try:
-            result = identify(dataset, body.mapping, body.options)
+            result = identify(dataset, body.mapping, body.options, progress=progress)
             with lock:
-                jobs[identifier].update(status="complete", result=result)
+                jobs[identifier].update(status="complete", stage="complete", result=result)
         except Exception as exc:
             # No raw stack traces / server paths in API responses.
             error = str(exc) if isinstance(exc, ValueError) else "辨识计算失败，请查看后端日志并检查输入条件。"
@@ -226,7 +229,8 @@ def get_job(identifier: str, owner: str = Depends(session)):
         job = jobs.get(identifier)
         if not job or job["owner"] != owner:
             raise HTTPException(404, "任务不存在或已过期。")
-        return {"job_id": identifier, "status": job["status"], "result": job["result"], "error": job["error"]}
+        return {"job_id": identifier, "status": job["status"], "stage": job.get("stage"),
+                "result": job["result"], "error": job["error"]}
 
 
 @app.post("/api/chat")

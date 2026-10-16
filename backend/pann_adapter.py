@@ -1,8 +1,9 @@
 """Adapt the uploaded PE-GPT PANN to this application's units and fixed Vin.
 
-Only training samples are used. Actual PWM uses ZOH. Window states are jointly
+Only training samples are used. PWM uses ZOH. Window states are jointly
 estimated from noisy data (Case15/16 principle), with measured-state ablation.
-This is NOT the complete controller-aware Case15/16 model or its validation protocol.
+The optional fifth training column supplies reconstructed sensing current;
+controller reconstruction and autonomous validation live in controller.py.
 """
 import importlib.util
 import json
@@ -37,12 +38,13 @@ def training_windows(train, frequency_hz, cycles=1):
     Interpolate only each selected window: a long trace must not be silently
     truncated to its first 50,000 samples. No held-out measurements are accepted.
     """
-    if train.ndim != 2 or train.shape[1] != 4 or len(train) < 3 or not np.isfinite(train).all() or np.any(np.diff(train[:, 0]) <= 0):
+    if train.ndim != 2 or train.shape[1] not in (4, 5) or len(train) < 3 or not np.isfinite(train).all() or np.any(np.diff(train[:, 0]) <= 0):
         raise ValueError("PANN 训练数据必须包含递增时间、电流、电压和 PWM。")
     if not np.isin(train[:, 3], (0, 1)).all():
-        raise ValueError("PANN 需要实际 0/1 PWM，不能使用开关节点电压。")
-    dt = 1 / (frequency_hz * 200)
-    steps = cycles * 200
+        raise ValueError("PANN 输入需要实测或重建的 0/1 PWM，不能直接使用开关节点电压。")
+    samples_per_cycle = 500 if train.shape[1] == 5 else 200
+    dt = 1 / (frequency_hz * samples_per_cycle)
+    steps = cycles * samples_per_cycle
     duration = steps * dt
     span = train[-1, 0] - train[0, 0]
     count = min(40, int(np.floor(span / duration + 1e-10)))
@@ -53,7 +55,11 @@ def training_windows(train, frequency_hz, cycles=1):
     grid = np.clip(grid, train[0, 0], train[-1, 0])
     measured = np.stack([np.interp(grid, train[:, 0], train[:, c]) for c in (1, 2)], axis=-1)
     gate = train[np.clip(np.searchsorted(train[:, 0], grid[:, :-1], side="right") - 1, 0, len(train) - 1), 3]
-    return gate[:, :, None], measured[:, 1:], measured[:, 0], starts, dt
+    inputs = gate[:, :, None]
+    if train.shape[1] == 5:
+        sense = np.interp(grid[:, :-1], train[:, 0], train[:, 4])
+        inputs = np.concatenate((inputs, sense[:, :, None]), axis=-1)
+    return inputs, measured[:, 1:], measured[:, 0], starts, dt
 
 
 def select_window_cycles(train, frequency_hz, requested):
@@ -127,7 +133,16 @@ def refine(train, initial, options):
     for attr in ("L", "Co", "Ro"):
         if getattr(cell, attr).requires_grad:
             nn.utils.parametrize.register_parametrization(cell, attr, Positive())
-    model = PANN(cell)
+    class SensingCell(nn.Module):
+        def __init__(self, base):
+            super().__init__()
+            self.base = base
+
+        def forward(self, inputs, states):
+            predicted = self.base(inputs[:, :1], states)
+            return torch.stack((predicted[:, 0], predicted[:, 1]-dt/self.base.Co*inputs[:, 1]), dim=1)
+
+    model = PANN(SensingCell(cell) if train.shape[1] == 5 else cell)
     parameters = [p for p in model.parameters() if p.requires_grad]
     groups = [{"params": parameters, "lr": 0.03}]
     if joint:
@@ -200,4 +215,4 @@ def refine(train, initial, options):
                   "state_correction_rms_A_V": np.sqrt(np.mean((best_states - observed) ** 2, axis=0)).tolist(),
                   "noise_std_estimate_A_V": measurement_noise_std(train).tolist(),
                   "selection": "minimum noisy training loss; parameters and window states from the same epoch",
-                  "note": "窗口状态仅从训练数据估计；不使用干净初值、参数真值或留出段选轮次。训练损失低不保证参数准确。当前仍是简化两状态模型与实测 PWM 验证，不是原完整闭环实验的复现。"}
+                  "note": "窗口状态仅从训练数据估计；不使用干净初值、参数真值或留出段选轮次。训练损失低不保证参数准确。" + ("当前训练输入为控制器重建 PWM 和取样支路电流，验证使用已知控制器自主闭环模型。" if train.shape[1] == 5 else "当前仍是简化两状态模型与实测 PWM 验证，不是原完整闭环实验的复现。")}

@@ -34,6 +34,8 @@ class FitOptions(StrictModel):
     epochs: int = Field(default=100, ge=10, le=300)
     pann_initial_state: Literal["joint", "measured"] = "joint"
     pann_window_cycles: int = Field(default=0, ge=0, le=3, description="0: training-noise heuristic; 1/2/3: explicit cycles")
+    pwm_source: Literal["measured", "controller"] = "measured"
+    controller_confirmed: bool = False
 
 
 class FitRequest(AnalysisRequest):

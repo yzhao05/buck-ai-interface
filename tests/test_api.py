@@ -34,6 +34,7 @@ def test_upload_fit_chat_and_isolation(client):
         if status["status"] in ("complete","failed"):break
         time.sleep(.05)
     assert status["status"]=="complete", status
+    assert status["stage"] == "complete"
     response=client.post("/api/chat",json={**body,"result_id":job_id,"message":"分析结果误差并给出修改计划"})
     assert response.status_code==200
     assert "RMSE" in response.json()["answer"]
