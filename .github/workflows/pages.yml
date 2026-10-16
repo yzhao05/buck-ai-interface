@@ -42,6 +42,18 @@ jobs:
             sourceUrl: 'https://github.com/' + process.env.REPOSITORY
           }) + ';\n');
           JS
+      - name: Version frontend assets
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const html = fs.readFileSync('frontend/index.html', 'utf8');
+          const versioned = html.replace(/((?:src|href)="\.\/)([\w-]+\.(?:js|css))(?:\?[^"\s]*)?"/g, (_, prefix, file) => {
+            const hash = crypto.createHash('sha256').update(fs.readFileSync('frontend/' + file)).digest('hex').slice(0, 12);
+            return prefix + file + '?v=' + hash + '"';
+          });
+          fs.writeFileSync('frontend/index.html', versioned);
+          JS
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
