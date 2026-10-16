@@ -30,7 +30,6 @@ window.BuckI18n = (() => {
     "选择恒定负载区间。R 指负载电阻，非 ESR。示例推荐 0～0.8 ms。": "Use a constant-load interval. R is load resistance, not ESR. Suggested example interval: 0–0.8 ms.",
     "开始参数辨识": "Start identification", "等待导入实验数据": "Waiting for data",
     "物理计算 × 专业知识 × AI 对话": "Physics × Engineering × AI",
-    "Inspired by PE-GPT · 本地 / 云端": "Inspired by PE-GPT · Local / Cloud",
     "AI 实验助手": "AI Lab Assistant", "正在检查服务": "Checking service", "清空对话": "Clear conversation",
     "上传仿真波形，": "Upload simulation waveforms.", "识别电感、电容和电阻。": "Identify inductance, capacitance and resistance.",
     "选择 PANN 或加权积分方法计算 L、C、R，向 AI 提问，分析辨识误差并获取参数调整建议。": "Estimate L, C and R using PANN or weighted integral estimation. Ask AI to analyze identification errors and suggest parameter adjustments.",
