@@ -71,7 +71,7 @@
     <main class="chat-panel" id="conversation-panel" aria-label="AI 实验助手">
       <div id="notice" class="notice" role="status" hidden></div>
       <div class="chat-messages" id="chat-messages" aria-live="polite">
-        <div class="welcome"><span class="eyebrow">LET’S INVESTIGATE</span><h3>把问题交给助手，<br>把结论交给证据。</h3><p>我可以结合波形和计算结果，帮你理解误差、规划下一轮实验，以及查阅器件知识。</p></div>
+        <div class="welcome"><span class="eyebrow">LET’S INVESTIGATE</span><h3>上传仿真波形，<br>识别电感、电容和电阻。</h3><p>选择 PANN 或加权积分方法计算 L、C、R，向 AI 提问，分析辨识误差并获取参数调整建议。</p></div>
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
       <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
