@@ -4,7 +4,7 @@ let activeConversation = null;
 let conversationPrefix = "";
 let pendingAttachment = null;
 const conversationCache = new Map();
-const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "controller-confirmed"];
+const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "controller-confirmed", "controller-parameters", "controller-image"];
 const experimentDefaults = {vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"100", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
 function historyWarning(text = "") {
   ui($("history-status"), text); $("history-status").hidden = !text;
@@ -239,7 +239,8 @@ async function openConversation(id, saveCurrent = true) {
   activeConversation=record; sessionId=record.id;
   notice(); resetExperiment(); clearChat();
   pendingAttachment=record.attachment;
-  for (const field of experimentFields) $(field).value=record.fields?.[field] ?? experimentDefaults[field];
+  for (const field of experimentFields) $(field).value=record.fields?.[field] ?? experimentDefaults[field] ?? "";
+  window.BuckCircuit.render();
   // A legacy "integral" value is no longer in the selector. The new identifier
   // also prevents restoreAttachment from relabelling an old result as weighted.
   if (!$("fit-method").value || (state.connected && $("fit-method").selectedOptions[0]?.disabled)) $("fit-method").value="weighted_integral";

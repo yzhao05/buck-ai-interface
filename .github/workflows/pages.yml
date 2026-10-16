@@ -24,6 +24,7 @@ jobs:
       - name: Validate JavaScript
         run: |
           node --check frontend/app.js
+          node --check frontend/circuit.js
           node --check frontend/history.js
           node --check frontend/i18n.js
           node --check frontend/attachments.js

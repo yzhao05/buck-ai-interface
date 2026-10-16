@@ -90,6 +90,7 @@ function prepareControllerDefaults() {
 }
 function controls() {
   const waiting = historyLocked();
+  window.BuckCircuit.setBusy(waiting); window.BuckCircuit.render();
   $("chat-input").disabled = state.syncBusy;
   $("open-settings").disabled = state.syncBusy;
   $("sync-now").disabled = waiting || !state.connected;
@@ -165,6 +166,7 @@ function options() {
   };
   return {vin:numeric("vin"), frequency_hz:numeric("frequency")*1000,
     pwm_source:pwmSource(), controller_confirmed:$("controller-confirmed").value === "yes",
+    controller:pwmSource() === "controller" ? window.BuckCircuit.read() : null,
     start_s:$("start-ms").value === "" ? null : Number($("start-ms").value)/1000,
     end_s:$("end-ms").value === "" ? null : Number($("end-ms").value)/1000,
     train_fraction:Number($("train-fraction").value)/100, mode:$("fit-mode").value,
@@ -175,7 +177,9 @@ function options() {
 function resultMatchesCurrent(result) {
   return Boolean(result && state.dataset && state.mapping
     && result.file_sha256 === state.dataset.sha256
-    && Object.entries(options()).every(([key,value]) => result.options?.[key] === value)
+    && Object.entries(options()).every(([key,value]) => value && typeof value === "object"
+      ? Object.entries(value).every(([field,number])=>result.options?.[key]?.[field] === number)
+      : (result.options?.[key] ?? null) === value)
     && Object.entries(state.mapping).every(([key,value]) => result.mapping?.[key] === value));
 }
 function invalidateResult() {
@@ -456,12 +460,21 @@ $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
 $("dropzone").ondrop = event => {event.preventDefault();$("dropzone").classList.remove("dragover");if(event.dataTransfer.files[0])void importData(event.dataTransfer.files[0]);};
 $("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await applyMapping();notice("列映射已应用。",true);}catch(e){notice(e.message);}finally{state.busy=false;persistConversation();controls();}};
 for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();ui($("job-status"), "映射已更改，请点击应用并检查数据");controls();};
-for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{invalidateResult();$("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");controls();};
+for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{
+  invalidateResult();
+  if(["vin","frequency","fixed-r"].includes(id) && pwmSource()==="controller") $("controller-confirmed").value="no";
+  $("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");controls();
+  if(state.mapping)readyStatus();
+};
 $("pwm-source").onchange=()=>{
   prepareControllerDefaults();
   invalidateResult(); controls(); if (state.mapping) readyStatus(); persistConversation();
 };
 $("controller-confirmed").onchange=()=>{invalidateResult();if(state.mapping)readyStatus();persistConversation();};
+document.addEventListener("buck-circuit-change",()=>{
+  $("controller-confirmed").value="no";invalidateResult();controls();
+  if(state.mapping)readyStatus();persistConversation();
+});
 $("identify").onclick=()=>void startFit();
 $("enter-identification").onclick=()=>setIdentificationOpen(true);
 $("leave-identification").onclick=$("close-analysis").onclick=()=>setIdentificationOpen(false);

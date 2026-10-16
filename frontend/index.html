@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./attachments.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -45,8 +45,15 @@
         <label>PWM 来源<select id="pwm-source"><option value="auto">自动：有 PWM 列则使用，否则重建</option><option value="measured">CSV 实际开关状态</option><option value="controller">三列 CSV · 已知控制器重建</option></select></label>
         <div id="controller-settings" hidden>
           <p class="field-note">计算流程：重建 PWM 开关信息 → 固定 R 识别 L、C → 自主闭环验证。</p>
-          <p class="field-note">仅适用于原 Case09/10 控制电路：R1=11 kΩ，R2=85 kΩ，R3=120 kΩ，R4=47 kΩ，C2=1.1 nF，C3=2.7 nF；运放增益 10⁶，参考电压 5 V；调制增益 0.25，占空比限幅 0.1～0.9，100 kHz 上升锯齿载波从零相位开始；C2/C3 初始电压为 0。</p>
-          <label>确认电路配置<select id="controller-confirmed"><option value="no">尚未确认</option><option value="yes">我的仿真与上述配置一致</option></select></label>
+          <section class="circuit-card" aria-label="参考电路">
+            <div class="circuit-card-heading"><strong>参考电路</strong><button type="button" id="edit-circuit" class="text-button">放大 / 编辑</button></div>
+            <button type="button" id="circuit-preview" class="circuit-preview" aria-label="放大并编辑电路图"></button>
+            <div class="circuit-actions"><button type="button" id="upload-circuit" class="text-button">上传电路图片</button><button type="button" id="show-default-circuit" class="text-button" hidden>恢复默认图</button></div>
+            <p class="field-note" id="circuit-caption"></p>
+            <input type="hidden" id="controller-parameters" value=""><input type="hidden" id="controller-image" value="">
+          </section>
+          <p class="field-note">仅适用于与默认图接线相同的非同步 Buck 和 RC 控制器。默认参数来自 Case09/10，可在图中点击参数修改；计算使用当前设置。上传图片仅替换参考图，不会自动识别参数或改变接线模型。</p>
+          <label>确认电路配置<select id="controller-confirmed"><option value="no">尚未确认</option><option value="yes">接线与默认图一致，参数与当前设置一致</option></select></label>
           <p class="field-note">CSV 必须从 t=0 开始。固定已知负载 R，仅识别 L、C；区间内负载须恒定，结束时间小于 1 ms，建议 0～0.8 ms。训练段重建 PWM，留出段自主闭环验证。</p>
         </div>
         <div class="two-fields"><label>输入电压<div class="unit-input"><input type="number" id="vin" value="28" min="0.1" max="2000" step="any"><span>V</span></div></label><label>开关频率<div class="unit-input"><input type="number" id="frequency" value="100" min="0.1" max="2000" step="any"><span>kHz</span></div></label></div>
@@ -117,6 +124,21 @@
     </div>
   </div>
   <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。</p><label>同步恢复码<input id="sync-code" type="password" autocomplete="off" spellcheck="false" minlength="64" maxlength="64"></label><p class="field-note">自动生成并记住。请复制保管，换浏览器或清空本地后可用它恢复备份；不要分享给他人。</p><button type="button" id="copy-sync-code" class="button ghost full">复制同步恢复码</button><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p></form></dialog>
+  <dialog id="circuit-dialog" aria-labelledby="circuit-title">
+    <form id="circuit-form">
+      <div class="dialog-heading"><h2 id="circuit-title">电路图与参数</h2><button type="button" id="close-circuit" class="icon-button" aria-label="关闭">×</button></div>
+      <p>点击默认图中的参数即可编辑。L、C 为待辨识量；R 是已知负载。接线拓扑固定。</p>
+      <div class="circuit-editor-layout"><div class="circuit-drawing-column">
+        <div id="circuit-drawing" class="circuit-drawing"></div>
+        <p>C2 初始电压 = va − vm；C3 初始电压 = vb − vm。载波相位以周期为单位。小屏幕可左右滑动查看完整电路图。</p>
+        <div class="circuit-actions"><button type="button" id="circuit-upload-edit" class="button secondary small">上传电路图片</button><button type="button" id="circuit-default-edit" class="button secondary small">恢复默认图</button><button type="button" id="reset-controller" class="button secondary small">恢复默认参数</button></div>
+        <input type="file" id="circuit-file" accept="image/png,image/jpeg,image/webp" hidden>
+        <p>支持 PNG、JPG、WebP，最大 5 MB。图片会压缩后随会话保存和同步；仅作参考，不自动读取其中的数值。上传图片后仍需在参数栏填写数值。</p>
+        <p id="circuit-error" role="alert"></p>
+      </div><div id="circuit-fields" class="circuit-fields"></div></div>
+      <div class="circuit-dialog-footer"><span>保存修改后需重新确认电路，并重新辨识。</span><button type="submit" class="button primary" id="save-circuit">保存电路设置</button></div>
+    </form>
+  </dialog>
   <div id="chart-tooltip" class="chart-tooltip" hidden></div>
 </body>
 </html>

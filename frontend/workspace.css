@@ -204,3 +204,29 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
     scrollbar-gutter: auto;
   }
 }
+.circuit-card { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.circuit-card-heading, .circuit-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.circuit-card-heading strong { font-size: 12px; }
+.circuit-preview { display: block; width: 100%; padding: 0; margin: 12px 0; border: 1px solid #e0ece9; border-radius: 6px; background: white; cursor: zoom-in; overflow: hidden; }
+.circuit-preview svg, .circuit-preview img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: contain; }
+#circuit-dialog { width: 1160px; max-height: calc(100dvh - 32px); padding: 22px; overflow-y: auto; }
+#circuit-dialog .dialog-heading { position: sticky; top: -22px; padding: 10px 0; z-index: 2; background: white; }
+.circuit-editor-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 22px; align-items: start; }
+.circuit-drawing-column { min-width: 0; }
+.circuit-drawing { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: white; margin-bottom: 16px; }
+.circuit-drawing svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.circuit-drawing img { display: block; width: 100%; height: auto; max-height: 600px; object-fit: contain; }
+.circuit-parameter { cursor: pointer; }
+.circuit-parameter:hover rect, .circuit-parameter:focus rect { fill: #bfe7dc; }
+.circuit-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+.circuit-fields label { margin: 0; min-width: 0; font-size: 12px; }
+.circuit-fields input { width: 100%; min-width: 0; font-size: 13px; }
+.circuit-dialog-footer { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.circuit-dialog-footer span { font-size: 12px; color: var(--muted); }
+#circuit-error { color: #a3522a; }
+@media (max-width: 850px) {
+  .circuit-editor-layout { grid-template-columns: minmax(0,1fr); }
+  #circuit-dialog { padding: 16px; }
+  #circuit-dialog .dialog-heading { top: -16px; }
+  .circuit-dialog-footer { flex-direction: column; align-items: stretch; }
+}

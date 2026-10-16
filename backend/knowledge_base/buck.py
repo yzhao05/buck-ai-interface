@@ -66,7 +66,7 @@ T1 关断且 D1 续流 q=0,iL>0：vL=-vo，diL/dt=-vo/L。
 两种有电感电流的区间：C dvo/dt = iL-vo/Rload-isense。
 关断且 iL=0 的 DCM 区间：diL/dt=0，C dvo/dt=-vo/Rload-isense。
 无反馈取电时，零电流区 vo(t)=vo(t0) exp[-(t-t0)/(Rload C)]。""",
-      "不能在二极管已经截止时继续用 diL/dt=-vo/L 得到负电流。同步 Buck 的负电流、反向功率和 Vin<vo 等工况不属于该单向简化模型。网页实测 PWM 模式的两状态模型取 isense=0；已确认 Case09/10 配置的控制器重建模式计入 isense，仅支持固定已知 R 的 L/C 辨识。",
+      "不能在二极管已经截止时继续用 diL/dt=-vo/L 得到负电流。同步 Buck 的负电流、反向功率和 Vin<vo 等工况不属于该单向简化模型。网页实测 PWM 模式的两状态模型取 isense=0；已确认默认图接线与当前参数的控制器重建模式计入 isense，仅支持固定已知 R 的 L/C 辨识。",
       ["local-plecs", "local-fitter", "ti-buck"]),
 entry("buck-load-step", "负载跳变与反馈取电 / Load switching",
       "负载 跳变 突变 并联 r5 s1 1ms load step parallel sensing",
@@ -194,7 +194,7 @@ diL/dt=(q Vin-vo)/L（有电感电流区间；DCM 按分段约束）。
 dvo/dt=[iL-Gload vo-isense]/C。
 dx2/dt=[isense-x2/R2]/C2；dx3/dt=[vop-vm-x3]/(R3 C3)。
 x(0)=[0 A,12 V,0 V,0 V]^T（原模型和 Case16 文件设定）。""",
-      "vop 的第二个表达式与 A(Vref-vm) 代数等价，可减少大 A 下的消减误差。截取 CSV 中间时间窗时，x2/x3 一般不再为零，不能沿用全仿真初值。网页已知控制器重建模式仅在确认 Case09/10 配置一致后启用：训练段电压驱动已知控制器重建 PWM 与 isense，固定 R 辨识 L/C，随后自主闭环验证；实测 PWM 模式仍使用两状态模型。知识层不会自动确认电路配置或切换计算器。",
+      "vop 的第二个表达式与 A(Vref-vm) 代数等价，可减少大 A 下的消减误差。截取 CSV 中间时间窗时，x2/x3 一般不再为零，不能沿用全仿真初值。网页已知控制器重建模式仅在确认接线与默认图一致、参数与当前设置一致后启用：训练段电压驱动已知控制器重建 PWM 与 isense，固定 R 辨识 L/C，随后自主闭环验证；实测 PWM 模式仍使用两状态模型。知识层不会自动确认电路配置或切换计算器。",
       ["local-plecs", "plecs-opamp", "local-fitter"]),
 entry("buck-controller-transfer", "实际模拟补偿器传递函数 / Compensator transfer",
       "补偿器 传递函数 pid 模拟 阻抗 zi zf gc compensator transfer analog filtered",

@@ -194,8 +194,9 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     a, notes = extract(dataset, mapping)
     reconstructed = options.pwm_source == "controller"
     if reconstructed:
-        from .controller import PROFILE, validate_profile, reconstruct_training, closed_loop_rollout
+        from .controller import profile_for, validate_profile, reconstruct_training, closed_loop_rollout
         validate_profile(a, options)
+        controller_profile = profile_for(options)
         a = a[:, :3]
         notes = [n for n in notes if not n.startswith("未选择 PWM 列")]
     elif a.shape[1] != 4:
@@ -217,7 +218,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         raise ValueError("训练或留出段采样不足，请调整区间。")
     if reconstructed:
         stage("pwm_reconstruction")
-        train = reconstruct_training(train)
+        train = reconstruct_training(train, controller_profile)
     stage("initialization")
     negative_tolerance = max(0.02 * np.ptp(train[:, 1]), 1e-5)
     if options.method in ("weighted_integral", "pann"):
@@ -254,15 +255,15 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     stage("validation")
     if reconstructed:
         predicted = closed_loop_rollout(a[:, 0], params, options.vin,
-                                       a[0, 1:3] if initial_state is None else initial_state)
-        diagnostics["controller"] = dict(PROFILE)
+                                       a[0, 1:3] if initial_state is None else initial_state, controller_profile)
+        diagnostics["controller"] = controller_profile
         diagnostics["drive_source"] = "known controller reconstructed from training voltage only"
         diagnostics["controller_reconstruction_end_s"] = float(train[-1, 0])
         diagnostics["sampling_branch_included"] = True
         diagnostics["pwm_reconstruction"] = {
             "status": "complete", "source": "training_voltage_and_known_controller",
             "start_s": float(train[0, 0]), "end_s": float(train[-1, 0]),
-            "dt_s": PROFILE["dt_s"], "samples": len(train),
+            "dt_s": controller_profile["dt_s"], "samples": len(train),
             "rising_edges": int(np.count_nonzero(np.diff(train[:, 3]) > 0)),
             "falling_edges": int(np.count_nonzero(np.diff(train[:, 3]) < 0)),
             "uses_heldout_measurements": False,

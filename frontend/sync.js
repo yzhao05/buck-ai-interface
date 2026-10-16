@@ -82,7 +82,7 @@ async function synchronizeArchive({preferRemote=false}={}) {
   clearTimeout(archiveTimer);
   if (!archiveEnabled || !state.connected) return;
   if (archiveRunning) { archiveAgain=true; return; }
-  if (historyLocked()) { scheduleArchiveSync(); return; }
+  if (historyLocked() || document.getElementById("circuit-dialog")?.open) { scheduleArchiveSync(); return; }
   archiveRunning=true; archiveApplying=true; state.syncBusy=true; controls();
   const previousId=activeConversation?.id;
   const before=activeConversation ? JSON.stringify(wireRecord(activeConversation)) : "";

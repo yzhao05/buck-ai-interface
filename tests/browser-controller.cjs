@@ -21,7 +21,7 @@ const fs=require('node:fs');
   await page.locator('#fit-method').selectOption('weighted_integral');
   await page.locator('#identify').click();await ready();
   assert((await page.locator('#notice-text').textContent()).includes('请先确认控制电路'));
-  await page.locator('#controller-confirmed').selectOption('yes');await page.locator('#fixed-r').fill('6');
+  await page.locator('#fixed-r').fill('6');await page.locator('#controller-confirmed').selectOption('yes');
   await page.locator('#identify').click();await ready();
   assert(Math.abs(Number(await page.locator('#result-l').textContent())-60)<1);
   assert(Math.abs(Number(await page.locator('#result-c').textContent())-500)<10);

@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -21,6 +21,29 @@ class AnalysisRequest(StrictModel):
     mapping: Mapping
 
 
+class ControllerParameters(StrictModel):
+    R1_ohm: float = Field(default=11000, ge=1, le=1e9)
+    R2_ohm: float = Field(default=85000, ge=1, le=1e9)
+    R3_ohm: float = Field(default=120000, ge=1, le=1e9)
+    R4_ohm: float = Field(default=47000, ge=1, le=1e9)
+    C2_F: float = Field(default=1.1e-9, ge=1e-12, le=1e-3)
+    C3_F: float = Field(default=2.7e-9, ge=1e-12, le=1e-3)
+    opamp_gain: float = Field(default=1e6, ge=1, le=1e8)
+    reference_V: float = Field(default=5, ge=0, le=2000)
+    pwm_gain: float = Field(default=.25, gt=0, le=100)
+    duty_min: float = Field(default=.1, ge=0, lt=1)
+    duty_max: float = Field(default=.9, gt=0, le=1)
+    carrier_phase_at_t0: float = Field(default=0, ge=0, lt=1)
+    initial_c2_V: float = Field(default=0, ge=-2000, le=2000)
+    initial_c3_V: float = Field(default=0, ge=-2000, le=2000)
+
+    @model_validator(mode="after")
+    def ordered_duty(self):
+        if self.duty_min >= self.duty_max:
+            raise ValueError("占空比下限必须小于上限。")
+        return self
+
+
 class FitOptions(StrictModel):
     vin: float = Field(default=28, gt=0, le=2000)
     frequency_hz: float = Field(default=100000, ge=100, le=2000000)
@@ -36,6 +59,7 @@ class FitOptions(StrictModel):
     pann_window_cycles: int = Field(default=0, ge=0, le=3, description="0: training-noise heuristic; 1/2/3: explicit cycles")
     pwm_source: Literal["measured", "controller"] = "measured"
     controller_confirmed: bool = False
+    controller: ControllerParameters | None = None
 
 
 class FitRequest(AnalysisRequest):
