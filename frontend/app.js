@@ -22,8 +22,8 @@ function savedToken(address) {
 let base = savedValue("buck-api-url") || config.apiBaseUrl || (local ? location.origin : "");
 let accessToken = savedToken(base);
 let sessionId = crypto.randomUUID();
-const state = { dataset: null, mapping: null, summary: null, result: null, resultId: null,
-  history: [], connected: false, busy: false, chatBusy: false, job: null, chart: null, zoom: null,
+const state = { dataset: null, csvFile: null, mapping: null, summary: null, result: null, resultId: null,
+  history: [], connected: false, busy: false, chatBusy: false, syncBusy: false, job: null, chart: null, zoom: null,
   identificationOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
 const tools = {get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
@@ -58,16 +58,18 @@ function errorText(body) {
   if (Array.isArray(body.detail)) return body.detail.map(e => `${e.loc?.slice(1).join(".")}: ${e.msg}`).join("；");
   return "请求失败，请检查后端服务。";
 }
-async function api(path, {method = "GET", body, timeout = 90000} = {}) {
+async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = ""} = {}) {
   if (!base) throw new Error("请先在连接设置中填写 Render 后端地址，或本地启动后端。");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   const headers = {"X-Session-ID": sessionId};
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  if (archiveCode) headers["X-Archive-Key"] = archiveCode;
   if (body && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
   try {
     const response = await fetch(base.replace(/\/$/, "") + path, {method, headers,
       body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, signal: controller.signal});
+    if (response.ok && asBlob) return await response.blob();
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error(errorText(data)), {status:response.status});
     return data;
@@ -78,7 +80,10 @@ async function api(path, {method = "GET", body, timeout = 90000} = {}) {
   } finally { clearTimeout(timer); }
 }
 function controls() {
-  const waiting = state.busy || Boolean(state.job) || state.chatBusy;
+  const waiting = historyLocked();
+  $("chat-input").disabled = state.syncBusy;
+  $("open-settings").disabled = state.syncBusy;
+  $("sync-now").disabled = waiting || !state.connected;
   $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting;
   $("apply-mapping").disabled = !state.dataset || waiting;
   $("load-demo").disabled = waiting;
@@ -87,6 +92,7 @@ function controls() {
   $("clear-data").disabled = waiting;
   $("send-chat").disabled = waiting || !state.connected || !activeConversation;
   $("clear-chat").disabled = waiting;
+  $("delete-chat").disabled = waiting;
   $("new-chat").disabled = waiting;
   document.querySelectorAll(".history-item").forEach(button => button.disabled = waiting);
   $("leave-identification").disabled = waiting;
@@ -102,6 +108,8 @@ async function connect() {
   $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("正在连接"));
   try {
     const health = await api("/api/health", {timeout: 60000});
+    archiveEnabled=Boolean(health.archive_enabled); archivePersistent=Boolean(health.archive_persistent);
+    if (!archiveEnabled) syncStatus("此后端尚未启用双向同步，请更新后端。");
     state.connected = true;
     $("connection-status").className = "status connected";
     $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("后端已连接"));
@@ -169,7 +177,7 @@ function fillMappings(dataset) {
   for (const id of ["time-unit","current-unit","voltage-unit"]) $(id).selectedIndex = 0;
 }
 async function importData(file = null) {
-  if (state.busy || state.job || state.chatBusy) return;
+  if (historyLocked()) return;
   state.busy = true; controls(); notice();
   ui($("job-status"), "正在读取并检查数据…");
   try {
@@ -180,6 +188,8 @@ async function importData(file = null) {
       uploaded = await api("/api/datasets", {method:"POST", body:form});
     } else uploaded = await api("/api/demo", {method:"POST"});
     state.dataset = uploaded; state.mapping = null; state.summary = null; state.chart = null; state.zoom = null;
+    state.csvFile = null;
+    await archiveCurrentCsv(file);
     invalidateResult(); fillMappings(uploaded);
     $("file-info").hidden = false; $("file-name").textContent = uploaded.filename;
     ui($("file-rows"), `${uploaded.rows.toLocaleString()} 行 · CSV 已读取`);
@@ -194,6 +204,7 @@ async function importData(file = null) {
 }
 async function applyMapping() {
   if (!state.dataset) return;
+  await ensureDatasetAvailable();
   const selected = mappingFromForm();
   const summary = await api("/api/analyze", {method:"POST", body:{dataset_id:state.dataset.dataset_id, mapping:selected}});
   state.mapping = selected; state.summary = summary; state.chart = summary.chart; state.zoom = null;
@@ -211,6 +222,7 @@ async function startFit() {
   try {
     const fitOptions = options();
     state.busy = true; controls(); invalidateResult(); notice();
+    await ensureDatasetAvailable();
     ui($("job-status"), "正在提交辨识任务…");
     const response = await api("/api/identify", {method:"POST", body:{dataset_id:state.dataset.dataset_id,mapping:state.mapping,options:fitOptions}});
     state.busy = false;
@@ -312,6 +324,7 @@ async function sendMessage(value) {
   rememberMessage("user", text);
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
+    if (state.mapping) await ensureDatasetAvailable();
     const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,
       dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,options:fitOptions,result_id:fitOptions ? state.resultId : null,
       identification_enabled:state.identificationOpen}});
@@ -416,17 +429,25 @@ $("chat-input").onkeydown=event=>{if(event.key==="Enter"&&!event.shiftKey&&!even
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));
 $("ask-error").onclick=()=>void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"));
 $("clear-chat").onclick=$("new-chat").onclick=()=>void newConversation();$("download-report").onclick=downloadReport;
+$("delete-chat").onclick=()=>void deleteConversation();
 $("clear-data").onclick=async()=>{
   if (historyLocked() || !state.dataset) return;
   state.busy=true; controls();
   try {
     try { await api(`/api/datasets/${state.dataset.dataset_id}`,{method:"DELETE"}); }
     catch(error) { if(error.status!==404) throw error; }
+    await window.BuckAttachments.remove(csvScope());
+    activeConversation.file_epoch=Math.max(Date.now(),(activeConversation.file_epoch || 0)+1);
     resetExperiment(); persistConversation();
   }catch(error){notice(error.message);}
   finally {state.busy=false;controls();}
 };
-$("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;ui($("settings-status"), "");$("settings-dialog").showModal();};
+$("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;$("sync-code").value=archiveKey;ui($("settings-status"), "");$("settings-dialog").showModal();};
+$("sync-now").onclick=()=>void synchronizeArchive();
+$("copy-sync-code").onclick=async()=>{
+  try { await navigator.clipboard.writeText($("sync-code").value);ui($("settings-status"),"同步恢复码已复制，请妥善保管。"); }
+  catch { ui($("settings-status"),"复制失败，请手动复制同步恢复码。"); }
+};
 $("api-url").oninput=()=>{
   // Never carry the previous backend's credential into a different connection.
   $("access-token").value=tokenKey($("api-url").value.trim())===tokenKey(base) ? accessToken : savedToken($("api-url").value.trim());
@@ -448,11 +469,14 @@ $("settings-form").onsubmit=async event=>{
     const url=new URL($("api-url").value.trim());
     if(!["http:","https:"].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error("请输入有效的 http(s) 后端地址。");
     if(location.protocol==="https:"&&url.protocol!=="https:")throw new Error("HTTPS 页面需要连接 HTTPS 后端。");
-    if(state.job||state.busy||state.chatBusy)throw new Error("请等待当前请求结束后切换连接。");
+    if(historyLocked())throw new Error("请等待当前请求结束后切换连接。");
     const next=url.toString().replace(/\/$/,"");
     if(base&&next!==base&&state.dataset)throw new Error("切换后端前请先清除当前数据。");
     const backendChanged=next!==base;
-    if(backendChanged)persistConversation();
+    const nextCode=$("sync-code").value.trim().toLowerCase();
+    if (nextCode && !/^[a-f0-9]{64}$/.test(nextCode)) throw new Error("同步恢复码应为 64 位十六进制字符。");
+    const codeChanged=!backendChanged && nextCode && nextCode!==archiveKey;
+    if(backendChanged || codeChanged)persistConversation();
     base=next;accessToken=$("access-token").value.trim();
     let remembered=true;
     try {
@@ -460,10 +484,13 @@ $("settings-form").onsubmit=async event=>{
       if(accessToken)localStorage.setItem(tokenKey(base),accessToken);
       else localStorage.removeItem(tokenKey(base));
     }catch{remembered=false;}
+    if (codeChanged || (backendChanged && nextCode && nextCode!==archiveKey)) localStorage.setItem(archiveKeyStorage(),nextCode);
     ui($("settings-status"), "正在连接…");
-    if(backendChanged){state.connected=false;await initializeHistory();}
+    if(backendChanged || codeChanged){state.connected=false;resetExperiment();await initializeHistory();}
     if(await connect()){
+      await synchronizeArchive({preferRemote:true});
       if(!state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
+      scheduleArchiveSync();
       $("settings-dialog").close();ui($("settings-status"), "");
       if(!remembered)notice("已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。");
     }
@@ -482,4 +509,8 @@ document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden
 window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");
-controls();void (async()=>{await initializeHistory();if(await connect())await restoreAttachment(activeConversation?.attachment);})();
+controls();void (async()=>{await initializeHistory();if(await connect()){
+  await synchronizeArchive({preferRemote:true});
+  if(!state.dataset)await restoreAttachment(activeConversation?.attachment);
+  scheduleArchiveSync();
+}})();

@@ -10,7 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import chat
@@ -21,6 +21,8 @@ from .schemas import AnalysisRequest, ChatRequest, FitRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
+from . import archive
+archive.store = archive.ArchiveStore(os.getenv("ARCHIVE_DIR") or ROOT / "runtime" / "archive")
 TOKEN = os.getenv("APP_ACCESS_TOKEN", "")
 if (os.getenv("APP_ENV") == "production" or os.getenv("RENDER")) and len(TOKEN) < 20:
     raise RuntimeError("Production requires APP_ACCESS_TOKEN of at least 20 characters.")
@@ -45,6 +47,8 @@ async def size_limit(request: Request, call_next):
             return JSONResponse(status_code=401, content={"detail": "访问口令不正确，请在连接设置中输入后端 APP_ACCESS_TOKEN。"})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
+    if request.url.path.startswith("/api/archive"):
+        response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -98,10 +102,10 @@ def add_dataset(raw, name, owner):
         if sum(item["owner"] == owner for item in datasets.values()) >= 2:
             previous = next(k for k, v in datasets.items() if v["owner"] == owner)
             del datasets[previous]
-        size = int(data.frame.memory_usage(deep=True).sum())
+        size = int(data.frame.memory_usage(deep=True).sum()) + len(raw)
         if sum(v["size"] for v in datasets.values()) + size > 96 * 1024 * 1024 or len(datasets) >= 12:
             raise HTTPException(503, "服务器数据容量已满，请删除不用的数据或稍后重试。")
-        datasets[identifier] = {"owner": owner, "data": data, "created": time.time(), "size": size}
+        datasets[identifier] = {"owner": owner, "data": data, "raw": raw, "created": time.time(), "size": size}
     return {"dataset_id": identifier, "filename": data.name, "columns": list(data.frame.columns),
             "rows": len(data.frame), "sha256": data.sha256, "suggested_mapping": suggest_mapping(data)}
 
@@ -115,7 +119,8 @@ def health():
     return {"status": "ok", "version": "0.1.0", "chat_mode": "deepseek" if os.getenv("DEEPSEEK_API_KEY") else "local",
             "model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "requires_token": bool(TOKEN),
             "pann_available": pann_available(),
-            "source_url": os.getenv("SOURCE_URL", "")}
+            "source_url": os.getenv("SOURCE_URL", ""), "archive_enabled": True,
+            "archive_persistent": not bool(os.getenv("RENDER")) or (bool(os.getenv("ARCHIVE_DIR")) and any(os.path.ismount(p) for p in [archive.store.directory, *archive.store.directory.parents] if str(p) not in ("/", ".")))}
 
 
 @app.post("/api/datasets")
@@ -148,6 +153,21 @@ def delete_dataset(identifier: str, owner: str = Depends(session)):
         for k in [k for k, j in jobs.items() if j["owner"] == owner and j["dataset_id"] == identifier]:
             del jobs[k]
     return {"deleted": True}
+
+
+@app.get("/api/datasets/{identifier}")
+def dataset_status(identifier: str, owner: str = Depends(session)):
+    data = get_dataset(identifier, owner)
+    return {"dataset_id": identifier, "sha256": data.sha256}
+
+
+@app.get("/api/datasets/{identifier}/csv")
+def download_csv(identifier: str, owner: str = Depends(session)):
+    # Preserve original bytes (encoding, separators and hash) for browser archives.
+    with lock:
+        get_dataset(identifier, owner)
+        raw = datasets[identifier]["raw"]
+    return Response(raw, media_type="text/csv", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/analyze")
@@ -243,7 +263,8 @@ async def chat_route(body: ChatRequest, owner: str = Depends(session)):
 
 
 # Local convenience; GitHub Pages deploys only this directory, never backend or .env.
+app.include_router(archive.router)
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")
 # Added last so CORS also wraps auth and payload-limit error responses.
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "DELETE"],
-                   allow_headers=["Authorization", "Content-Type", "X-Session-ID"], allow_credentials=False)
+                   allow_headers=["Authorization", "Content-Type", "X-Session-ID", "X-Archive-Key"], allow_credentials=False)

@@ -1,5 +1,7 @@
 import time
 import uuid
+from collections import OrderedDict
+import hashlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -56,6 +58,30 @@ def test_auth_cors_invalid_upload_and_static(client):
     assert client.get("/").status_code==200
     assert client.get("/.env").status_code==404
     assert client.get("/api/health").json()["requires_token"] is True
+
+
+def test_csv_archive_bytes_access_expiry_and_reupload(client, monkeypatch):
+    monkeypatch.setattr(main, "datasets", OrderedDict())
+    raw = ("时间;电感电流;电压\r\n" + "".join(f"{i*.001};{i*.1};12\r\n" for i in range(40))).encode("gb18030")
+    upload = client.post("/api/datasets", files={"file":("original.csv",raw,"text/csv")})
+    assert upload.status_code == 200
+    data = upload.json()
+    path = "/api/datasets/" + data["dataset_id"]
+    assert client.get(path).json()["sha256"] == hashlib.sha256(raw).hexdigest()
+    response = client.get(path+"/csv")
+    assert response.content == raw  # Original encoding, delimiter and CRLF preserved.
+    assert response.headers["cache-control"] == "no-store"
+    assert main.datasets[data["dataset_id"]]["size"] >= len(raw)
+    for suffix in ("", "/csv"):
+        assert client.get(path+suffix, headers={"Authorization":"Bearer wrong"}).status_code == 401
+        assert client.get(path+suffix, headers={"X-Session-ID":str(uuid.uuid4())}).status_code == 404
+    main.datasets[data["dataset_id"]]["created"] -= main.TTL+1
+    assert client.get(path).status_code == 404
+    assert client.get(path+"/csv").status_code == 404
+    restored = client.post("/api/datasets", files={"file":("original.csv",raw,"text/csv")}).json()
+    assert restored["dataset_id"] != data["dataset_id"]
+    assert restored["sha256"] == data["sha256"]
+    assert client.delete("/api/datasets/"+restored["dataset_id"]).status_code == 200
 
 
 def test_no_fake_lifetime(client):

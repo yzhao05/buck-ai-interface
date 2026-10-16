@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./history.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./attachments.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -63,8 +63,9 @@
       </div>
       <section class="side-section history-section">
         <div class="section-heading"><h2>历史会话</h2><button type="button" class="section-toggle" id="toggle-history" aria-controls="history-content" aria-expanded="true" aria-label="收起历史会话" title="收起历史会话">−</button></div>
-        <div id="history-content"><button type="button" id="new-chat" class="button secondary full">＋ 新建会话</button><nav id="history-list" aria-label="历史会话"></nav><p class="field-note">对话长期保存在当前浏览器，清除网站数据会删除历史；不会跨设备同步。</p></div>
+        <div id="history-content"><button type="button" id="new-chat" class="button secondary full">＋ 新建会话</button><button type="button" id="delete-chat" class="button ghost full">删除当前会话</button><button type="button" id="sync-now" class="button ghost full">立即同步</button><p id="sync-status" class="field-note" role="status">等待同步</p><nav id="history-list" aria-label="历史会话"></nav><p class="field-note">对话和 CSV 支持浏览器与后端双端保存，打开时自动核对补齐。备份是否完成请查看同步状态；删除会话会同步删除两端副本。</p></div>
         <p id="history-status" class="field-note" role="status" hidden></p>
+        <p id="csv-storage-status" class="field-note" role="status" hidden></p>
       </section>
       <div class="side-footer"><span class="tiny-square"></span> 物理计算 × 专业知识 × AI 对话<br><span><a href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">Inspired by PE-GPT ↗</a></span></div>
     </aside>
@@ -75,7 +76,7 @@
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
       <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
-      <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要与对话将发送至已配置的 DeepSeek。<br>对话保存在此浏览器，不自动过期；后端 CSV 默认 1 小时过期。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
+      <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要与对话将发送至已配置的 DeepSeek。<br>清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
     </main>
     <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>
       <div class="page-heading"><div><span class="eyebrow">WAVEFORM INTELLIGENCE</span><h2>波形与辨识结果</h2><p>查看测量波形、模型预测与验证误差。</p></div><button type="button" id="close-analysis" class="icon-button" aria-label="退出参数辨识，返回对话" title="退出参数辨识">×</button></div>
@@ -105,7 +106,7 @@
       <footer class="main-footer"><span>数值计算结果与 AI 解释分开呈现。</span></footer>
     </aside>
   </div>
-  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。</p><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p></form></dialog>
+  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。</p><label>同步恢复码<input id="sync-code" type="password" autocomplete="off" spellcheck="false" minlength="64" maxlength="64"></label><p class="field-note">自动生成并记住。请复制保管，换浏览器或清空本地后可用它恢复备份；不要分享给他人。</p><button type="button" id="copy-sync-code" class="button ghost full">复制同步恢复码</button><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p></form></dialog>
   <div id="chart-tooltip" class="chart-tooltip" hidden></div>
 </body>
 </html>
