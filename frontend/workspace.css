@@ -1,5 +1,14 @@
-/* Conversation is the primary workspace. Analysis opens only on explicit entry. */
+/* Conversation is primary; imports preview waveforms, identification requires entry. */
 .language-toggle { min-width: 43px; font-weight: 600; white-space: nowrap; }
+.csv-library-heading { display: flex; align-items: center; gap: 6px; }
+.csv-library-heading #load-demo { flex: 1; min-width: 0; white-space: normal; }
+.csv-library-heading .section-toggle { flex: 0 0 30px; height: 30px; }
+.csv-library-menu { padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+#csv-library-list { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; }
+.csv-library-item { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 9px 6px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); }
+.csv-library-item:hover, .csv-library-item:focus-visible { background: var(--teal-light); }
+.csv-library-item strong { font-size: 11px; overflow-wrap: anywhere; font-weight: 500; }
+.csv-library-item small { font-size: 9px; color: var(--muted); }
 html[lang="en"] .split-legend { flex-wrap: wrap; gap: 7px; }
 html[lang="en"] .welcome h3 { font-size: clamp(23px, 2.2vw, 33px); }
 html[lang="en"] .result-actions { flex-wrap: wrap; }
@@ -16,7 +25,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   grid-template-areas: "sidebar conversation";
   max-width: none;
 }
-.workspace.identification-open {
+.workspace:is(.identification-open, .waveform-open) {
   grid-template-columns: 258px minmax(390px, 1.15fr) minmax(420px, 1fr);
   grid-template-areas: "sidebar conversation analysis";
 }
@@ -96,10 +105,10 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .message-content { font-size: 13px; line-height: 2; }
 .message-label { font-size: 10px; }
 .message-mode, .message-tools, .message-sources a, .message-sources span { font-size: 9px; }
-.identification-open .chat-messages { padding: 30px 25px 22px; }
-.identification-open .welcome h3 { font-size: 26px; }
-.identification-open .suggestions { grid-template-columns: 1fr; }
-.identification-open .chat-compose { margin: 12px 22px 0; }
+:is(.identification-open, .waveform-open) .chat-messages { padding: 30px 25px 22px; }
+:is(.identification-open, .waveform-open) .welcome h3 { font-size: 26px; }
+:is(.identification-open, .waveform-open) .suggestions { grid-template-columns: 1fr; }
+:is(.identification-open, .waveform-open) .chat-compose { margin: 12px 22px 0; }
 .main-panel .page-heading { align-items: flex-start; margin-bottom: 20px; }
 .main-panel .page-heading h2 { font-size: 20px; font-weight: 600; margin: 8px 0; }
 .main-panel .metrics-grid { gap: 8px; }
@@ -122,22 +131,22 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .main-panel .result-actions { padding: 12px 16px; gap: 8px; }
 @media (min-width: 1700px) {
   .workspace { grid-template-columns: 278px minmax(0, 1fr); }
-  .workspace.identification-open { grid-template-columns: 278px minmax(500px, 1.2fr) minmax(480px, 1fr); }
+  .workspace:is(.identification-open, .waveform-open) { grid-template-columns: 278px minmax(500px, 1.2fr) minmax(480px, 1fr); }
   .workspace .main-panel { padding: 30px 26px 18px; }
 }
 @media (min-width: 761px) and (max-width: 1190px) {
   .workspace { grid-template-columns: 225px minmax(0, 1fr); }
-  .workspace.identification-open { grid-template-columns: 225px minmax(0, 1fr); grid-template-areas: "sidebar conversation" "sidebar analysis"; }
+  .workspace:is(.identification-open, .waveform-open) { grid-template-columns: 225px minmax(0, 1fr); grid-template-areas: "sidebar conversation" "sidebar analysis"; }
   .workspace > .sidebar { padding: 25px 16px; }
   .workspace .chat-panel { grid-column: auto; }
-  .workspace.identification-open .chat-panel { position: static; min-height: 610px; height: calc(100dvh - 79px); }
+  .workspace:is(.identification-open, .waveform-open) .chat-panel { position: static; min-height: 610px; height: calc(100dvh - 79px); }
   .workspace .main-panel { border-top: 1px solid var(--line); }
   .chat-messages { padding: 28px; }
   .chat-compose { margin: 12px 28px 0; }
   .suggestions { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
-  .workspace, .workspace.identification-open { display: flex; flex-direction: column; }
+  .workspace, .workspace:is(.identification-open, .waveform-open) { display: flex; flex-direction: column; }
   .workspace > .sidebar { order: 0; width: 100%; padding: 17px 18px 0; border: 0; border-bottom: 1px solid var(--line); }
   .sidebar .side-heading { margin-bottom: 13px; }
   .sidebar .side-section { margin-bottom: 17px; padding-top: 13px; }
@@ -145,12 +154,12 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   .workspace .chat-panel { order: 1; position: static; height: 650px; min-height: 570px; border-bottom: 1px solid var(--line); }
   .workspace .main-panel { order: 2; width: 100%; padding: 23px 16px 10px; border-left: 0; }
   .chat-panel > .notice { margin: 12px 18px 0; }
-  .chat-messages, .identification-open .chat-messages { padding: 24px 22px; }
-  .welcome h3, .identification-open .welcome h3 { font-size: 25px; }
+  .chat-messages, :is(.identification-open, .waveform-open) .chat-messages { padding: 24px 22px; }
+  .welcome h3, :is(.identification-open, .waveform-open) .welcome h3 { font-size: 25px; }
   .welcome p { font-size: 12px; }
   .suggestions { grid-template-columns: 1fr; }
   .suggestions button { padding: 11px 12px; }
-  .chat-compose, .identification-open .chat-compose { margin: 10px 18px 0; }
+  .chat-compose, :is(.identification-open, .waveform-open) .chat-compose { margin: 10px 18px 0; }
   .chat-compose textarea { font-size: 13px; }
   .chat-footnote { font-size: 8px; margin: 12px 18px 17px; }
 }
@@ -158,32 +167,32 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 /* Each visible column owns its scroll; wheel input stays under the pointer. */
 .workspace-content { display: contents; }
 @media (min-width: 761px) {
-  .workspace.identification-open {
+  .workspace:is(.identification-open, .waveform-open) {
     height: calc(100dvh - 79px);
     min-height: 0;
     grid-template-rows: minmax(0, 1fr);
   }
-  .identification-open > .sidebar,
-  .identification-open .main-panel {
+  :is(.identification-open, .waveform-open) > .sidebar,
+  :is(.identification-open, .waveform-open) .main-panel {
     height: 100%;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
     scrollbar-gutter: stable;
   }
-  .workspace.identification-open .chat-panel {
+  .workspace:is(.identification-open, .waveform-open) .chat-panel {
     position: static;
     height: 100%;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
   }
-  .identification-open .chat-messages { overscroll-behavior-y: contain; }
-  .identification-open .chat-panel.is-empty .chat-messages { justify-content: safe center; }
+  :is(.identification-open, .waveform-open) .chat-messages { overscroll-behavior-y: contain; }
+  :is(.identification-open, .waveform-open) .chat-panel.is-empty .chat-messages { justify-content: safe center; }
 }
 @media (min-width: 761px) and (max-width: 1190px) {
-  .workspace.identification-open { grid-template-areas: "sidebar content"; }
-  .identification-open > .workspace-content {
+  .workspace:is(.identification-open, .waveform-open) { grid-template-areas: "sidebar content"; }
+  :is(.identification-open, .waveform-open) > .workspace-content {
     display: block;
     grid-area: content;
     min-width: 0;
@@ -193,12 +202,12 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
     overscroll-behavior-y: contain;
     scrollbar-gutter: stable;
   }
-  .workspace.identification-open .chat-panel { height: max(610px, calc(100dvh - 79px)); }
+  .workspace:is(.identification-open, .waveform-open) .chat-panel { height: max(610px, calc(100dvh - 79px)); }
   /* On narrow screens, chat and results share the same right-hand column.
      Allow scrolling to reach its results after the message list ends. */
-  .workspace.identification-open .chat-panel,
-  .identification-open .chat-messages { overscroll-behavior-y: auto; }
-  .workspace.identification-open .main-panel {
+  .workspace:is(.identification-open, .waveform-open) .chat-panel,
+  :is(.identification-open, .waveform-open) .chat-messages { overscroll-behavior-y: auto; }
+  .workspace:is(.identification-open, .waveform-open) .main-panel {
     height: auto;
     overflow: visible;
     scrollbar-gutter: auto;

@@ -151,6 +151,7 @@ function rememberMessage(role, content, response = null, mode = "") {
   persistConversation(); renderHistory();
 }
 function resetExperiment() {
+  closeCsvLibrary();
   pendingAttachment=null;
   state.csvFile=null; csvWarning();
   state.dataset=null; state.mapping=null; state.summary=null; state.chart=null; state.zoom=null;

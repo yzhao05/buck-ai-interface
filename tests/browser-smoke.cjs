@@ -28,11 +28,12 @@ const assert = require('node:assert/strict');
   await page.locator('#load-demo').click();
   await page.locator('#file-info').waitFor();
   await page.waitForFunction(() => !document.getElementById('load-demo').disabled);
-  assert(await page.locator('#analysis-panel').isHidden(), 'Import must not open identification');
+  assert(await page.locator('#analysis-panel').isVisible(), 'Import opens the waveform preview');
+  assert(await page.locator('#identification-form').isHidden(), 'Import must not enable identification');
   await page.locator('#chat-input').fill('开始参数辨识');
   await page.locator('#send-chat').click();
   await page.locator('.message.assistant').filter({hasText:'进入参数辨识'}).waitFor();
-  assert(await page.locator('#analysis-panel').isHidden());
+  assert(await page.locator('#identification-form').isHidden());
   // Keep this conversation's CSV for the identification flow. New chat intentionally isolates data.
   await page.locator('#enter-identification').click();
   await page.locator('#fit-method').selectOption('weighted_integral');

@@ -2,6 +2,16 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "选择历史 CSV": "Choose a previous CSV",
+    "选择后自动加载到当前会话。": "Select a file to load it into this conversation.",
+    "正在读取历史 CSV…": "Loading previous CSV files…",
+    "部分历史文件暂时无法查询，已显示可找到的 CSV；请检查连接后重试。": "Some history files could not be checked. Available CSVs are shown; check your connection and retry.",
+    "同一会话中内容相同的 CSV 只显示一次。": "Identical CSV content is listed once per conversation.",
+    "暂无历史 CSV，上传后会自动加入此列表。": "No previous CSV files yet. Uploaded files will appear here.",
+    "历史 CSV 列表读取失败，请稍后重试。": "Could not load the CSV history. Please retry.",
+    "此 CSV 所属会话已删除或数据已清除，请重新选择。": "This conversation was deleted or its files were cleared. Choose another CSV.",
+    "CSV 已自动加载并显示波形，请核对信号列与单位。": "CSV loaded and waveforms displayed. Check the signal columns and units.",
+    "关闭波形与辨识面板": "Close waveform and identification panel",
     "参考电路": "Reference circuit",
     "C2 初始电压 = va − vm；C3 初始电压 = vb − vm。载波相位以周期为单位。小屏幕可左右滑动查看完整电路图。": "Initial C2 voltage = va − vm; initial C3 voltage = vb − vm. Carrier phase is measured in cycles. On small screens, scroll horizontally to see the complete diagram.",
     "放大 / 编辑": "Enlarge / edit",

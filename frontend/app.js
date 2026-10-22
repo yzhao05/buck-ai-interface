@@ -24,7 +24,7 @@ let accessToken = savedToken(base);
 let sessionId = crypto.randomUUID();
 const state = { dataset: null, csvFile: null, mapping: null, summary: null, result: null, resultId: null,
   history: [], connected: false, busy: false, chatBusy: false, syncBusy: false, job: null, chart: null, zoom: null,
-  identificationOpen: false };
+  identificationOpen: false, waveformOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
 const tools = {get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
@@ -39,8 +39,11 @@ function toggleSection(buttonId, contentId, label, expanded) {
 }
 function setIdentificationOpen(open) {
   state.identificationOpen = open;
+  state.waveformOpen = open;
   $("workspace").classList.toggle("identification-open", open);
+  $("workspace").classList.toggle("waveform-open", open);
   $("analysis-panel").hidden = !open;
+  $("results-card").hidden = !open;
   $("identification-form").hidden = !open;
   $("enter-identification").hidden = open;
   $("enter-identification").setAttribute("aria-expanded", String(open));
@@ -52,6 +55,12 @@ function setIdentificationOpen(open) {
     $("enter-identification").focus({preventScroll:true});
   }
   controls();
+}
+function showWaveform() {
+  state.waveformOpen = true;
+  $("workspace").classList.add("waveform-open");
+  $("analysis-panel").hidden = false;
+  requestAnimationFrame(drawCharts);
 }
 function errorText(body) {
   if (typeof body.detail === "string") return body.detail;
@@ -97,6 +106,8 @@ function controls() {
   $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting;
   $("apply-mapping").disabled = !state.dataset || waiting;
   $("load-demo").disabled = waiting;
+  $("toggle-csv-library").disabled = waiting || !activeConversation;
+  document.querySelectorAll(".csv-library-item").forEach(button=>button.disabled=waiting);
   $("empty-demo").disabled = waiting;
   $("csv-file").disabled = waiting;
   $("clear-data").disabled = waiting;
@@ -200,11 +211,12 @@ function fillMappings(dataset) {
   }
   for (const id of ["time-unit","current-unit","voltage-unit"]) $(id).selectedIndex = 0;
 }
-async function importData(file = null) {
+async function importData(file = null, resolveFile = null) {
   if (historyLocked()) return;
   state.busy = true; controls(); notice();
   ui($("job-status"), "正在读取并检查数据…");
   try {
+    if (resolveFile) file = await resolveFile();
     let uploaded;
     if (file) {
       if (file.size > 32 * 1024 * 1024 || !file.name.toLowerCase().endsWith(".csv")) throw new Error("请选择不超过 32 MB 的 CSV 文件。");
@@ -212,6 +224,10 @@ async function importData(file = null) {
       uploaded = await api("/api/datasets", {method:"POST", body:form});
     } else uploaded = await api("/api/demo", {method:"POST"});
     state.dataset = uploaded; state.mapping = null; state.summary = null; state.chart = null; state.zoom = null;
+    $("chart-container").hidden=true; $("chart-empty").hidden=false;
+    for (const id of ["stat-voltage","stat-current","stat-duration"]) ui($(id),"—");
+    ui($("stat-points"),"正在读取并检查数据…");
+    $("wave-subtitle").textContent=uploaded.filename;
     state.csvFile = null;
     await archiveCurrentCsv(file);
     invalidateResult(); fillMappings(uploaded);
@@ -224,7 +240,14 @@ async function importData(file = null) {
     await applyMapping();
     $("mapping-details").open = Boolean(file);
     if (!file) notice("已加载真实 PLECS Case16A 数据。已将辨识区间设为 0～0.8 ms，避开 1 ms 的负载突变。", true);
-  } catch (error) { notice(error.message); ui($("job-status"), "数据读取或检查未完成"); }
+    else notice("CSV 已自动加载并显示波形，请核对信号列与单位。", true);
+  } catch (error) {
+    if (state.dataset && !state.mapping) {
+      $("mapping-details").open=true;
+      ui($("stat-points"), "数据读取或检查未完成");
+    }
+    notice(error.message); ui($("job-status"), "数据读取或检查未完成");
+  }
   finally { state.busy = false; $("csv-file").value = ""; persistConversation(); controls(); }
 }
 async function applyMapping() {
@@ -236,6 +259,7 @@ async function applyMapping() {
   prepareControllerDefaults(); controls();
   invalidateResult();
   displaySummary(); readyStatus();
+  showWaveform();
   drawCharts(); controls();
 }
 function displaySummary() {
@@ -455,6 +479,7 @@ function downloadReport() {
 $("csv-file").onchange = event => { if(event.target.files[0]) void importData(event.target.files[0]); };
 $("close-notice").onclick = () => notice();
 $("load-demo").onclick = $("empty-demo").onclick = () => void importData();
+$("toggle-csv-library").onclick = () => void toggleCsvLibrary();
 $("dropzone").ondragover = event => {event.preventDefault();$("dropzone").classList.add("dragover");};
 $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
 $("dropzone").ondrop = event => {event.preventDefault();$("dropzone").classList.remove("dragover");if(event.dataTransfer.files[0])void importData(event.dataTransfer.files[0]);};
