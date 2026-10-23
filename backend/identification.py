@@ -13,6 +13,25 @@ from .data import Dataset, chart_data, extract
 from .schemas import FitOptions, Mapping
 
 
+def review_reasons(metrics, diagnostics, method):
+    """Structured evidence for the existing quality gates, without changing thresholds."""
+    reasons = []
+    for channel in ("current", "voltage"):
+        value = metrics[f"{channel}_nrmse_pct"]
+        if value > 5:
+            reasons.append({"code": f"{channel}_nrmse", "value": float(value), "threshold": 5})
+    if diagnostics["parameter_at_bound"]:
+        reasons.append({"code": "parameter_at_bound"})
+    if diagnostics["CR_condition_number"] > 100:
+        reasons.append({"code": "condition_number", "value": float(diagnostics["CR_condition_number"]), "threshold": 100})
+    training = diagnostics.get("pann", {}) if method == "pann" else {}
+    if training.get("stop_reason") == "time_budget":
+        reasons.append({"code": "pann_time_budget", "completed_epochs": training.get("completed_epochs"), "requested_epochs": training.get("epochs")})
+    if training.get("best_at_budget_end"):
+        reasons.append({"code": "pann_best_at_end", "best_epoch": training.get("best_epoch"), "completed_epochs": training.get("completed_epochs")})
+    return reasons
+
+
 def window_indices(t, fs, cycles_list=(0.45, 1.4, 4.2), maximum=700):
     pairs = []
     for cycles in cycles_list:
@@ -242,8 +261,8 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         diagnostics["parameter_at_bound"] |= training.get("parameter_at_bound", False)
         diagnostics["method"] += " → PANN 波形损失微调"
         initial_state = training["rollout_initial_state_A_V"]
-        if training["stop_reason"] == "time_budget" or training["best_at_budget_end"]:
-            notes.append("PANN 达到训练预算或最佳轮次在预算末端，不能视为已经充分收敛；请比较不同窗口长度和训练轮数。")
+        if training["best_at_budget_end"]:
+            notes.append("PANN 最佳结果出现在最后一次训练评估，尚不能确认充分收敛；请增加训练轮数或对照不同窗口长度。")
         if options.pann_initial_state == "measured":
             notes.append("当前为固定含噪测量初值的对照模式；Case14/15 表明该设置可能放大电容辨识偏差。")
         else:
@@ -284,18 +303,17 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
             notes.append("实际 PWM 频率与设置相差超过 15%，请核对开关频率及时间单位。")
     if np.max(np.diff(a[:, 0])) > 0.15 / options.frequency_hz:
         notes.append("部分采样间隔超过开关周期的 15%；边沿时间不确定性可能影响 L 估计。")
-    quality = "需复核" if (max(metrics["current_nrmse_pct"], metrics["voltage_nrmse_pct"]) > 5 or diagnostics["parameter_at_bound"] or diagnostics["CR_condition_number"] > 100) else "模型内拟合一致"
-    if quality == "需复核":
+    reasons = review_reasons(metrics, diagnostics, options.method)
+    quality = "需复核" if reasons else "模型内拟合一致"
+    if any(reason["code"] in ("current_nrmse", "voltage_nrmse", "parameter_at_bound", "condition_number") for reason in reasons):
         notes.append("留出误差或可辨识性检查未通过经验阈值；检查负载突变、PWM 对齐、初始状态及模型遗漏。")
-    if options.method == "pann" and (training["stop_reason"] == "time_budget" or training["best_at_budget_end"]):
-        quality = "需复核"
     if reconstructed:
         notes.append("PWM 由已确认的控制电路和训练段电压重建；含噪电压、控制器初态或载波相位不匹配会影响结果。")
         notes.append("已计入反馈取样支路电流；忽略 ESR、绕组电阻、死区和器件压降。R 为用户提供的恒定负载电阻，未参与估计。")
     else:
         notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
     return {"parameters": {"L_H": float(params[0]), "C_F": float(params[1]), "R_ohm": float(params[2])},
-            "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality,
+            "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality, "review_reasons": reasons,
             "metrics": metrics, "training_metrics": train_metrics, "diagnostics": diagnostics,
             "options": options.model_dump(), "mapping": mapping.model_dump(),
             "train_start_s": float(a[0, 0]), "train_end_s": float(a[split, 0]), "validation_end_s": float(a[-1, 0]),

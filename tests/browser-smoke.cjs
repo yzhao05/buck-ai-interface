@@ -63,6 +63,7 @@ const assert = require('node:assert/strict');
   const downloadPromise = page.waitForEvent('download');
   await page.locator('#download-report').click();
   const download = await downloadPromise;
+  assert.match(download.suggestedFilename(), /^\d{4}_A_noiseNA_seedNA_measured_WIntegral_NA\.json$/);
   await download.saveAs('runtime/browser-export.json');
   const report = JSON.parse(fs.readFileSync('runtime/browser-export.json','utf8'));
   if (!report.result?.file_sha256) throw new Error('Missing provenance in report');

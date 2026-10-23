@@ -2,6 +2,7 @@ import time
 import uuid
 from collections import OrderedDict
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -92,6 +93,47 @@ def test_no_fake_lifetime(client):
     assert "不能" in data["answer"] and "器件型号" in data["answer"]
     assert any(s["id"]=="capacitor-life" for s in data["sources"])
     assert data["route"]["task"] == "hardware" and data["route"]["mode"] == "rules"
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_long_job_survives_ttl_and_result_retention_restarts(client, monkeypatch, fails):
+    monkeypatch.setattr(main, "datasets", OrderedDict())
+    monkeypatch.setattr(main, "jobs", OrderedDict())
+    data = client.post("/api/demo").json()
+    dataset_id = data["dataset_id"]
+    owner = client.headers["X-Session-ID"]
+    # A queued job must protect its data too.
+    main.jobs["queued-test"] = {"owner": owner, "dataset_id": dataset_id, "created": time.time()-main.TTL-1, "status": "queued"}
+    main.datasets[dataset_id]["created"] -= main.TTL+1
+    main.cleanup()
+    assert dataset_id in main.datasets and "queued-test" in main.jobs
+    del main.jobs["queued-test"]
+    main.datasets[dataset_id]["created"] = time.time()
+
+    def long_fit(*args, **kwargs):
+        job = next(iter(main.jobs.values()))
+        job["created"] -= main.TTL+1
+        main.datasets[dataset_id]["created"] -= main.TTL+1
+        main.cleanup()
+        assert job["status"] == "running" and dataset_id in main.datasets
+        if fails:
+            raise ValueError("test training failure")
+        return {"completed_epochs": 200}
+
+    monkeypatch.setattr(main, "identify", long_fit)
+    monkeypatch.setattr(main, "pool", SimpleNamespace(submit=lambda task: task()))
+    job_id = client.post("/api/identify", json={"dataset_id":dataset_id,"mapping":data["suggested_mapping"],
+                                               "options":{"method":"weighted_integral"}}).json()["job_id"]
+    response = client.get("/api/jobs/"+job_id)
+    assert response.status_code == 200
+    assert response.json()["status"] == ("failed" if fails else "complete")
+    assert client.get("/api/datasets/"+dataset_id).status_code == 200
+    assert time.time()-main.jobs[job_id]["created"] < 10
+    assert time.time()-main.datasets[dataset_id]["created"] < 10
+    main.jobs[job_id]["created"] -= main.TTL+1
+    main.datasets[dataset_id]["created"] -= main.TTL+1
+    assert client.get("/api/jobs/"+job_id).status_code == 404
+    assert client.get("/api/datasets/"+dataset_id).status_code == 404
 
 
 def test_formula_route_does_not_require_live_dataset(client):

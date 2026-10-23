@@ -18,6 +18,7 @@ from .data import MAX_BYTES, analyze, read_csv, suggest_mapping
 from .identification import identify
 from .pann_adapter import available as pann_available
 from .schemas import AnalysisRequest, ChatRequest, FitRequest
+from .report import ReportRequest, build_pdf
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -54,8 +55,11 @@ async def size_limit(request: Request, call_next):
 
 def cleanup():
     now = time.time()
+    active_datasets = {j["dataset_id"] for j in jobs.values() if j.get("status") in ("queued", "running")}
     for store in (datasets, jobs):
         for key, item in list(store.items()):
+            if store is datasets and key in active_datasets:
+                continue
             if now - item["created"] > TTL and item.get("status") not in ("queued", "running"):
                 del store[key]
     for key, events in list(rate.items()):
@@ -137,6 +141,17 @@ async def upload(file: UploadFile = File(...), owner: str = Depends(session)):
         await file.close()
 
 
+@app.post("/api/reports/pdf")
+def export_pdf(body: ReportRequest, owner: str = Depends(session)):
+    # The caller supplies its saved result snapshot: exporting a restored history
+    # must not depend on the temporary job/dataset still being in memory.
+    throttle(owner, "report", 6)
+    return Response(build_pdf(body), media_type="application/pdf", headers={
+        "Content-Disposition": 'attachment; filename="buck-report.pdf"',
+        "Cache-Control": "no-store",
+    })
+
+
 @app.post("/api/demo")
 def demo(owner: str = Depends(session)):
     throttle(owner, "upload", 8)
@@ -196,6 +211,12 @@ def start_fit(body: FitRequest, owner):
         jobs[identifier] = {"owner": owner, "created": time.time(), "status": "queued", "stage": "queued",
                             "dataset_id": body.dataset_id, "config": body.model_dump(), "result": None, "error": None}
     def execute():
+        def finish(**updates):
+            with lock:
+                finished = time.time()
+                jobs[identifier].update(created=finished, **updates)
+                if body.dataset_id in datasets:
+                    datasets[body.dataset_id]["created"] = finished
         def progress(stage):
             with lock:
                 jobs[identifier]["stage"] = stage
@@ -203,16 +224,14 @@ def start_fit(body: FitRequest, owner):
             jobs[identifier]["status"] = "running"
         try:
             result = identify(dataset, body.mapping, body.options, progress=progress)
-            with lock:
-                jobs[identifier].update(status="complete", stage="complete", result=result)
+            finish(status="complete", stage="complete", result=result)
         except Exception as exc:
             # No raw stack traces / server paths in API responses.
             error = str(exc) if isinstance(exc, ValueError) else "辨识计算失败，请查看后端日志并检查输入条件。"
             if not isinstance(exc, ValueError):
                 import logging
                 logging.exception("Identification failure")
-            with lock:
-                jobs[identifier].update(status="failed", error=error)
+            finish(status="failed", error=error)
     pool.submit(execute)
     return {"job_id": identifier, "status": "queued"}
 

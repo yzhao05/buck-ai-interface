@@ -11,5 +11,5 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
-      - run: pip install -r requirements-lock.txt pytest
+      - run: pip install -r requirements-lock.txt -r requirements-dev.txt
       - run: python -m pytest -q

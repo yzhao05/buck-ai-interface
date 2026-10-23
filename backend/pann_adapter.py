@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import time
 
 import numpy as np
 
@@ -89,13 +88,11 @@ def refine(train, initial, options):
                    "options": {k: getattr(options, k) for k in ("vin", "frequency_hz", "mode", "epochs", "pann_initial_state", "pann_window_cycles")}}
         environment = {k: v for k, v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "APP_ACCESS_TOKEN")}
         environment["PYTHONIOENCODING"] = "utf-8"
-        try:
-            response = subprocess.run([str(executable), "-m", "backend.pann_worker"],
-                input=json.dumps(payload), text=True, encoding="utf-8", capture_output=True,
-                cwd=Path(__file__).resolve().parents[1], env=environment, timeout=180,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        except subprocess.TimeoutExpired as exc:
-            raise ValueError("PANN 计算超过 180 秒，已停止；请选择更短区间或积分辨识。") from exc
+        # Wait for the selected epoch count, however long the worker needs.
+        response = subprocess.run([str(executable), "-m", "backend.pann_worker"],
+            input=json.dumps(payload), text=True, encoding="utf-8", capture_output=True,
+            cwd=Path(__file__).resolve().parents[1], env=environment,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         if response.returncode:
             raise ValueError("现有 PANN 环境运行失败，请确认该环境可导入 NumPy 和 PyTorch。")
         try:
@@ -158,7 +155,6 @@ def refine(train, initial, options):
     best_epoch = 0
     best_step = 0
     history = []
-    began = time.monotonic()
     stop_reason = "epoch_budget"
     for step in range(warmup + options.epochs + 1):
         epoch = max(0, step-warmup)
@@ -179,9 +175,6 @@ def refine(train, initial, options):
         if step % 10 == 0 or step == warmup + options.epochs:
             history.append({"step": step, "phase": "state_warmup" if step < warmup else "joint" if joint else "measured",
                             "epoch": epoch, "loss": loss.item(), "L_H": values[0], "C_F": values[1], "R_ohm": values[2]})
-        if time.monotonic() - began > 120:
-            stop_reason = "time_budget"
-            break
         if step < warmup + options.epochs:
             loss.backward()
             trained = [normalized_start] if step < warmup else parameters + ([normalized_start] if joint else [])

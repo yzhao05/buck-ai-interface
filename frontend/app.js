@@ -122,7 +122,8 @@ function controls() {
   $("chat-input").disabled = state.syncBusy;
   $("open-settings").disabled = state.syncBusy;
   $("sync-now").disabled = waiting || !state.connected;
-  $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting;
+  $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting || Boolean(state.result);
+  $("identify-complete-hint").hidden = !state.result;
   $("apply-mapping").disabled = !state.dataset || waiting;
   $("load-demo").disabled = waiting;
   $("toggle-csv-library").disabled = waiting || !activeConversation;
@@ -212,7 +213,9 @@ function resultMatchesCurrent(result) {
     && Object.entries(state.mapping).every(([key,value]) => result.mapping?.[key] === value));
 }
 function invalidateResult() {
+  clearReportDownloads();
   state.result = null; state.resultId = null;
+  $("review-reasons").hidden = true; $("review-reason-list").replaceChildren();
   for (const key of ["result-l", "result-c", "result-r"]) ui($(key), "—");
   ui($("result-badge"), "等待计算"); $("result-badge").className = "badge";
   ui($("result-notes"), "拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。");
@@ -273,10 +276,13 @@ async function applyMapping() {
   await ensureDatasetAvailable();
   const selected = mappingFromForm();
   const summary = await api("/api/analyze", {method:"POST", body:{dataset_id:state.dataset.dataset_id, mapping:selected}});
+  const preserveResult = state.result && Object.entries(selected).every(([key,value])=>state.mapping?.[key] === value);
   state.mapping = selected; state.summary = summary; state.chart = summary.chart; state.zoom = null;
   prepareControllerDefaults(); controls();
-  invalidateResult();
-  displaySummary(); readyStatus();
+  if (preserveResult) displayResult();
+  else invalidateResult();
+  displaySummary();
+  if (!preserveResult) readyStatus();
   showWaveform();
   drawCharts(); controls();
 }
@@ -290,7 +296,7 @@ function displaySummary() {
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
 }
 async function startFit() {
-  if (!state.identificationOpen || !state.mapping || state.busy || state.job) return;
+  if (!state.identificationOpen || !state.mapping || historyLocked() || state.result) return;
   try {
     const fitOptions = options();
     state.busy = true; controls(); invalidateResult(); notice();
@@ -308,7 +314,8 @@ async function watchJob(id) {
   state.job = id; persistConversation(); controls();
   const started = Date.now();
   try {
-    for (let attempt = 0; attempt < 600; attempt++) {
+    // A long training run has no total polling deadline; the job decides when it ends.
+    while (true) {
       const response = await api(`/api/jobs/${id}`);
       const stages = {checking:"正在检查数据与电路配置…", pwm_reconstruction:"正在重建 PWM，获取训练段开关信息…",
         initialization:"正在计算参数初值…", pann_training:"正在使用开关信息训练 PANN…", validation:"正在验证预测波形…"};
@@ -325,15 +332,54 @@ async function watchJob(id) {
       if (response.status === "failed") throw new Error(response.error);
       await pause(1200);
     }
-    throw new Error("任务等待超时，请检查后端日志。");
   } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); }
   finally { state.job = null; persistConversation(); controls(); }
 }
+function resultReviewReasons(result) {
+  if (Array.isArray(result.review_reasons)) return result.review_reasons;
+  // Older backends and saved jobs contain the same evidence but no reason list.
+  const reasons=[], metrics=result.metrics || {}, d=result.diagnostics || {};
+  for (const channel of ["current","voltage"]) {
+    const value=metrics[`${channel}_nrmse_pct`];
+    if (value>5) reasons.push({code:`${channel}_nrmse`,value,threshold:5});
+  }
+  if (d.parameter_at_bound) reasons.push({code:"parameter_at_bound"});
+  if (d.CR_condition_number>100) reasons.push({code:"condition_number",value:d.CR_condition_number,threshold:100});
+  const pann=(result.method || result.options?.method)==="pann" ? d.pann || {} : {};
+  if (pann.stop_reason==="time_budget") reasons.push({code:"pann_time_budget",completed_epochs:pann.completed_epochs,requested_epochs:pann.epochs});
+  if (pann.best_at_budget_end) reasons.push({code:"pann_best_at_end",best_epoch:pann.best_epoch,completed_epochs:pann.completed_epochs});
+  return reasons;
+}
+function displayReviewReasons() {
+  const r=state.result, list=$("review-reason-list");list.replaceChildren();
+  $("review-reasons").hidden = !r || r.quality!=="需复核";
+  if ($("review-reasons").hidden) return;
+  const labels={current_nrmse:"留出电流归一化 RMSE",voltage_nrmse:"留出电压归一化 RMSE",condition_number:"参数辨识条件数"};
+  const reasons=resultReviewReasons(r);
+  for (const reason of reasons) {
+    let text;
+    if (labels[reason.code]) {
+      const unit=reason.code.endsWith("nrmse") ? "%" : "";
+      text=`${tr(labels[reason.code])}: ${reason.value}${unit} > ${reason.threshold}${unit}`;
+    } else if (reason.code==="parameter_at_bound") text=tr("初始化或参数估计触及上下限，需检查参数约束及模型与数据是否匹配。");
+    else if (reason.code==="pann_time_budget") {
+      text=tr("PANN 达到训练时间预算，尚不能确认充分收敛。");
+      if (Number.isFinite(reason.completed_epochs) && Number.isFinite(reason.requested_epochs)) text+=` ${tr("已完成轮数 / 请求轮数")}: ${reason.completed_epochs} / ${reason.requested_epochs}`;
+    } else if (reason.code==="pann_best_at_end") {
+      text=tr("PANN 最佳结果出现在最后一次训练评估，需增加训练轮数或调整窗口后复核收敛。");
+      if (Number.isFinite(reason.best_epoch) && Number.isFinite(reason.completed_epochs)) text+=` ${tr("最佳轮次 / 已完成轮数")}: ${reason.best_epoch} / ${reason.completed_epochs}`;
+    } else text=tr("此项复核原因尚无法显示，请查看计算条件与诊断。");
+    const li=document.createElement("li");li.textContent=text;list.append(li);
+  }
+  if (!reasons.length) {const li=document.createElement("li");ui(li,"历史结果未记录可确认的触发原因，请查看计算条件与诊断或重新辨识。");list.append(li);}
+}
 function displayResult() {
+  clearReportDownloads();
   const r = state.result, p = r.parameters;
   ui($("result-l"), fmt(p.L_H*1e6,5)); ui($("result-c"), fmt(p.C_F*1e6,5)); ui($("result-r"), fmt(p.R_ohm,5));
   ui($("r-label"), r.R_estimated ? "负载电阻 R · 估计" : "负载电阻 R · 固定");
   ui($("result-badge"), r.quality); $("result-badge").className = "badge " + (r.quality === "需复核" ? "warning" : "good");
+  displayReviewReasons();
   $("validation").hidden = false; ui($("rmse-i"), fmt(r.metrics.current_rmse_A) + " A"); ui($("rmse-v"), fmt(r.metrics.voltage_rmse_V*1000) + " mV");
   const driveNote = r.diagnostics.pwm_reconstruction?.status === "complete"
     ? "PWM 重建已完成：仅使用训练段电压与已知控制器生成 0/1 开关信息，再固定 R 识别 L、C。\n" : "";
@@ -348,7 +394,7 @@ function displayDiagnostics() {
   const r = state.result;
   // Translate display strings only. Keep the result and exported report intact.
   $("diagnostic-text").textContent = JSON.stringify(
-    {method:r.diagnostics,conditions:r.options,warnings:r.warnings,validation_errors:r.metrics},
+    {method:r.diagnostics,conditions:r.options,warnings:r.warnings,validation_errors:r.metrics,review_reasons:resultReviewReasons(r)},
     (_key,value)=>typeof value === "string" ? tr(value) : value, 2);
 }
 function clearChat() {
@@ -365,6 +411,7 @@ function message(role, content, mode = "") {
   label.append(window.BuckI18n.node(role === "user" ? "你" : "实验助手"));
   if (mode) { const badge = document.createElement("span"); badge.className = "message-mode"; ui(badge, mode); label.append(badge); }
   const text = document.createElement("div"); text.className = "message-content"; text.textContent = content;
+  if (role === "assistant" && window.BuckMarkdown) window.BuckMarkdown.render(text,content);
   article.append(label, text); $("chat-messages").append(article);
   $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
   return article;
@@ -413,10 +460,11 @@ async function sendMessage(value) {
       dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,options:fitOptions,result_id:fitOptions ? state.resultId : null,
       identification_enabled:state.identificationOpen}});
     pending.remove();
-    const article = message("assistant", (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer,
+    const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
+    const article = message("assistant", answer,
       response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
     decorateResponse(article, response);
-    rememberMessage("assistant", article.querySelector(".message-content").textContent, {route:response.route, tool_calls:response.tool_calls, sources:response.sources}, response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+    rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources}, response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
   } catch (error) { pending.remove(); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
   finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; }
@@ -488,11 +536,76 @@ function drawCharts() {
   if(state.chart) ui($("chart-caption"), `${state.chart.original_points.toLocaleString()} 计算点 · ${state.chart.display_points.toLocaleString()} 显示点${state.chart.decimated?'（显示已抽样）':''}`);
   $("view-full").classList.toggle("active",!state.zoom); $("view-tail").classList.toggle("active",Boolean(state.zoom));
 }
+let reportExportAttempt = 0;
+let reportExportBusy = false;
+const reportDownloadUrls = [];
+function clearReportDownloads() {
+  reportExportAttempt++;
+  reportExportBusy = false;
+  for (const url of reportDownloadUrls) URL.revokeObjectURL(url);
+  reportDownloadUrls.length = 0;
+  $("report-downloads").hidden = true;
+  for (const id of ["report-pdf-link", "report-json-link"]) {
+    $(id).hidden = true; $(id).removeAttribute("href"); $(id).removeAttribute("download");
+  }
+}
+function prepareReportDownload(blob, filename, id) {
+  const link = $(id), url = URL.createObjectURL(blob);
+  reportDownloadUrls.push(url);
+  link.href = url; link.download = filename; link.hidden = false;
+  return link;
+}
+async function exportReports() {
+  if (!state.result || reportExportBusy) return;
+  clearReportDownloads();
+  const attempt = reportExportAttempt;
+  reportExportBusy = true; $("download-report").disabled = true;
+  // Capture once: editing inputs or switching conversations must never mix runs.
+  const exportedAt = new Date(), language = window.BuckI18n.language;
+  const report = structuredClone({application:"Buck Lab 0.1.0",exported_at:exportedAt.toISOString(),summary:state.summary,
+    result:{...state.result,review_reasons:resultReviewReasons(state.result)},conversation:state.history});
+  const filename = reportFilename(report.result, exportedAt);
+  const notes = (report.result.warnings || []).map(note=>tr(note));
+  $("report-downloads").hidden = false;
+  ui($("report-export-status"), "JSON 已生成，正在生成 PDF…");
+  prepareReportDownload(new Blob([JSON.stringify(report,null,2)],{type:"application/json;charset=utf-8"}),filename,"report-json-link").click();
+  try {
+    const pdf = await api("/api/reports/pdf", {method:"POST",asBlob:true,body:{language,exported_at:report.exported_at,result:report.result,notes}});
+    if (attempt !== reportExportAttempt) return;
+    if (pdf.type !== "application/pdf" || await pdf.slice(0,5).text() !== "%PDF-") throw new Error("后端未返回有效的 PDF，请更新后端后重试。");
+    prepareReportDownload(pdf,filename.replace(/\.json$/,".pdf"),"report-pdf-link").click();
+    ui($("report-export-status"), "PDF 和 JSON 已生成。如浏览器拦截了连续下载，请点击下方链接分别保存。");
+  } catch (error) {
+    if (attempt !== reportExportAttempt) return;
+    ui($("report-export-status"), "PDF 生成失败，JSON 仍可下载。请检查后端连接与版本后重新导出。");
+    notice(error.message);
+  } finally {
+    if (attempt === reportExportAttempt) {
+      reportExportBusy = false; $("download-report").disabled = !state.result;
+    }
+  }
+}
+function reportFilename(result, date = new Date()) {
+  const day = `${String(date.getMonth()+1).padStart(2,"0")}${String(date.getDate()).padStart(2,"0")}`;
+  const stem = String(result.filename || "dataset").replace(/\.csv$/i, "");
+  const safeStem = stem.normalize("NFKC").replace(/[^\p{L}\p{N}-]+/gu,"-").slice(0,48).replace(/^-+|-+$/g,"") || "dataset";
+  const condition = stem.match(/(?:^|[^a-z0-9])case\s*\d+([ab])(?=[^a-z0-9]|$)/i)?.[1]?.toUpperCase() || safeStem;
+  // Noise and seed labels describe the input filename, never an estimate from the waveform.
+  const noiseMatch = stem.match(/(?:^|[_ -])noise(\d{1,2})(?=[_ -]|$)/i);
+  const pctMatch = stem.match(/(?:^|[_ -])(\d+(?:\.\d+)?)pct(?=[_ -]|$)/i);
+  const noise = noiseMatch ? `${Number(noiseMatch[1])}pct` : pctMatch ? `${Number(pctMatch[1])}pct`
+    : /(?:^|[_ -])clean(?=[_ -]|$)/i.test(stem) ? "clean" : "noiseNA";
+  const seed = stem.match(/(?:^|[_ -])(?:seed|s)(\+?\d+)(?=[_ -]|$)/i)?.[1];
+  const opts = result.options || {};
+  const drive = result.diagnostics?.pwm_reconstruction?.status === "complete" || opts.pwm_source === "controller" ? "rebuilt"
+    : opts.pwm_source === "measured" || result.diagnostics?.drive_source === "measured PWM" ? "measured" : "pwmNA";
+  const method = {pann:"PANN",weighted_integral:"WIntegral",integral:"Integral"}[result.method || opts.method] || "methodNA";
+  const window = method !== "PANN" ? "NA" : opts.pann_window_cycles === 0 ? "auto"
+    : [1,2,3].includes(opts.pann_window_cycles) ? `${opts.pann_window_cycles}cycle` : "windowNA";
+  return `${day}_${condition}_${noise}_${seed === undefined ? "seedNA" : "s"+Number(seed)}_${drive}_${method}_${window}.json`;
+}
 function downloadReport() {
-  if (!state.result) return;
-  const report={application:"Buck Lab 0.1.0",exported_at:new Date().toISOString(),summary:state.summary,result:state.result,conversation:state.history};
-  const blob=new Blob([JSON.stringify(report,null,2)],{type:"application/json;charset=utf-8"});
-  const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`buck-report-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  void exportReports();
 }
 $("csv-file").onchange = event => { if(event.target.files[0]) void importData(event.target.files[0]); };
 $("close-notice").onclick = () => notice();
@@ -513,7 +626,7 @@ $("pwm-source").onchange=()=>{
   prepareControllerDefaults();
   invalidateResult(); controls(); if (state.mapping) readyStatus(); persistConversation();
 };
-$("controller-confirmed").onchange=()=>{invalidateResult();if(state.mapping)readyStatus();persistConversation();};
+$("controller-confirmed").onchange=()=>{invalidateResult();controls();if(state.mapping)readyStatus();persistConversation();};
 document.addEventListener("buck-circuit-change",()=>{
   $("controller-confirmed").value="no";invalidateResult();controls();
   if(state.mapping)readyStatus();persistConversation();
@@ -608,7 +721,7 @@ for (const [button,content,label] of [["toggle-experiment","experiment-content",
     try {localStorage.setItem(`buck-panel:${new URL(".",location.href).pathname}:${button}`,$(content).hidden ? "closed" : "open");} catch {}
   };
 }
-document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; displaySummary(); displayDiagnostics(); drawCharts(); renderHistory(); });
+document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; displaySummary(); displayDiagnostics(); displayReviewReasons(); drawCharts(); renderHistory(); });
 window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");

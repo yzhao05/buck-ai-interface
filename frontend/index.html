@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -68,6 +68,7 @@
         <div id="pann-settings" hidden>
           <label>窗口初值<select id="pann-state"><option value="joint">从含噪数据联合估计（推荐）</option><option value="measured">固定测量初值（对照）</option></select></label>
           <div class="two-fields"><label>窗口长度<select id="pann-cycles"><option value="0">自动（训练噪声）</option><option value="1">1 个开关周期</option><option value="2">2 个开关周期</option><option value="3">3 个开关周期</option></select></label><label>训练轮数<input id="pann-epochs" type="number" min="10" max="300" step="1" value="100"></label></div>
+          <p class="field-note">训练不设时间上限，按设置轮数执行；联合初值模式另有 50 轮状态预热。</p>
           <p class="field-note">只用训练段估计初值；留出验证连续运行，不重置状态。窗口更长不一定更准确。</p>
         </div>
         <div class="two-fields"><label>开始时间<div class="unit-input"><input type="number" id="start-ms" step="any" placeholder="起点"><span>ms</span></div></label><label>结束时间<div class="unit-input"><input type="number" id="end-ms" step="any" placeholder="终点"><span>ms</span></div></label></div>
@@ -75,6 +76,7 @@
         <div class="split-legend"><span><i></i>前段训练</span><span><i></i>后段留出验证</span></div>
         <p class="field-note">选择恒定负载区间。R 指负载电阻，非 ESR。示例推荐 0～0.8 ms。</p>
         <button id="identify" class="button primary full" disabled><span>▷</span> 开始参数辨识</button>
+        <p id="identify-complete-hint" class="field-note" hidden>当前配置已完成辨识。修改上方参数后可重新辨识。</p>
         <p id="job-status" class="job-status" aria-live="polite">等待导入实验数据</p>
         </div>
         </div>
@@ -119,9 +121,15 @@
         <div class="card-heading"><div><h2>参数辨识</h2><p>物理模型计算 · 同记录后段验证</p></div><span id="result-badge" class="badge">等待计算</span></div>
         <div class="parameter-grid"><div><span>电感 L</span><strong id="result-l">—</strong><small>μH</small></div><div><span>电容 C</span><strong id="result-c">—</strong><small>μF</small></div><div><span id="r-label">负载电阻 R</span><strong id="result-r">—</strong><small>Ω</small></div></div>
         <div id="validation" class="validation" hidden><div><span>留出电流 RMSE</span><strong id="rmse-i"></strong></div><div><span>留出电压 RMSE</span><strong id="rmse-v"></strong></div></div>
+        <section id="review-reasons" class="review-reasons" hidden aria-label="需复核的触发原因"><h3>需复核的触发原因</h3><ul id="review-reason-list"></ul></section>
         <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>
         <details id="diagnostics" hidden><summary>查看计算条件与诊断</summary><pre id="diagnostic-text"></pre></details>
-        <div class="result-actions"><button class="button subtle small" id="ask-error" disabled>让助手分析结果 ↗</button><button class="button subtle small" id="download-report" disabled>↓ 导出实验报告</button></div>
+        <div class="result-actions"><button class="button subtle small" id="ask-error" disabled>让助手分析结果 ↗</button><button class="button subtle small" id="download-report" disabled>↓ 导出报告（PDF + JSON）</button></div>
+        <div id="report-downloads" class="report-downloads" hidden aria-live="polite">
+          <p id="report-export-status"></p>
+          <a id="report-pdf-link" hidden>下载 PDF</a>
+          <a id="report-json-link" hidden>下载 JSON</a>
+        </div>
       </section>
       <footer class="main-footer"><span>数值计算结果与 AI 解释分开呈现。</span></footer>
     </aside>

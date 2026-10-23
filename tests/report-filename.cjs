@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),vm=require('node:vm');
+const source=fs.readFileSync('frontend/app.js','utf8');
+const fn=vm.runInNewContext('('+source.slice(source.indexOf('function reportFilename('),source.indexOf('\nfunction downloadReport('))+')');
+const date=new Date(2026,9,23,0,5);
+const base={filename:'CASE16A_noise03_seed12.csv',method:'pann',options:{pwm_source:'controller',pann_window_cycles:0}};
+assert.equal(fn(base,date),'1023_A_3pct_s12_rebuilt_PANN_auto.json');
+assert.equal(fn({...base,filename:'CASE16B_noise01_seed14.csv',options:{pwm_source:'measured',pann_window_cycles:3}},date),'1023_B_1pct_s14_measured_PANN_3cycle.json');
+assert.equal(fn({...base,filename:'CASE16A_clean_grid.csv',method:'weighted_integral'},date),'1023_A_clean_seedNA_rebuilt_WIntegral_NA.json');
+assert.equal(fn({...base,filename:'PLECS · Case16A.csv'},date),'1023_A_noiseNA_seedNA_rebuilt_PANN_auto.json');
+assert.equal(fn({...base,filename:'Case10A_3pct_s12.csv',method:'integral'},date),'1023_A_3pct_s12_rebuilt_Integral_NA.json');
+assert.equal(fn({...base,filename:'custom.csv',options:{}},date),'1023_custom_noiseNA_seedNA_pwmNA_PANN_windowNA.json');
+const unsafe=fn({...base,filename:'../数据:<报告>?"*.csv'},date);
+assert(!/[<>:"/\\|?*]/.test(unsafe));
+assert.equal(fn(base,new Date(2026,0,2,0,1)),'0102_A_3pct_s12_rebuilt_PANN_auto.json');
+console.log('PASS: example, A/B, noise/seed labels, clean/unknown, actual result options, manual/auto windows, local date and safe filenames.');

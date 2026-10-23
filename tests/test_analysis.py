@@ -52,6 +52,8 @@ def test_load_step_is_not_silently_accepted(case):
     data, mapping = case
     result = identify(data, mapping, FitOptions(method="weighted_integral"))
     assert result["quality"] == "需复核"
+    assert result["review_reasons"]
+    assert any(r["code"] in {"current_nrmse", "voltage_nrmse"} for r in result["review_reasons"])
 
 
 def test_fixed_resistance_stays_fixed(case):

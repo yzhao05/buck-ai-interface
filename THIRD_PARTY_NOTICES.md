@@ -1,5 +1,13 @@
 # 来源与改编说明
 
+## Markdown 显示
+
+`frontend/vendor/markdown-it-15.0.3.min.js` 为 npm 发布包 `markdown-it@15.0.3` 中的浏览器 UMD 构建，源代码项目：https://github.com/markdown-it/markdown-it 。MIT 许可证保存在同目录 `markdown-it-LICENSE.txt`，随包依赖的许可证见 `markdown-it-DEPENDENCY-LICENSES.txt`。本地随 GitHub Pages 发布，不在运行时请求第三方 CDN；本项目适配代码位于 `frontend/markdown.js`。
+
+## PDF 字体
+
+`backend/assets/fonts/BuckReportSans-Regular.ttf` 由 Google Fonts 提供的 Noto Sans SC 可变字体固定到 `wght=400` 后生成，并将字体名称改为 Buck Report Sans。来源：`https://github.com/google/fonts/tree/main/ofl/notosanssc`，上游文件 `NotoSansSC[wght].ttf`。版权为 Adobe，使用 SIL Open Font License 1.1；完整许可证保存在同目录 `OFL-NotoSansSC.txt`。报告嵌入所用字形子集，不依赖读者电脑安装中文字体。
+
 本项目的界面、数据接入、积分辨识、验证、DeepSeek 工具调用和部署代码为此次新实现。
 
 ## PE-GPT
