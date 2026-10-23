@@ -4,6 +4,7 @@ No new fitting, LLM calls, file reads or remote image fetches occur during expor
 The JSON remains the complete machine-readable experiment record.
 """
 from datetime import datetime
+import math
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Literal
@@ -76,6 +77,40 @@ class Chart(Snapshot):
         return self
 
 
+class TrainingAssessment(Snapshot):
+    version: str = Field(default="tail-stability-v1", max_length=64)
+    status: Literal["stable", "not_stable", "insufficient_history", "not_applicable"]
+    thresholds: dict[Annotated[str, Field(max_length=64)], Number] = Field(default_factory=dict, max_length=12)
+    stable_checks: int = 0
+    start_epoch: int | None = None
+    end_epoch: int | None = None
+    loss_span_pct: Number | None = None
+    loss_change_pct: Number | None = None
+    parameter_span_pct: dict[Annotated[str, Field(max_length=16)], Number] = Field(default_factory=dict, max_length=3)
+    selected_parameter_gap_pct: dict[Annotated[str, Field(max_length=16)], Number] = Field(default_factory=dict, max_length=3)
+    selected_loss_gap_pct: Number | None = None
+    previous_start_epoch: int | None = None
+    previous_end_epoch: int | None = None
+    previous_mean_loss: Number | None = None
+    current_mean_loss: Number | None = None
+    loss_mean_change_pct: Number | None = None
+    loss_absolute_change: Number | None = None
+    loss_absolute_tolerance_used: bool = False
+
+
+class Assessment(Snapshot):
+    training: TrainingAssessment
+
+
+class GroundTruth(Snapshot):
+    L_H: float = Field(gt=0, le=1e30, allow_inf_nan=False)
+    C_F: float = Field(gt=0, le=1e30, allow_inf_nan=False)
+
+
+class ParameterComparison(Snapshot):
+    ground_truth: GroundTruth
+
+
 class ReportResult(Snapshot):
     filename: str = Field(default="dataset.csv", max_length=512)
     file_sha256: str = Field(default="", max_length=64, pattern=r"^[a-fA-F0-9]*$")
@@ -91,6 +126,22 @@ class ReportResult(Snapshot):
     validation_end_s: Number | None = None
     elapsed_s: Number | None = None
     chart: Chart | None = None
+    assessment: Assessment | None = None
+    parameter_comparison: ParameterComparison | None = None
+
+    def parameter_errors(self):
+        if not self.parameter_comparison:
+            return None
+        truth = self.parameter_comparison.ground_truth
+        return {"L": abs(self.parameters.L_H/truth.L_H-1)*100,
+                "C": abs(self.parameters.C_F/truth.C_F-1)*100}
+
+    @model_validator(mode="after")
+    def finite_parameter_errors(self):
+        errors = self.parameter_errors()
+        if errors and not all(math.isfinite(v) for v in errors.values()):
+            raise ValueError("Parameter relative error exceeds the finite range.")
+        return self
 
 
 class ReportRequest(Snapshot):
@@ -102,13 +153,14 @@ class ReportRequest(Snapshot):
 
 def build_pdf(request: ReportRequest) -> bytes:
     r = request.result
+    parameter_errors = r.parameter_errors()
     zh = request.language == "zh"
     t = lambda cn, en: cn if zh else en
     # Embedded OFL font preserves Chinese filenames and SI units in both languages.
     font = "BuckReportSans"
     ink, teal, muted = colors.HexColor("#213b43"), colors.HexColor("#107e71"), colors.HexColor("#61747c")
     body = ParagraphStyle("body", fontName=font, fontSize=10, leading=16, textColor=ink, wordWrap="CJK", spaceAfter=7)
-    heading = ParagraphStyle("heading", parent=body, fontSize=15, leading=21, textColor=teal, spaceBefore=12, spaceAfter=12)
+    heading = ParagraphStyle("heading", parent=body, fontSize=15, leading=21, textColor=teal, spaceBefore=12, spaceAfter=12, keepWithNext=True)
     title = ParagraphStyle("title", parent=heading, fontSize=23, leading=30)
     small = ParagraphStyle("small", parent=body, fontSize=8, leading=12, textColor=muted)
     p = lambda text, style=body: Paragraph(escape(str(text)), style)
@@ -143,10 +195,16 @@ def build_pdf(request: ReportRequest) -> bytes:
            (t("同记录留出区间", "Same-record holdout"), f"{n(r.train_end_s, 1000)} - {n(r.validation_end_s, 1000)} ms"),
            (t("计算耗时", "Computation time"), n(r.elapsed_s) + " s")])
     section("02  参数辨识结果", "02  Identified parameters")
-    table([(t("电感 L", "Inductance L"), n(r.parameters.L_H, 1e6) + " µH"),
-           (t("电容 C", "Capacitance C"), n(r.parameters.C_F, 1e6) + " µF"),
+    table([(t("预测电感 L", "Predicted inductance L"), n(r.parameters.L_H, 1e6) + " µH"),
+           (t("预测电容 C", "Predicted capacitance C"), n(r.parameters.C_F, 1e6) + " µF"),
            (t("负载电阻 R", "Load resistance R"), n(r.parameters.R_ohm) + " Ω / " +
             (t("估计值", "Estimated") if r.R_estimated else t("固定已知值，未参与辨识", "Fixed known value, not fitted")))])
+    if parameter_errors is not None:
+        truth=r.parameter_comparison.ground_truth
+        section("参数真值对照", "Parameter ground-truth comparison")
+        table([(t("真实电感 L / 相对误差", "True inductance L / relative error"), f"{n(truth.L_H,1e6)} µH / {n(parameter_errors['L'])}%"),
+               (t("真实电容 C / 相对误差", "True capacitance C / relative error"), f"{n(truth.C_F,1e6)} µF / {n(parameter_errors['C'])}%")])
+        story.append(p(t("相对误差 = |预测值 - 真实值| / 真实值 × 100%。真值由用户提供，未独立核验，未参与训练。", "Relative error = |predicted - true| / true × 100%. Ground truth is user-provided, not independently verified, and not used in training."), small))
     section("03  留出验证表现", "03  Holdout validation")
     table([(t("电流 RMSE / 归一化 RMSE", "Current RMSE / NRMSE"), f"{n(r.metrics.current_rmse_A, 1000)} mA / {n(r.metrics.current_nrmse_pct)}%"),
            (t("电压 RMSE / 归一化 RMSE", "Voltage RMSE / NRMSE"), f"{n(r.metrics.voltage_rmse_V, 1000)} mV / {n(r.metrics.voltage_nrmse_pct)}%")])
@@ -216,6 +274,45 @@ def build_pdf(request: ReportRequest) -> bytes:
         table([(t("请求训练轮数", "Requested epochs"), str(r.options.epochs) if r.options.epochs is not None else "-"),
                (t("窗口周期数", "Window cycles"), t("自动选择", "Automatic") if window == 0 else str(window) if window is not None else "-"),
                (t("初始状态", "Initial state"), {"joint": t("联合优化", "Joint optimization"), "measured": t("测量值", "Measured")}.get(r.options.pann_initial_state, "-"))])
+    section("06  分项判断", "06  Separate assessments")
+    waveform = all(v is not None and v <= 5 for v in (r.metrics.current_nrmse_pct, r.metrics.voltage_nrmse_pct))
+    training = r.assessment.training if r.assessment else TrainingAssessment(status="insufficient_history" if r.method == "pann" else "not_applicable")
+    statuses = {
+        "stable": t("末段稳定（经验判据，非收敛证明）", "Stable training tail (heuristic, not proof of convergence)"),
+        "not_stable": t("尚未达到末段稳定判据", "Training-tail stability criteria not met"),
+        "insufficient_history": t("证据不足：轮数过少或逐轮数据未记录", "Insufficient epochs or per-epoch history unavailable"),
+        "not_applicable": t("不适用：积分方法无迭代训练", "Not applicable: no iterative training")}
+    if training.version == "two-window-stability-v2":
+        statuses["stable"] = t("训练已稳定（试用判据，待实验校准）", "Training is stable (trial rule, pending experimental calibration)")
+    if not waveform:
+        statuses["stable"] = t("训练已稳定，但拟合未达标（经验判据）", "Training is stable, but the waveform fit has not passed (heuristic)")
+    table([(t("波形拟合", "Waveform fit"), t("达标：留出电流、电压 NRMSE 均不超过 5%", "Passed: both holdout NRMSE values at most 5%") if waveform else t("未达标或证据不足", "Not passed or insufficient evidence")),
+           (t("训练稳定性", "Training stability"), statuses[training.status]),
+           (t("参数准确性", "Parameter accuracy"), t("已对照用户提供的真值；真值未独立核验", "Compared with user-provided ground truth; reference not independently verified") if parameter_errors is not None else t("未验证：未提供真值", "Unverified: no ground truth provided"))])
+    story.append(p(t("标签颜色不代表精度提升。训练稳定、波形拟合达标都不能证明参数准确。", "Badge color does not imply improved accuracy. Training stability and waveform fit do not prove parameter accuracy."), small))
+    if training.thresholds and training.version == "two-window-stability-v2":
+        th = training.thresholds
+        table([(t("判据版本", "Rule version"), training.version),
+               (t("窗口轮数 / 连续稳定次数要求", "Window size / checks required"), f"{n(th.get('window_epochs'))} / {n(th.get('required_stable_checks'))}"),
+               (t("末段连续稳定次数 / 最少训练轮数", "Stable checks / min. epochs"), f"{training.stable_checks} / {n(th.get('minimum_epochs'))}"),
+               (t("前窗口 / 后窗口轮次", "Previous / recent window epochs"), f"{n(training.previous_start_epoch)}-{n(training.previous_end_epoch)} / {n(training.start_epoch)}-{n(training.end_epoch)}"),
+               (t("前窗口 / 后窗口平均损失", "Previous / recent mean loss"), f"{n(training.previous_mean_loss)} / {n(training.current_mean_loss)}"),
+               (t("平均损失相对变化 / 要求", "Mean loss change / limit"), f"{n(training.loss_mean_change_pct)}% / < {n(th.get('loss_mean_change_pct'))}%"),
+               (t("平均损失绝对变化 / 容差", "Absolute change / tolerance"), f"{n(training.loss_absolute_change)} / < {n(th.get('loss_absolute_tolerance'))}"),
+               (t("绝对容差是否生效", "Absolute tolerance applied"), t("是", "Yes") if training.loss_absolute_tolerance_used else t("否", "No")),
+               (t("参数峰峰变化 / 要求", "Parameter span / requirement"), "; ".join(f"{k}: {n(v)}%" for k,v in training.parameter_span_pct.items()) + f" / < {n(th.get('parameter_span_pct'))}%"),
+               (t("损失归一化分母下限", "Loss denominator floor"), n(th.get('loss_scale_floor')))])
+    elif training.thresholds:
+        th = training.thresholds
+        table([(t("窗口轮数 / 连续稳定次数要求", "Window epochs / required stable checks"), f"{n(th.get('window_epochs'))} / {n(th.get('required_stable_checks'))}"),
+               (t("末段连续稳定次数", "Consecutive stable checks at end"), str(training.stable_checks)),
+               (t("评估轮次", "Evaluated epochs"), f"{n(training.start_epoch)} - {n(training.end_epoch)}"),
+               (t("损失峰峰变化 / 阈值", "Loss span / threshold"), f"{n(training.loss_span_pct)}% / {n(th.get('loss_span_pct'))}%"),
+               (t("损失首尾变化（负值为下降）", "Loss change (negative: decreasing)"), f"{n(training.loss_change_pct)}%"),
+               (t("参数峰峰变化 / 阈值", "Parameter span / threshold"), "; ".join(f"{k}: {n(v)}%" for k,v in training.parameter_span_pct.items()) + f" / {n(th.get('parameter_span_pct'))}%"),
+               (t("返回参数与末段最大差异 / 阈值", "Returned-parameter gap / threshold"), "; ".join(f"{k}: {n(v)}%" for k,v in training.selected_parameter_gap_pct.items()) + f" / {n(th.get('selected_parameter_gap_pct'))}%"),
+               (t("末段平均损失与最佳损失差异 / 阈值", "Tail-to-best loss gap / threshold"), f"{n(training.selected_loss_gap_pct)}% / {n(th.get('selected_loss_gap_pct'))}%"),
+               (t("损失归一化分母下限", "Loss denominator floor"), n(th.get('loss_scale_floor')))])
     if r.options.pwm_source == "controller" and r.options.controller:
         section("重建控制器参数", "Reconstruction controller parameters")
         story.append(p("; ".join(f"{key} = {n(value)}" for key, value in r.options.controller.items()), small))
@@ -241,6 +338,20 @@ def build_pdf(request: ReportRequest) -> bytes:
 def reason_text(reason: Reason, zh: bool) -> tuple[str, str]:
     t = lambda cn, en: cn if zh else en
     n = lambda value: "-" if value is None else f"{value:.6g}"
+    if reason.code in ("pann_loss_mean_change", "pann_parameter_window_change"):
+        label = t("前后窗口平均损失相对变化", "Relative change between window mean losses") if reason.code == "pann_loss_mean_change" else t("最近窗口参数最大峰峰变化", "Maximum parameter span in recent window")
+        return (f"{label}: {n(reason.value)}% >= {n(reason.threshold)}%.", t("增加训练轮数并对照损失趋势和参数波动；训练稳定与拟合达标分开判断。", "Increase epochs and inspect loss trends and parameter variation. Assess training stability separately from waveform fit."))
+    labels = {"pann_loss_unstable": t("末段损失峰峰变化", "Peak-to-peak tail loss change"),
+              "pann_parameters_unstable": t("末段参数最大峰峰变化", "Maximum peak-to-peak parameter change"),
+              "pann_selected_parameters_gap": t("返回参数与末段最大差异", "Maximum returned-parameter gap from tail"),
+              "pann_selected_loss_gap": t("末段平均损失与最佳损失差异", "Mean tail loss gap from best loss")}
+    action = t("保持其他设置不变，增加训练轮数，检查末段损失、参数变化及留出误差；若持续波动，再对照窗口与初值。", "Keep other settings fixed and increase epochs. Check tail loss, parameters and holdout errors; if oscillations persist, compare windows and initial states.")
+    if reason.code in labels:
+        return (f"{labels[reason.code]}: {n(reason.value)}% > {n(reason.threshold)}%.", action)
+    if reason.code == "pann_stability_short":
+        return (t("末段连续稳定次数不足：", "Too few consecutive stable checks at end: ") + f"{n(reason.value)} < {n(reason.threshold)}.", action)
+    if reason.code == "pann_insufficient_history":
+        return (t("训练稳定性证据不足。", "Insufficient training stability evidence."), t("逐轮记录不足，无法完成连续窗口检查；请增加训练轮数或重新辨识。", "Insufficient per-epoch records for consecutive window checks. Increase epochs or rerun identification."))
     if reason.code in ("current_nrmse", "voltage_nrmse"):
         channel = t("电流", "Current") if reason.code == "current_nrmse" else t("电压", "Voltage")
         return (f"{channel} {t('留出归一化 RMSE', 'holdout NRMSE')}: {n(reason.value)}% > {n(reason.threshold)}%.",
@@ -260,7 +371,7 @@ def reason_text(reason: Reason, zh: bool) -> tuple[str, str]:
                   "This records a time limit from an older version. Updated training has no time limit; rerun with the updated backend and the desired epoch count."))
     if reason.code == "pann_best_at_end":
         return (t("最佳结果出现在最后一次训练评估。最佳轮次 / 已完成轮数：", "The best result was at the final training evaluation. Best / completed epochs: ") + f"{n(reason.best_epoch)} / {n(reason.completed_epochs)}.",
-                t("保持其他设置不变，增加训练轮数做对照，检查参数与留出误差是否稳定。",
-                  "Keep other settings fixed and increase the epoch count. Check whether parameters and holdout errors stabilize."))
+                t("这是旧版本规则的记录，末轮最佳本身不能判断收敛；请重新辨识以获得末段稳定性证据。",
+                  "This records an older rule. A final-epoch best does not establish convergence; rerun to obtain tail-stability evidence."))
     return (t("未识别的复核原因：", "Unrecognized review reason: ") + reason.code,
             t("请查看配套 JSON 的计算条件与诊断。", "Inspect conditions and diagnostics in the accompanying JSON."))

@@ -16,7 +16,7 @@ SYSTEM = """你是 Buck Lab 电力电子实验助手，用中文清楚回答用�
 波形误差不是参数真值误差；同记录的后段留出、使用实测 PWM 的预测不是自主闭环验证或独立工况泛化。
 R 指负载电阻，不是 ESR。理想非同步 Buck 功率模型忽略寄生，负载在辨识区间应恒定。
 PWM 来源由界面 pwm_source 指定：measured 使用 CSV 实际 PWM，忽略反馈取样支路；controller 仅在确认默认图的非同步 Buck 和 RC 控制器接线匹配时支持三列 CSV，固定用户已知 R 识别 L/C，计入取样支路电流。控制器元件、增益、限幅、载波相位及初始电压可在电路编辑器设置，来自 options.controller；默认值来自 Case09/10。开关频率来自 options.frequency_hz，默认 100 kHz。controller 模式须从 t=0 开始、结束于 1 ms 前且负载恒定。训练 PWM 仅由训练段电压重建；验证使用相同设置的控制器自主闭环预测，不用留出电压或实测 PWM，但仍不是独立工况验证。不能擅自替用户确认配置，也不能把重建 PWM 描述为测量值。上传的电路图片只作参考展示，不会传给此问答模型或自动改变接线、提取参数；不得声称看到了图片或从中读取了数值。
-PANN 默认联合估计窗口初始电流、电压与参数；固定测量初值仅作对照。参数和窗口初值取自同一最小含噪训练损失轮次，不使用干净状态或留出段选轮次。当前训练没有墙钟时间上限，按用户设置的轮数执行；检查 diagnostics.pann 的实际完成轮数、最佳轮次、状态修正和窗口设置，最佳结果在最后一次评估时不能声称充分收敛。历史报告仍可能记录 time_budget，此时说明旧版本因限时停止，建议用更新后的后端重新辨识。原 Case15/16 的误差数字不是本次上传数据的验证结果。
+PANN 默认联合估计窗口初始电流、电压与参数；固定测量初值仅作对照。参数和窗口初值取自同一最小含噪训练损失轮次，不使用干净状态或留出段选轮次。当前训练没有墙钟时间上限，按用户设置的轮数执行。必须分开解释 assessment 的波形拟合、训练稳定性和参数准确性：训练稳定性必须依据 diagnostics.pann.convergence 的规则版本解释：当前 two-window-stability-v2 比较前后各 20 轮平均损失，变化小于 0.1%（或绝对变化小于 1e-10），最近 20 轮待估 L/C/R 相对峰峰波动小于 0.1%，每轮检查并连续通过 3 次。第 0 轮和初值预热不参与，最早第 42 轮可确认。旧 v1 记录按其原阈值说明。返回最佳结果与末段的差异仅作记录，不是 v2 稳定性门槛；均值比较可能掩盖周期震荡，规则待实验校准。训练稳定但留出误差未达标时明确说“训练已稳定，但拟合未达标”。stable 只表示符合经验稳定判据，不是数学收敛证明；最佳结果是否恰好位于末轮只是记录，不决定质量。不凭标签变绿、显示值相同或 RMSE 微小变化宣称参数更准确或已经收敛。无真值时参数准确性始终未验证。历史数据缺少逐轮证据时说明无法判断；time_budget 表示旧版本限时，建议更新后重新辨识。原 Case15/16 的误差数字不是本次上传数据的验证结果。
 回答电路公式时，优先检索 Buck 公式知识库并说明符号、单位、适用条件；区分实测 PWM 两状态模型与已确认控制器配置的闭环模型。
 知识库中的 Case16/Case17、R1～R4、C2/C3 等值只是已指定参考电路的设定，不是未知 CSV 的测量值或参数辨识真值，不能自动套用。
 用户只询问原理、公式或推导时不得启动数值辨识。控制器由运放和实际 RC 连接决定，不能虚构通用 PI/PID 参数或声称已经运行新的闭环仿真。
@@ -63,10 +63,14 @@ def local_response(message, summary, result, documents, job=None, task=None):
             return "以下是本地公式知识库的相关条目（未启动新辨识或仿真）：\n\n" + "\n\n".join(d["content"] for d in formula_docs[:3])
     if result and (task == "diagnosis" or any(s in message for s in ("误差", "修改", "计划", "结果", "分析", "为什么"))):
         p, m = result["parameters"], result["metrics"]
+        from .convergence import assess_result
+        assessment = assess_result(m, result.get("diagnostics", {}), result.get("method"))
+        stability = {"stable": "末段符合经验稳定判据（非收敛证明）", "not_stable": "尚未达到末段稳定判据", "not_applicable": "积分方法不涉及迭代训练", "insufficient_history": "逐轮证据不足，需重新辨识"}[assessment["training"]["status"]]
         return (f"当前估计：L = {p['L_H'] * 1e6:.4g} μH，C = {p['C_F'] * 1e6:.4g} μF，"
                 f"R = {p['R_ohm']:.4g} Ω（{'估计' if result['R_estimated'] else '固定已知'}）。\n\n"
                 f"计算证据：后段电流 RMSE {m['current_rmse_A']:.4g} A，电压 RMSE {m['voltage_rmse_V']:.4g} V；"
                 f"状态为“{result['quality']}”。这些是波形误差，不是参数真实误差。\n\n"
+                f"分项判断：波形拟合{'达标' if assessment['waveform']['status']=='passed' else '未达标'}；训练稳定性：{stability}；参数准确性未验证（未提供真值）。标签颜色和显示精度内相同的参数不能证明精度提升。\n\n"
                 "可能原因需通过对照实验区分：PWM 时间对齐、选定区间内的负载变化、采样分辨率、初始状态及遗漏寄生。\n\n"
                 "修改计划：① 核对 Vin、开关频率和单位；② 在恒定负载段单独辨识；③ 对比开关边沿附近与平滑区的残差；"
                 "④ 使用另一工况和多个初值复测；⑤ 若偏差仍有系统性，再加入 ESR、绕组电阻或反馈取样支路。\n\n"

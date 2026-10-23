@@ -155,6 +155,7 @@ def refine(train, initial, options):
     best_epoch = 0
     best_step = 0
     history = []
+    epoch_history = []
     stop_reason = "epoch_budget"
     for step in range(warmup + options.epochs + 1):
         epoch = max(0, step-warmup)
@@ -168,6 +169,8 @@ def refine(train, initial, options):
         if not torch.isfinite(loss):
             raise ValueError("PANN 训练发散，请检查数据或先使用积分辨识。")
         values = np.array([getattr(cell, name).item() for name in ("L", "Co", "Ro")])
+        if step >= warmup:
+            epoch_history.append({"epoch": epoch, "loss": loss.item(), "L_H": values[0], "C_F": values[1], "R_ohm": values[2]})
         if loss.item() < best_loss:
             best_loss, best, best_epoch = loss.item(), values.copy(), epoch
             best_step = step
@@ -192,7 +195,10 @@ def refine(train, initial, options):
     active = best if options.mode == "LCR" else best[:2]
     at_bound = bool(np.any(np.isclose(active, bounds[:len(active), 0], rtol=1e-5, atol=0)) or
                     np.any(np.isclose(active, bounds[:len(active), 1], rtol=1e-5, atol=0)))
+    from .convergence import assess_training
+    convergence = assess_training(epoch_history, best, best_loss, options.mode)
     return best, {"epochs": options.epochs, "completed_epochs": epoch, "best_epoch": best_epoch,
+                  "epoch_history": epoch_history, "convergence": convergence,
                   "state_warmup_epochs": min(step, warmup), "best_step": best_step,
                   "parameter_at_bound": at_bound,
                   "stop_reason": stop_reason, "best_at_budget_end": best_step == step,

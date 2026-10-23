@@ -135,6 +135,19 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .review-reasons h3 { margin: 0 0 6px; font-size: 12px; }
 .review-reasons ul { margin: 0; padding-left: 19px; }
 .review-reasons li + li { margin-top: 5px; }
+.result-assessment { padding: 14px 16px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.result-assessment dl { margin: 0; }
+.result-assessment dt { font-weight: 700; margin-top: 8px; }
+.result-assessment dd { margin: 0; }
+.result-assessment p { color: var(--muted); margin-bottom: 0; }
+.result-assessment ul { padding-left: 20px; }
+.truth-comparison { padding: 14px 16px; border-top: 1px solid var(--line); }
+.truth-comparison .unit-input input { min-width: 0; }
+.truth-comparison #truth-error { color: #a63e32; font-size: 12px; }
+.parameter-error-values { display: flex; flex-wrap: wrap; gap: 12px 30px; margin-top: 12px; }
+.parameter-error-values[hidden] { display: none; }
+.parameter-error-values span { display: block; color: var(--muted); font-size: 12px; }
+.parameter-error-values strong { display: block; margin-top: 5px; color: var(--teal); font-size: 17px; }
 .main-panel .result-actions { padding: 12px 16px; gap: 8px; }
 @media (min-width: 1700px) {
   .workspace { --sidebar-width: 278px; --analysis-width: minmax(480px, 1fr); }

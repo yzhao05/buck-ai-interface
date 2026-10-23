@@ -22,14 +22,14 @@ def test_only_the_triggering_channel_is_reported(channel):
 def test_small_waveform_errors_can_still_require_pann_review():
     diagnostics = evidence(pann=dict(stop_reason="time_budget", best_at_budget_end=True, epochs=100, completed_epochs=72, best_epoch=72))
     reasons = review_reasons(dict(current_nrmse_pct=.01, voltage_nrmse_pct=.01), diagnostics, "pann")
-    assert reasons == [dict(code="pann_time_budget", completed_epochs=72, requested_epochs=100), dict(code="pann_best_at_end", best_epoch=72, completed_epochs=72)]
+    assert reasons == [dict(code="pann_time_budget", completed_epochs=72, requested_epochs=100), dict(code="pann_insufficient_history")]
     assert review_reasons(dict(current_nrmse_pct=.01, voltage_nrmse_pct=.01), diagnostics, "weighted_integral") == []
 
 
 def test_all_simultaneous_gates_are_retained():
     reasons = review_reasons(dict(current_nrmse_pct=6, voltage_nrmse_pct=7), evidence(parameter_at_bound=True, CR_condition_number=101), "pann")
-    assert [r["code"] for r in reasons] == ["current_nrmse", "voltage_nrmse", "parameter_at_bound", "condition_number"]
+    assert [r["code"] for r in reasons] == ["current_nrmse", "voltage_nrmse", "parameter_at_bound", "condition_number", "pann_insufficient_history"]
 
 
-def test_epoch_budget_alone_is_not_a_review_trigger():
-    assert review_reasons(dict(current_nrmse_pct=0, voltage_nrmse_pct=0), evidence(pann=dict(stop_reason="epoch_budget", best_at_budget_end=False)), "pann") == []
+def test_epoch_budget_and_best_position_do_not_establish_stability():
+    assert review_reasons(dict(current_nrmse_pct=0, voltage_nrmse_pct=0), evidence(pann=dict(stop_reason="epoch_budget", best_at_budget_end=False)), "pann") == [{"code":"pann_insufficient_history"}]

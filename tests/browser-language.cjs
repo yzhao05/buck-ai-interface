@@ -53,7 +53,7 @@ const fs = require('node:fs/promises');
     assert.equal(await page.locator('#result-l').textContent(),'60');
     const capacitance = await page.locator('#result-c').textContent();
     assert(Math.abs(Number(capacitance)-500)<5,'Clean demo C stays within 1% of reference');
-    assert((await page.locator('#result-notes').textContent()).includes('No ground truth'));
+    assert((await page.locator('#result-notes').textContent()).includes('Parameter errors against ground truth have not been calculated'));
     assert(!/[\u3400-\u9fff]/.test(await page.locator('#diagnostic-text').textContent()),'Measured-PWM diagnostics must be English');
     const before = await page.locator('#current-chart path').first().getAttribute('d');
     await page.locator('#language-toggle').click();

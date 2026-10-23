@@ -11,10 +11,11 @@ from scipy.optimize import lsq_linear
 
 from .data import Dataset, chart_data, extract
 from .schemas import FitOptions, Mapping
+from .convergence import assess_result
 
 
 def review_reasons(metrics, diagnostics, method):
-    """Structured evidence for the existing quality gates, without changing thresholds."""
+    """Waveform/identifiability gates plus training-only stability evidence."""
     reasons = []
     for channel in ("current", "voltage"):
         value = metrics[f"{channel}_nrmse_pct"]
@@ -27,8 +28,9 @@ def review_reasons(metrics, diagnostics, method):
     training = diagnostics.get("pann", {}) if method == "pann" else {}
     if training.get("stop_reason") == "time_budget":
         reasons.append({"code": "pann_time_budget", "completed_epochs": training.get("completed_epochs"), "requested_epochs": training.get("epochs")})
-    if training.get("best_at_budget_end"):
-        reasons.append({"code": "pann_best_at_end", "best_epoch": training.get("best_epoch"), "completed_epochs": training.get("completed_epochs")})
+    if method == "pann":
+        convergence = training.get("convergence")
+        reasons.extend(convergence["reasons"] if convergence else [{"code": "pann_insufficient_history"}])
     return reasons
 
 
@@ -261,8 +263,9 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         diagnostics["parameter_at_bound"] |= training.get("parameter_at_bound", False)
         diagnostics["method"] += " → PANN 波形损失微调"
         initial_state = training["rollout_initial_state_A_V"]
-        if training["best_at_budget_end"]:
-            notes.append("PANN 最佳结果出现在最后一次训练评估，尚不能确认充分收敛；请增加训练轮数或对照不同窗口长度。")
+        if training.get("best_at_budget_end"):
+            notes.append("最佳训练结果位于最后一轮，仅作记录；是否稳定由末段损失和参数变化共同判断。")
+        notes.append("训练稳定性采用经验阈值，不是数学收敛证明，也不能证明参数准确。")
         if options.pann_initial_state == "measured":
             notes.append("当前为固定含噪测量初值的对照模式；Case14/15 表明该设置可能放大电容辨识偏差。")
         else:
@@ -314,6 +317,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
     return {"parameters": {"L_H": float(params[0]), "C_F": float(params[1]), "R_ohm": float(params[2])},
             "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality, "review_reasons": reasons,
+            "assessment": assess_result(metrics, diagnostics, options.method),
             "metrics": metrics, "training_metrics": train_metrics, "diagnostics": diagnostics,
             "options": options.model_dump(), "mapping": mapping.model_dump(),
             "train_start_s": float(a[0, 0]), "train_end_s": float(a[split, 0]), "validation_end_s": float(a[-1, 0]),

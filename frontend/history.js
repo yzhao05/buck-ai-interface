@@ -90,7 +90,8 @@ function persistConversation() {
   activeConversation.draft = $("chat-input").value;
   activeConversation.fields = Object.fromEntries(experimentFields.map(id => [id, $(id).value]));
   activeConversation.attachment = state.dataset ? {dataset:state.dataset, mapping:state.mapping,
-    mappingDraft:mappingFromForm(), resultId:state.resultId, jobId:state.job, csvEpoch:activeConversation.file_epoch || 0} : pendingAttachment;
+    mappingDraft:mappingFromForm(), resultId:state.resultId, jobId:state.job, csvEpoch:activeConversation.file_epoch || 0,
+    truthDraft:{...state.truthDraft},truthComparison:state.truthComparison} : pendingAttachment;
   if (previousMeta!==JSON.stringify([activeConversation.draft,activeConversation.fields,activeConversation.attachment])) {
     activeConversation.meta_updated=Math.max(Date.now(),(activeConversation.meta_updated || 0)+1);
   }
@@ -193,7 +194,7 @@ async function restoreAttachment(attachment) {
       try {
         const job=await api(`/api/jobs/${jobId}`);
         if (job.status === "complete" && resultMatchesCurrent(job.result)) {
-          state.result=job.result; state.resultId=jobId; displayResult();
+          state.result=job.result; state.resultId=jobId; restoreTruthComparison(attachment);displayResult();
         }
         else if (["running","queued"].includes(job.status)) void watchJob(jobId);
       } catch { /* CSV can remain usable after a result expires. */ }

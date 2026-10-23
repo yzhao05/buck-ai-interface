@@ -62,6 +62,9 @@ for mode in ('joint', 'measured'):
     assert d['stop_reason'] == 'epoch_budget', d
     assert d['state_warmup_epochs'] == (50 if mode == 'joint' else 0), d
     assert d['history'][-1]['epoch'] == 10
+    assert len(d['epoch_history']) == 11
+    assert [e['epoch'] for e in d['epoch_history']] == list(range(11))
+    assert d['convergence']['status'] == 'insufficient_history'
 print(json.dumps({'passed':True, 'modes':['joint','measured']}))
 '''
     environment = {k:v for k,v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "APP_ACCESS_TOKEN")}

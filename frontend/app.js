@@ -23,6 +23,7 @@ let base = savedValue("buck-api-url") || config.apiBaseUrl || (local ? location.
 let accessToken = savedToken(base);
 let sessionId = crypto.randomUUID();
 const state = { dataset: null, csvFile: null, mapping: null, summary: null, result: null, resultId: null,
+  truthDraft: {l:"",c:""}, truthComparison: null, truthError: "",
   history: [], connected: false, busy: false, chatBusy: false, syncBusy: false, job: null, chart: null, zoom: null,
   identificationOpen: false, waveformOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
@@ -118,6 +119,7 @@ function prepareControllerDefaults() {
 }
 function controls() {
   const waiting = historyLocked();
+  for (const id of ["truth-l","truth-c","calculate-parameter-error"]) $(id).disabled=waiting || !state.result;
   window.BuckCircuit.setBusy(waiting); window.BuckCircuit.render();
   $("chat-input").disabled = state.syncBusy;
   $("open-settings").disabled = state.syncBusy;
@@ -215,6 +217,8 @@ function resultMatchesCurrent(result) {
 function invalidateResult() {
   clearReportDownloads();
   state.result = null; state.resultId = null;
+  state.truthDraft={l:"",c:""};state.truthComparison=null;state.truthError="";displayTruthComparison();
+  $("result-assessment").hidden = true;
   $("review-reasons").hidden = true; $("review-reason-list").replaceChildren();
   for (const key of ["result-l", "result-c", "result-r"]) ui($(key), "—");
   ui($("result-badge"), "等待计算"); $("result-badge").className = "badge";
@@ -336,7 +340,11 @@ async function watchJob(id) {
   finally { state.job = null; persistConversation(); controls(); }
 }
 function resultReviewReasons(result) {
-  if (Array.isArray(result.review_reasons)) return result.review_reasons;
+  if (Array.isArray(result.review_reasons)) {
+    const reasons=result.review_reasons.filter(r=>r.code!=="pann_best_at_end");
+    if ((result.method || result.options?.method)==="pann" && !result.diagnostics?.pann?.convergence && !reasons.some(r=>r.code==="pann_insufficient_history")) reasons.push({code:"pann_insufficient_history"});
+    return reasons;
+  }
   // Older backends and saved jobs contain the same evidence but no reason list.
   const reasons=[], metrics=result.metrics || {}, d=result.diagnostics || {};
   for (const channel of ["current","voltage"]) {
@@ -347,47 +355,136 @@ function resultReviewReasons(result) {
   if (d.CR_condition_number>100) reasons.push({code:"condition_number",value:d.CR_condition_number,threshold:100});
   const pann=(result.method || result.options?.method)==="pann" ? d.pann || {} : {};
   if (pann.stop_reason==="time_budget") reasons.push({code:"pann_time_budget",completed_epochs:pann.completed_epochs,requested_epochs:pann.epochs});
-  if (pann.best_at_budget_end) reasons.push({code:"pann_best_at_end",best_epoch:pann.best_epoch,completed_epochs:pann.completed_epochs});
+  if ((result.method || result.options?.method)==="pann") reasons.push(...(pann.convergence?.reasons || [{code:"pann_insufficient_history"}]));
   return reasons;
+}
+function parameterComparison(r=state.result) {
+  const saved=state.truthComparison;
+  if (!r || !saved || saved.result_id!==state.resultId || saved.parameters?.L_H!==r.parameters.L_H || saved.parameters?.C_F!==r.parameters.C_F) return null;
+  const truth=saved.ground_truth;
+  if (![truth?.L_H,truth?.C_F].every(v=>Number.isFinite(v)&&v>0) || Number(state.truthDraft.l)/1e6!==truth.L_H || Number(state.truthDraft.c)/1e6!==truth.C_F) return null;
+  const errors={L:Math.abs(r.parameters.L_H/truth.L_H-1)*100,C:Math.abs(r.parameters.C_F/truth.C_F-1)*100};
+  if (!Object.values(errors).every(Number.isFinite))return null;
+  return {ground_truth:{...truth},relative_error_pct:errors,source:"user_provided"};
+}
+function parameterErrorNote() {
+  return parameterComparison() ? "已按用户提供的 L、C 真值计算相对误差；真值未独立核验，波形误差与参数误差分开评价。" : "未计算参数真值误差；请填写真实电感、电容并点击计算。波形误差不等于参数误差。";
+}
+function displayTruthComparison() {
+  if($("truth-l").value!==state.truthDraft.l)$("truth-l").value=state.truthDraft.l;
+  if($("truth-c").value!==state.truthDraft.c)$("truth-c").value=state.truthDraft.c;
+  const comparison=parameterComparison();
+  $("parameter-error-values").hidden=!comparison;
+  ui($("parameter-error-l"),comparison ? `${fmt(comparison.relative_error_pct.L,6)}%` : "—");
+  ui($("parameter-error-c"),comparison ? `${fmt(comparison.relative_error_pct.C,6)}%` : "—");
+  $("truth-error").hidden=!state.truthError;ui($("truth-error"),state.truthError);
+}
+function calculateParameterError() {
+  if (!state.result || historyLocked())return;
+  const L_H=Number(state.truthDraft.l)/1e6,C_F=Number(state.truthDraft.c)/1e6;
+  state.truthComparison=null;state.truthError="";
+  if (![L_H,C_F].every(v=>Number.isFinite(v)&&v>0&&v<=1e30)) state.truthError="真实电感和真实电容必须是大于 0 的有限数值，请检查单位。";
+  else {
+    state.truthComparison={result_id:state.resultId,parameters:{L_H:state.result.parameters.L_H,C_F:state.result.parameters.C_F},ground_truth:{L_H,C_F}};
+    if (!parameterComparison()) {state.truthComparison=null;state.truthError="数值超出可计算范围，请检查真实值及单位。";}
+  }
+  displayResult({preserveZoom:true});controls();persistConversation();
+}
+function restoreTruthComparison(attachment) {
+  state.truthDraft={l:String(attachment.truthDraft?.l ?? ""),c:String(attachment.truthDraft?.c ?? "")};
+  state.truthComparison=attachment.truthComparison || null;state.truthError="";
+  if (!parameterComparison())state.truthComparison=null;
+}
+function resultAssessment(r) {
+  const c=r.diagnostics?.pann?.convergence;
+  return {waveform:{status:[r.metrics.current_nrmse_pct,r.metrics.voltage_nrmse_pct].every(v=>Number.isFinite(v)&&v<=5) ? "passed" : "review",threshold_pct:5},
+    training:(r.method || r.options?.method)==="pann" ? c || {status:"insufficient_history"} : {status:"not_applicable"},
+    parameter_accuracy:parameterComparison(r) ? {status:"compared",...parameterComparison(r)} : {status:"unverified",reason:"no_ground_truth_comparison"}};
+}
+function displayAssessment() {
+  const r=state.result;$("result-assessment").hidden=!r;if(!r)return;
+  const a=resultAssessment(r), c=a.training;
+  ui($("waveform-assessment"),a.waveform.status==="passed" ? "达标：电流、电压留出 NRMSE 均不超过 5%" : "未达标或缺少有效留出误差");
+  const labels={stable:"末段稳定（经验判据，非收敛证明）",not_stable:"尚未达到末段稳定判据",insufficient_history:"证据不足：轮数过少或历史未记录逐轮数据",not_applicable:"不适用：积分方法无迭代训练"};
+  ui($("training-assessment"), c.status==="stable" && a.waveform.status!=="passed" ? "训练已稳定，但拟合未达标（经验判据）" : c.status==="stable" && c.version==="two-window-stability-v2" ? "训练已稳定（试用判据，待实验校准）" : labels[c.status] || labels.insufficient_history);
+  ui($("accuracy-assessment"),parameterComparison(r) ? "已对照用户提供的真值，详见上方相对误差（真值未独立核验）" : "未验证：尚未计算真值相对误差");
+  const list=$("training-evidence-list");list.replaceChildren();
+  $("training-evidence").hidden=!c.thresholds;
+  if (!c.thresholds)return;
+  const add=(label,value)=>{const li=document.createElement("li");li.textContent=`${tr(label)}: ${value}`;list.append(li);};
+  const t=c.thresholds;
+  add("判据版本",c.version || "tail-stability-v1");
+  add("窗口轮数 / 要求连续稳定次数",`${t.window_epochs} / ${t.required_stable_checks}`);
+  add("末段连续稳定次数",`${c.stable_checks} / ${t.required_stable_checks}`);
+  if (c.version==="two-window-stability-v2") {
+    add("最少参数训练轮数",`${t.minimum_epochs}`);
+    if (!Number.isFinite(c.loss_mean_change_pct))return;
+    add("前窗口 / 后窗口轮次",`${c.previous_start_epoch}–${c.previous_end_epoch} / ${c.start_epoch}–${c.end_epoch}`);
+    add("前窗口 / 后窗口平均损失",`${c.previous_mean_loss.toExponential(6)} / ${c.current_mean_loss.toExponential(6)}`);
+    add("平均损失相对变化 / 要求",`${fmt(c.loss_mean_change_pct,6)}% / < ${t.loss_mean_change_pct}%`);
+    add("平均损失绝对变化 / 容差",`${c.loss_absolute_change.toExponential(6)} / < ${t.loss_absolute_tolerance}`);
+    add("损失绝对容差是否生效",tr(c.loss_absolute_tolerance_used ? "是" : "否"));
+    for (const [key,value] of Object.entries(c.parameter_span_pct || {})) add("参数峰峰变化 / 阈值",`${key}: ${fmt(value,6)}% / < ${t.parameter_span_pct}%`);
+    add("损失归一化分母下限",`${t.loss_scale_floor}`);
+    return;
+  }
+  if (!Number.isFinite(c.loss_span_pct))return;
+  add("评估轮次",`${c.start_epoch}–${c.end_epoch}`);
+  add("损失峰峰变化 / 阈值",`${fmt(c.loss_span_pct,5)}% / ${t.loss_span_pct}%`);
+  add("损失首尾变化（负值表示下降）",`${fmt(c.loss_change_pct,5)}%`);
+  for (const [key,value] of Object.entries(c.parameter_span_pct || {})) add("参数峰峰变化 / 阈值",`${key}: ${fmt(value,5)}% / ${t.parameter_span_pct}%`);
+  for (const [key,value] of Object.entries(c.selected_parameter_gap_pct || {})) add("返回参数与末段最大差异 / 阈值",`${key}: ${fmt(value,5)}% / ${t.selected_parameter_gap_pct}%`);
+  add("末段平均损失与最佳损失差异 / 阈值",`${fmt(c.selected_loss_gap_pct,5)}% / ${t.selected_loss_gap_pct}%`);
+  add("损失归一化分母下限",`${t.loss_scale_floor}`);
 }
 function displayReviewReasons() {
   const r=state.result, list=$("review-reason-list");list.replaceChildren();
-  $("review-reasons").hidden = !r || r.quality!=="需复核";
+  $("review-reasons").hidden = !r || (r.quality!=="需复核" && !resultReviewReasons(r).length);
   if ($("review-reasons").hidden) return;
-  const labels={current_nrmse:"留出电流归一化 RMSE",voltage_nrmse:"留出电压归一化 RMSE",condition_number:"参数辨识条件数"};
+  const labels={current_nrmse:"留出电流归一化 RMSE",voltage_nrmse:"留出电压归一化 RMSE",condition_number:"参数辨识条件数",
+    pann_loss_unstable:"末段损失峰峰变化",pann_parameters_unstable:"末段参数最大峰峰变化",pann_selected_parameters_gap:"返回参数与末段最大差异",pann_selected_loss_gap:"末段平均损失与最佳损失差异",
+    pann_loss_mean_change:"前后窗口平均损失相对变化",pann_parameter_window_change:"最近窗口参数最大峰峰变化"};
   const reasons=resultReviewReasons(r);
   for (const reason of reasons) {
     let text;
     if (labels[reason.code]) {
-      const unit=reason.code.endsWith("nrmse") ? "%" : "";
-      text=`${tr(labels[reason.code])}: ${reason.value}${unit} > ${reason.threshold}${unit}`;
+      const unit=reason.code!=="condition_number" ? "%" : "";
+      const operator=["pann_loss_mean_change","pann_parameter_window_change"].includes(reason.code) ? "≥" : ">";
+      text=`${tr(labels[reason.code])}: ${fmt(reason.value,6)}${unit} ${operator} ${reason.threshold}${unit}`;
     } else if (reason.code==="parameter_at_bound") text=tr("初始化或参数估计触及上下限，需检查参数约束及模型与数据是否匹配。");
     else if (reason.code==="pann_time_budget") {
       text=tr("PANN 达到训练时间预算，尚不能确认充分收敛。");
       if (Number.isFinite(reason.completed_epochs) && Number.isFinite(reason.requested_epochs)) text+=` ${tr("已完成轮数 / 请求轮数")}: ${reason.completed_epochs} / ${reason.requested_epochs}`;
-    } else if (reason.code==="pann_best_at_end") {
-      text=tr("PANN 最佳结果出现在最后一次训练评估，需增加训练轮数或调整窗口后复核收敛。");
-      if (Number.isFinite(reason.best_epoch) && Number.isFinite(reason.completed_epochs)) text+=` ${tr("最佳轮次 / 已完成轮数")}: ${reason.best_epoch} / ${reason.completed_epochs}`;
+    } else if (reason.code==="pann_insufficient_history") {
+      text=tr("逐轮记录不足，无法完成连续窗口检查；请增加训练轮数或重新辨识。");
+    } else if (reason.code==="pann_stability_short") {
+      text=`${tr("末段连续稳定次数不足")}: ${reason.value} < ${reason.threshold}`;
     } else text=tr("此项复核原因尚无法显示，请查看计算条件与诊断。");
     const li=document.createElement("li");li.textContent=text;list.append(li);
   }
   if (!reasons.length) {const li=document.createElement("li");ui(li,"历史结果未记录可确认的触发原因，请查看计算条件与诊断或重新辨识。");list.append(li);}
 }
-function displayResult() {
+function resultQuality(r) {
+  return r.quality==="需复核" || resultReviewReasons(r).length>0 ? "需复核" : r.quality;
+}
+function displayResult({preserveZoom=false}={}) {
   clearReportDownloads();
+  displayTruthComparison();
   const r = state.result, p = r.parameters;
   ui($("result-l"), fmt(p.L_H*1e6,5)); ui($("result-c"), fmt(p.C_F*1e6,5)); ui($("result-r"), fmt(p.R_ohm,5));
   ui($("r-label"), r.R_estimated ? "负载电阻 R · 估计" : "负载电阻 R · 固定");
-  ui($("result-badge"), r.quality); $("result-badge").className = "badge " + (r.quality === "需复核" ? "warning" : "good");
+  const quality=resultQuality(r);
+  ui($("result-badge"), quality); $("result-badge").className = "badge " + (quality==="需复核" ? "warning" : "good");
+  displayAssessment();
   displayReviewReasons();
   $("validation").hidden = false; ui($("rmse-i"), fmt(r.metrics.current_rmse_A) + " A"); ui($("rmse-v"), fmt(r.metrics.voltage_rmse_V*1000) + " mV");
   const driveNote = r.diagnostics.pwm_reconstruction?.status === "complete"
     ? "PWM 重建已完成：仅使用训练段电压与已知控制器生成 0/1 开关信息，再固定 R 识别 L、C。\n" : "";
-  ui($("result-notes"), `${driveNote}${r.validation_kind}\n${r.parameter_error_note}`);
+  ui($("result-notes"), `${driveNote}${r.validation_kind}\n${parameterErrorNote()}`);
   $("diagnostics").hidden = false;
   displayDiagnostics();
   $("ask-error").disabled = false; $("download-report").disabled = false;
-  state.chart = r.chart; state.zoom = null; drawCharts();
+  state.chart = r.chart; if (!preserveZoom) state.zoom = null; drawCharts();
 }
 function displayDiagnostics() {
   if (!state.result) return;
@@ -563,7 +660,7 @@ async function exportReports() {
   // Capture once: editing inputs or switching conversations must never mix runs.
   const exportedAt = new Date(), language = window.BuckI18n.language;
   const report = structuredClone({application:"Buck Lab 0.1.0",exported_at:exportedAt.toISOString(),summary:state.summary,
-    result:{...state.result,review_reasons:resultReviewReasons(state.result)},conversation:state.history});
+    result:{...state.result,quality:resultQuality(state.result),parameter_comparison:parameterComparison(),parameter_error_note:parameterErrorNote(),assessment:resultAssessment(state.result),review_reasons:resultReviewReasons(state.result)},conversation:state.history});
   const filename = reportFilename(report.result, exportedAt);
   const notes = (report.result.warnings || []).map(note=>tr(note));
   $("report-downloads").hidden = false;
@@ -632,6 +729,12 @@ document.addEventListener("buck-circuit-change",()=>{
   if(state.mapping)readyStatus();persistConversation();
 });
 $("identify").onclick=()=>void startFit();
+$("calculate-parameter-error").onclick=calculateParameterError;
+for (const [id,key] of [["truth-l","l"],["truth-c","c"]]) $(id).oninput=()=>{
+  state.truthDraft[key]=$(id).value;state.truthComparison=null;state.truthError="";
+  if(state.result)displayResult({preserveZoom:true});else displayTruthComparison();
+  persistConversation();
+};
 $("enter-identification").onclick=()=>setIdentificationOpen(true);
 for (const side of ["left", "right"]) {
   $(`toggle-${side}-pane`).onclick=()=>setPaneCollapsed(side,!$("workspace").classList.contains(`${side}-collapsed`));
@@ -721,7 +824,7 @@ for (const [button,content,label] of [["toggle-experiment","experiment-content",
     try {localStorage.setItem(`buck-panel:${new URL(".",location.href).pathname}:${button}`,$(content).hidden ? "closed" : "open");} catch {}
   };
 }
-document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; displaySummary(); displayDiagnostics(); displayReviewReasons(); drawCharts(); renderHistory(); });
+document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; displaySummary(); displayDiagnostics(); displayReviewReasons(); displayAssessment(); drawCharts(); renderHistory(); });
 window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");

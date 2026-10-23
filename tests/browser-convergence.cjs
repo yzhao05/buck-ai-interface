@@ -1,0 +1,70 @@
+const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+(async()=>{
+ const browser=await chromium.launch({executablePath:process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+ const page=await browser.newPage({viewport:{width:1500,height:1050}}), errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ try {
+  await page.goto('http://127.0.0.1:8001');
+  await page.waitForFunction(()=>activeConversation && state.connected && !historyLocked());
+  await page.locator('#load-demo').click();await page.waitForFunction(()=>state.mapping && !historyLocked());
+  await page.locator('#enter-identification').click();
+  await page.locator('#fit-method').selectOption('weighted_integral');await page.locator('#identify').click();
+  await page.locator('#identify-complete-hint').waitFor();
+  assert.match(await page.locator('#training-assessment').innerText(),/不适用/);
+  await page.evaluate(()=>{
+   state.result.method='pann';state.result.options.method='pann';state.result.quality='模型内拟合一致';state.result.review_reasons=[];
+   state.result.metrics.current_nrmse_pct=.02;state.result.metrics.voltage_nrmse_pct=.01;
+   state.result.diagnostics.pann={best_at_budget_end:true,convergence:{version:'two-window-stability-v2',status:'stable',reasons:[],stable_checks:21,previous_start_epoch:21,previous_end_epoch:40,start_epoch:41,end_epoch:60,
+    thresholds:{window_epochs:20,required_stable_checks:3,minimum_epochs:42,loss_mean_change_pct:.1,parameter_span_pct:.1,loss_scale_floor:1e-12,loss_absolute_tolerance:1e-10},
+    previous_mean_loss:.01,current_mean_loss:.00999998,loss_mean_change_pct:.0002,loss_absolute_change:2e-8,loss_absolute_tolerance_used:false,parameter_span_pct:{L_H:.001,C_F:.002},selected_parameter_gap_pct:{L_H:.001,C_F:.002},selected_loss_gap_pct:.0001}};
+   displayResult();
+  });
+  assert.match(await page.locator('#waveform-assessment').innerText(),/^达标/);
+  assert.match(await page.locator('#training-assessment').innerText(),/^训练已稳定/);
+  assert.match(await page.locator('#accuracy-assessment').innerText(),/^未验证/);
+  assert(await page.locator('#review-reasons').isHidden(),'Final-epoch best alone must not trigger review');
+  await page.locator('#training-evidence').evaluate(e=>e.open=true);
+  const download=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
+  await page.locator('#download-report').click();const json=await download;await json.saveAs('runtime/convergence-export.json');
+  assert.equal(JSON.parse(fs.readFileSync('runtime/convergence-export.json','utf8')).result.assessment.training.status,'stable');
+  await page.locator('#download-report:not([disabled])').waitFor();
+  await page.locator('#language-toggle').click();
+  assert(!/[\u3400-\u9fff]/.test(await page.locator('#result-assessment').innerText()));
+  assert.match(await page.locator('#accuracy-assessment').innerText(),/Unverified/);
+  await page.locator('#result-assessment').scrollIntoViewIfNeeded();await page.screenshot({path:'runtime/convergence-en.png'});
+  await page.evaluate(()=>{state.result.metrics.current_nrmse_pct=8;displayAssessment();});
+  assert.match(await page.locator('#training-assessment').innerText(),/stable, but the waveform fit has not passed/);
+  await page.evaluate(()=>{state.result.metrics.current_nrmse_pct=.02;
+   const c=state.result.diagnostics.pann.convergence;
+   c.status='not_stable';c.loss_mean_change_pct=12;c.stable_checks=0;
+   c.reasons=[{code:'pann_loss_mean_change',value:12,threshold:.1},{code:'pann_stability_short',value:0,threshold:3}];
+   state.result.review_reasons=c.reasons;state.result.quality='需复核';state.result.diagnostics.pann.best_at_budget_end=false;displayResult();
+  });
+  assert.match(await page.locator('#review-reasons').innerText(),/12% ≥ 0.1%/);
+  assert.match(await page.locator('#review-reasons').innerText(),/0 < 3/);
+  assert.match(await page.locator('#training-assessment').innerText(),/criteria not met/);
+  await page.locator('#language-toggle').click();
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('#result-assessment').scrollIntoViewIfNeeded();
+  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  await page.screenshot({path:'runtime/convergence-zh-mobile.png'});
+  await page.evaluate(()=>{delete state.result.diagnostics.pann.convergence;state.result.review_reasons=[];state.result.quality='模型内拟合一致';displayResult();});
+  assert.match(await page.locator('#training-assessment').innerText(),/证据不足/);
+  assert.equal(await page.locator('#result-badge').innerText(),'需复核');
+  const legacyJsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
+  const legacyPdfRequest=page.waitForRequest(r=>r.url().endsWith('/api/reports/pdf'));
+  await page.locator('#download-report').click();
+  const legacyJson=await legacyJsonWait;
+  await legacyJson.saveAs('runtime/convergence-legacy-export.json');
+  const legacyReport=JSON.parse(fs.readFileSync('runtime/convergence-legacy-export.json','utf8'));
+  assert.equal(legacyReport.result.quality,'需复核','Export must agree with the visible quality badge');
+  assert.equal((await legacyPdfRequest).postDataJSON().result.quality,'需复核');
+  assert.equal(await page.evaluate(()=>state.result.quality),'模型内拟合一致','Do not rewrite the stored historical result');
+  await page.locator('#download-report:not([disabled])').waitFor();
+  await page.locator('#vin').fill('29');assert(await page.locator('#result-assessment').isHidden());
+  assert.deepEqual(errors,[]);
+  console.log('PASS: independent assessments, stable final-best, unstable penultimate-best, legacy unknown, bilingual evidence, JSON and mobile layout.');
+ } finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -119,8 +119,20 @@
       </section>
       <section class="card results-card" id="results-card" hidden>
         <div class="card-heading"><div><h2>参数辨识</h2><p>物理模型计算 · 同记录后段验证</p></div><span id="result-badge" class="badge">等待计算</span></div>
-        <div class="parameter-grid"><div><span>电感 L</span><strong id="result-l">—</strong><small>μH</small></div><div><span>电容 C</span><strong id="result-c">—</strong><small>μF</small></div><div><span id="r-label">负载电阻 R</span><strong id="result-r">—</strong><small>Ω</small></div></div>
+        <div class="parameter-grid"><div><span>预测电感 L</span><strong id="result-l">—</strong><small>μH</small></div><div><span>预测电容 C</span><strong id="result-c">—</strong><small>μF</small></div><div><span id="r-label">负载电阻 R</span><strong id="result-r">—</strong><small>Ω</small></div></div>
+        <section id="truth-comparison" class="truth-comparison" aria-label="参数真值对照">
+          <div class="two-fields"><label>真实电感 L<div class="unit-input"><input id="truth-l" type="number" step="any" min="0" placeholder="输入真实电感" disabled><span>μH</span></div></label><label>真实电容 C<div class="unit-input"><input id="truth-c" type="number" step="any" min="0" placeholder="输入真实电容" disabled><span>μF</span></div></label></div>
+          <button id="calculate-parameter-error" class="button subtle small" type="button" disabled>计算相对误差</button>
+          <p id="truth-error" role="alert" hidden></p>
+          <div id="parameter-error-values" class="parameter-error-values" hidden aria-live="polite"><div><span>电感相对误差</span><strong id="parameter-error-l"></strong></div><div><span>电容相对误差</span><strong id="parameter-error-c"></strong></div></div>
+          <p class="field-note">相对误差 = |预测值 − 真实值| ÷ 真实值 × 100%。真实值仅用于结果对照，不参与训练。</p>
+        </section>
         <div id="validation" class="validation" hidden><div><span>留出电流 RMSE</span><strong id="rmse-i"></strong></div><div><span>留出电压 RMSE</span><strong id="rmse-v"></strong></div></div>
+        <section id="result-assessment" class="result-assessment" hidden aria-label="结果分项判断">
+          <dl><dt>波形拟合</dt><dd id="waveform-assessment"></dd><dt>训练稳定性</dt><dd id="training-assessment"></dd><dt>参数准确性</dt><dd id="accuracy-assessment"></dd></dl>
+          <details id="training-evidence" hidden><summary>查看训练稳定性依据</summary><ul id="training-evidence-list"></ul></details>
+          <p>标签颜色不代表精度提升；稳定、拟合达标与参数准确是不同的判断。</p>
+        </section>
         <section id="review-reasons" class="review-reasons" hidden aria-label="需复核的触发原因"><h3>需复核的触发原因</h3><ul id="review-reason-list"></ul></section>
         <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>
         <details id="diagnostics" hidden><summary>查看计算条件与诊断</summary><pre id="diagnostic-text"></pre></details>
