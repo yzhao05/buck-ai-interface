@@ -136,7 +136,6 @@ function controls() {
   $("new-chat").disabled = waiting;
   document.querySelectorAll(".history-item").forEach(button => button.disabled = waiting);
   $("leave-identification").disabled = waiting;
-  $("close-analysis").disabled = waiting;
   $("pann-settings").hidden = $("fit-method").value !== "pann";
   const reconstructed = pwmSource() === "controller";
   $("controller-settings").hidden = !reconstructed;
@@ -524,7 +523,7 @@ $("enter-identification").onclick=()=>setIdentificationOpen(true);
 for (const side of ["left", "right"]) {
   $(`toggle-${side}-pane`).onclick=()=>setPaneCollapsed(side,!$("workspace").classList.contains(`${side}-collapsed`));
 }
-$("leave-identification").onclick=$("close-analysis").onclick=()=>setIdentificationOpen(false);
+$("leave-identification").onclick=()=>setIdentificationOpen(false);
 $("toggle-import").onclick=()=>toggleSection("toggle-import","import-content","导入波形");
 $("view-full").onclick=()=>{state.zoom=null;drawCharts();};
 $("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;state.zoom=[Math.max(t[0],t[t.length-1]-10/(Number($("frequency").value)*1000)),t[t.length-1]];drawCharts();}};

@@ -216,6 +216,11 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   }
 }
 .pane-controls { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 12px; }
+.pane-controls h2 { margin: 0 auto 0 0; min-width: 0; font-size: 20px; font-weight: 600; }
+.sidebar > .pane-controls { margin-bottom: 24px; }
+.main-panel .pane-controls { display: grid; grid-template-columns: minmax(0, 1fr) 30px; align-items: center; gap: 10px 12px; }
+.main-panel .pane-controls > .eyebrow, .main-panel .pane-controls > p { grid-column: 1 / -1; }
+.main-panel .pane-controls h2, .main-panel .pane-controls p { margin: 0; }
 .pane-controls .section-toggle { flex-shrink: 0; width: 30px; height: 30px; font-size: 24px; }
 .pane-rail-label { display: none; }
 .workspace.left-collapsed { --sidebar-width: 48px; }
@@ -223,7 +228,8 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .workspace .pane-collapsed { padding: 16px 8px; overflow: hidden; scrollbar-gutter: auto; }
 .pane-collapsed > :not(.pane-controls) { display: none !important; }
 .pane-collapsed .pane-controls { flex-direction: column; justify-content: flex-start; gap: 16px; margin: 0; }
-.pane-collapsed #close-analysis { display: none; }
+.main-panel.pane-collapsed .pane-controls { display: flex; }
+.pane-collapsed .pane-controls > :not(button):not(.pane-rail-label) { display: none; }
 .pane-collapsed .pane-rail-label { display: block; writing-mode: vertical-rl; color: var(--muted); font-size: 11px; letter-spacing: 1px; }
 @media (min-width: 761px) {
   .workspace > .sidebar.pane-collapsed { position: sticky; top: 79px; height: calc(100dvh - 79px); }

@@ -83,7 +83,7 @@ const fs = require('node:fs/promises');
     await page.locator('#language-toggle').click();
     assert.equal(await page.locator('#result-l').textContent(),'—','Switching language must not restore invalidated results');
     assert.equal(await page.locator('#vin').inputValue(),'30');
-    await page.locator('#close-analysis').click();
+    await page.locator('#leave-identification').click();
     await page.locator('#clear-data').click();
     await page.locator('#file-info').waitFor({state:'hidden'});
     assert.deepEqual(errors,[]);

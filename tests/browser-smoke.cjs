@@ -47,7 +47,7 @@ const assert = require('node:assert/strict');
   await page.locator('#job-status').filter({hasText:'辨识完成'}).waitFor({timeout:60000});
   const values = await page.locator('.parameter-grid').innerText();
   if (!(values.includes('60') && values.includes('500'))) throw new Error('Unexpected parameters: '+values);
-  await page.locator('#close-analysis').click();
+  await page.locator('#leave-identification').click();
   assert(await page.locator('#analysis-panel').isHidden());
   assert(await page.locator('#identification-form').isHidden());
   assert(await page.locator('#enter-identification').isVisible());
