@@ -297,6 +297,11 @@ window.BuckI18n = (() => {
     [/^(.+) 计算点 · (.+) 显示点$/, "$1 computation points · $2 displayed"],
     [/^请检查工况输入范围：(.*)$/, "Check the operating-condition input: $1"]
   ];
+  Object.assign(english, {
+    "收起左栏": "Collapse left sidebar", "展开左栏": "Expand left sidebar",
+    "收起右栏": "Collapse right sidebar", "展开右栏": "Expand right sidebar",
+    "实验与历史": "Experiments & history", "波形与结果": "Waveforms & results"
+  });
   const storageKey = `buck-language:${new URL(".", location.href).pathname}`;
   let language = "zh";
   try { if (localStorage.getItem(storageKey) === "en") language = "en"; } catch { /* session-only choice */ }

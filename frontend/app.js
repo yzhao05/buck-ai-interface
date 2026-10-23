@@ -37,6 +37,22 @@ function toggleSection(buttonId, contentId, label, expanded) {
   window.BuckI18n.attr(button,"title",`${open ? "收起" : "展开"}${label}`);
   button.textContent = open ? "−" : "+";
 }
+function setPaneCollapsed(side, collapsed) {
+  const panel = $(side === "left" ? "sidebar-panel" : "analysis-panel");
+  const button = $(`toggle-${side}-pane`);
+  $("workspace").classList.toggle(`${side}-collapsed`, collapsed);
+  panel.classList.toggle("pane-collapsed", collapsed);
+  button.setAttribute("aria-expanded", String(!collapsed));
+  const label = side === "left" ? (collapsed ? "展开左栏" : "收起左栏") : (collapsed ? "展开右栏" : "收起右栏");
+  for (const attr of ["aria-label", "title"]) window.BuckI18n.attr(button, attr, label);
+  button.textContent = (side === "left") !== collapsed ? "‹" : "›";
+  if (collapsed) {
+    if (side === "left") closeCsvLibrary();
+    $("chart-tooltip").hidden = true;
+    button.focus({preventScroll:true});
+  }
+  requestAnimationFrame(drawCharts);
+}
 function setIdentificationOpen(open) {
   state.identificationOpen = open;
   state.waveformOpen = open;
@@ -48,6 +64,8 @@ function setIdentificationOpen(open) {
   $("enter-identification").hidden = open;
   $("enter-identification").setAttribute("aria-expanded", String(open));
   if (open) {
+    setPaneCollapsed("left", false);
+    setPaneCollapsed("right", false);
     $("vin").focus({preventScroll:true});
     requestAnimationFrame(drawCharts);
   } else {
@@ -60,6 +78,7 @@ function showWaveform() {
   state.waveformOpen = true;
   $("workspace").classList.add("waveform-open");
   $("analysis-panel").hidden = false;
+  setPaneCollapsed("right", false);
   requestAnimationFrame(drawCharts);
 }
 function errorText(body) {
@@ -502,6 +521,9 @@ document.addEventListener("buck-circuit-change",()=>{
 });
 $("identify").onclick=()=>void startFit();
 $("enter-identification").onclick=()=>setIdentificationOpen(true);
+for (const side of ["left", "right"]) {
+  $(`toggle-${side}-pane`).onclick=()=>setPaneCollapsed(side,!$("workspace").classList.contains(`${side}-collapsed`));
+}
 $("leave-identification").onclick=$("close-analysis").onclick=()=>setIdentificationOpen(false);
 $("toggle-import").onclick=()=>toggleSection("toggle-import","import-content","导入波形");
 $("view-full").onclick=()=>{state.zoom=null;drawCharts();};

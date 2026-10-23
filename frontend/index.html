@@ -16,7 +16,8 @@
     <div class="connection"><button type="button" id="language-toggle" class="button subtle small language-toggle" aria-label="切换为英文" title="切换为英文">EN</button><span id="connection-status" class="status"><i></i>正在连接</span><button class="button subtle small" id="open-settings">连接设置 <span aria-hidden="true">⚙</span></button></div>
   </header>
   <div class="workspace" id="workspace">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar-panel">
+      <div class="pane-controls"><button type="button" id="toggle-left-pane" class="section-toggle" aria-controls="sidebar-panel" aria-expanded="true" aria-label="收起左栏" title="收起左栏">‹</button><span class="pane-rail-label">实验与历史</span></div>
       <div class="section-heading experiment-heading"><div><span class="eyebrow">EXPERIMENT</span><h2>实验配置</h2></div><button type="button" class="section-toggle" id="toggle-experiment" aria-controls="experiment-content" aria-expanded="true" aria-label="收起实验配置" title="收起实验配置">−</button></div>
       <div id="experiment-content">
       <section class="side-section">
@@ -98,7 +99,8 @@
       <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要与对话将发送至已配置的 DeepSeek。<br>清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
     </main>
     <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>
-      <div class="page-heading"><div><span class="eyebrow">WAVEFORM INTELLIGENCE</span><h2>波形与辨识结果</h2><p>查看测量波形、模型预测与验证误差。</p></div><button type="button" id="close-analysis" class="icon-button" aria-label="关闭波形与辨识面板" title="关闭波形与辨识面板">×</button></div>
+      <div class="pane-controls"><button type="button" id="toggle-right-pane" class="section-toggle" aria-controls="analysis-panel" aria-expanded="true" aria-label="收起右栏" title="收起右栏">›</button><button type="button" id="close-analysis" class="icon-button" aria-label="关闭波形与辨识面板" title="关闭波形与辨识面板">×</button><span class="pane-rail-label">波形与结果</span></div>
+      <div class="page-heading"><div><span class="eyebrow">WAVEFORM INTELLIGENCE</span><h2>波形与辨识结果</h2><p>查看测量波形、模型预测与验证误差。</p></div></div>
       <div class="metrics-grid" aria-label="波形统计">
         <article class="metric"><span>平均输出电压</span><strong id="stat-voltage">—<small>V</small></strong><small>全段 · 时间加权</small><span class="metric-symbol">V</span></article>
         <article class="metric"><span>电感电流 RMS</span><strong id="stat-current">—<small>A</small></strong><small>全段 · 时间加权</small><span class="metric-symbol">I</span></article>

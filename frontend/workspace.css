@@ -21,12 +21,14 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   .topbar .brand-mark { width: 30px; height: 30px; line-height: 26px; }
 }
 .workspace {
-  grid-template-columns: 258px minmax(0, 1fr);
+  --sidebar-width: 258px;
+  --analysis-width: minmax(420px, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   grid-template-areas: "sidebar conversation";
   max-width: none;
 }
 .workspace:is(.identification-open, .waveform-open) {
-  grid-template-columns: 258px minmax(390px, 1.15fr) minmax(420px, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(390px, 1.15fr) var(--analysis-width);
   grid-template-areas: "sidebar conversation analysis";
 }
 .workspace > .sidebar { grid-area: sidebar; }
@@ -130,13 +132,13 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .main-panel .result-notes { padding: 13px 16px; }
 .main-panel .result-actions { padding: 12px 16px; gap: 8px; }
 @media (min-width: 1700px) {
-  .workspace { grid-template-columns: 278px minmax(0, 1fr); }
-  .workspace:is(.identification-open, .waveform-open) { grid-template-columns: 278px minmax(500px, 1.2fr) minmax(480px, 1fr); }
+  .workspace { --sidebar-width: 278px; --analysis-width: minmax(480px, 1fr); }
+  .workspace:is(.identification-open, .waveform-open) { grid-template-columns: var(--sidebar-width) minmax(500px, 1.2fr) var(--analysis-width); }
   .workspace .main-panel { padding: 30px 26px 18px; }
 }
 @media (min-width: 761px) and (max-width: 1190px) {
-  .workspace { grid-template-columns: 225px minmax(0, 1fr); }
-  .workspace:is(.identification-open, .waveform-open) { grid-template-columns: 225px minmax(0, 1fr); grid-template-areas: "sidebar conversation" "sidebar analysis"; }
+  .workspace { --sidebar-width: 225px; }
+  .workspace:is(.identification-open, .waveform-open) { grid-template-columns: var(--sidebar-width) minmax(0, 1fr); grid-template-areas: "sidebar conversation" "sidebar analysis"; }
   .workspace > .sidebar { padding: 25px 16px; }
   .workspace .chat-panel { grid-column: auto; }
   .workspace:is(.identification-open, .waveform-open) .chat-panel { position: static; min-height: 610px; height: calc(100dvh - 79px); }
@@ -212,6 +214,33 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
     overflow: visible;
     scrollbar-gutter: auto;
   }
+}
+.pane-controls { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-bottom: 12px; }
+.pane-controls .section-toggle { flex-shrink: 0; width: 30px; height: 30px; font-size: 24px; }
+.pane-rail-label { display: none; }
+.workspace.left-collapsed { --sidebar-width: 48px; }
+.workspace.right-collapsed { --analysis-width: 48px; }
+.workspace .pane-collapsed { padding: 16px 8px; overflow: hidden; scrollbar-gutter: auto; }
+.pane-collapsed > :not(.pane-controls) { display: none !important; }
+.pane-collapsed .pane-controls { flex-direction: column; justify-content: flex-start; gap: 16px; margin: 0; }
+.pane-collapsed #close-analysis { display: none; }
+.pane-collapsed .pane-rail-label { display: block; writing-mode: vertical-rl; color: var(--muted); font-size: 11px; letter-spacing: 1px; }
+@media (min-width: 761px) {
+  .workspace > .sidebar.pane-collapsed { position: sticky; top: 79px; height: calc(100dvh - 79px); }
+}
+@media (min-width: 761px) and (max-width: 1190px) {
+  .workspace.right-collapsed:is(.identification-open, .waveform-open) {
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 48px;
+    grid-template-areas: "sidebar conversation analysis";
+  }
+  .right-collapsed:is(.identification-open, .waveform-open) > .workspace-content { display: contents; }
+  .workspace.right-collapsed:is(.identification-open, .waveform-open) .chat-panel { height: 100%; }
+  .workspace.right-collapsed:is(.identification-open, .waveform-open) .main-panel { height: 100%; overflow: hidden; }
+}
+@media (max-width: 760px) {
+  .workspace > .sidebar.pane-collapsed, .workspace .main-panel.pane-collapsed { padding: 10px 18px; }
+  .pane-collapsed .pane-controls { flex-direction: row; gap: 12px; }
+  .pane-collapsed .pane-rail-label { writing-mode: horizontal-tb; }
 }
 .circuit-card { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: white; }
 .circuit-card-heading, .circuit-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
