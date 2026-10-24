@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -44,16 +45,22 @@ class SavedConversation(StrictModel):
 class ArchiveStore:
     def __init__(self, directory):
         self.directory = Path(directory)
+        self._initialization_lock = threading.Lock()
+        self._initialized = False
 
     @contextmanager
     def connect(self):
         self.directory.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.directory / "archive.sqlite3", timeout=20)
         db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("CREATE TABLE IF NOT EXISTS conversations (owner TEXT, id TEXT, deleted INTEGER NOT NULL DEFAULT 0, payload TEXT, PRIMARY KEY(owner,id))")
-        db.execute("CREATE TABLE IF NOT EXISTS files (owner TEXT, id TEXT, epoch INTEGER, sha TEXT, filename TEXT, raw BLOB, PRIMARY KEY(owner,id,sha))")
         try:
+            with self._initialization_lock:
+                if not self._initialized:
+                    db.execute("PRAGMA journal_mode=WAL")
+                    db.execute("CREATE TABLE IF NOT EXISTS conversations (owner TEXT, id TEXT, deleted INTEGER NOT NULL DEFAULT 0, payload TEXT, PRIMARY KEY(owner,id))")
+                    db.execute("CREATE TABLE IF NOT EXISTS files (owner TEXT, id TEXT, epoch INTEGER, sha TEXT, filename TEXT, raw BLOB, PRIMARY KEY(owner,id,sha))")
+                    db.commit()
+                    self._initialized = True
             with db: yield db
         finally: db.close()
 

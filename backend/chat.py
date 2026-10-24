@@ -1,6 +1,7 @@
 """DeepSeek tool calling. No generated code is executed."""
 import json
 import os
+import re
 
 import httpx
 
@@ -14,6 +15,7 @@ SYSTEM = """你是 Buck Lab 电力电子实验助手，用中文清楚回答用�
 只有 identification_enabled 为 true 才能执行参数辨识；否则引导用户点击左侧“进入参数辨识”并确认基本信息。普通问答和波形分析不需要进入辨识模式。
 已有结果的问题先查询 get_identification_result。说明误差时区分事实、假设、验证方法；提出可操作的单因素修改实验。
 波形误差不是参数真值误差；同记录的后段留出、使用实测 PWM 的预测不是自主闭环验证或独立工况泛化。
+get_identification_result 和 previous_result 中的 parameter_comparison 表示用户在当前结果卡片确认的 L/C 真值对照，单位为 H、F；relative_error_pct 是后端按完整预测值重新计算的百分比绝对相对误差。存在该字段时应引用真值与 L、C 各自误差，不得继续声称“未提供真值”或 parameter_error=null；用户真值尚未独立核验不等于没有真值。真值仅作对照，不参与训练，波形 RMSE/NRMSE 与参数相对误差必须分开。以当前工具上下文为准，历史对话中缺少真值的说法可能已过时。没有该字段时不能从历史对话或参考电路自动沿用真值。
 R 指负载电阻，不是 ESR。理想非同步 Buck 功率模型忽略寄生，负载在辨识区间应恒定。
 PWM 来源由界面 pwm_source 指定：measured 使用 CSV 实际 PWM，忽略反馈取样支路；controller 仅在确认默认图的非同步 Buck 和 RC 控制器接线匹配时支持三列 CSV，固定用户已知 R 识别 L/C，计入取样支路电流。控制器元件、增益、限幅、载波相位及初始电压可在电路编辑器设置，来自 options.controller；默认值来自 Case09/10。开关频率来自 options.frequency_hz，默认 100 kHz。controller 模式须从 t=0 开始、结束于 1 ms 前且负载恒定。训练 PWM 仅由训练段电压重建；验证使用相同设置的控制器自主闭环预测，不用留出电压或实测 PWM，但仍不是独立工况验证。不能擅自替用户确认配置，也不能把重建 PWM 描述为测量值。上传的电路图片只作参考展示，不会传给此问答模型或自动改变接线、提取参数；不得声称看到了图片或从中读取了数值。
 PANN 默认联合估计窗口初始电流、电压与参数；固定测量初值仅作对照。参数和窗口初值取自同一最小含噪训练损失轮次，不使用干净状态或留出段选轮次。当前训练没有墙钟时间上限，按用户设置的轮数执行。必须分开解释 assessment 的波形拟合、训练稳定性和参数准确性：训练稳定性必须依据 diagnostics.pann.convergence 的规则版本解释：当前 two-window-stability-v2 比较前后各 20 轮平均损失，变化小于 0.1%（或绝对变化小于 1e-10），最近 20 轮待估 L/C/R 相对峰峰波动小于 0.1%，每轮检查并连续通过 3 次。第 0 轮和初值预热不参与，最早第 42 轮可确认。旧 v1 记录按其原阈值说明。返回最佳结果与末段的差异仅作记录，不是 v2 稳定性门槛；均值比较可能掩盖周期震荡，规则待实验校准。训练稳定但留出误差未达标时明确说“训练已稳定，但拟合未达标”。stable 只表示符合经验稳定判据，不是数学收敛证明；最佳结果是否恰好位于末轮只是记录，不决定质量。不凭标签变绿、显示值相同或 RMSE 微小变化宣称参数更准确或已经收敛。无真值时参数准确性始终未验证。历史数据缺少逐轮证据时说明无法判断；time_budget 表示旧版本限时，建议更新后重新辨识。原 Case15/16 的误差数字不是本次上传数据的验证结果。
@@ -36,6 +38,30 @@ TOOLS = [
         ("search_knowledge", "检索与当前问题有关的电路、参数误差、PLECS 或器件寿命资料。"),
     ]
 ]
+SYSTEM += "\n撰写结果分析、实验报告和修改建议时，忽略最佳结果是否位于末轮：不要提及 best_epoch、best_step、best_at_budget_end 或‘最后一轮最佳’，不要引用此类历史 warnings，也不要据此质疑稳定性、建议增加轮数或降低评价。即使历史对话曾强调此项，也不要重复。训练稳定性依据当前 convergence 判据；波形误差、参数边界、条件数、真值误差等其他实际证据仍正常分析。\n"
+SYSTEM += "\n默认结果分析和实验报告采用精简表达：只呈现预测参数、用户真值与参数相对误差、简短结论和必要的下一步建议。不列出或展开分析‘其他过程事实’‘数据和波形事实’，也不换标题复述这些内容；不逐项罗列数据点数、采样时间段、波形统计、RMSE/NRMSE、窗口选择过程、噪声估计、状态修正、条件数、PWM 重建边沿或代码字段。上述数据仅供内部判断；确有影响结论的异常时，用一句通俗结论说明并给出必要建议，不粘贴诊断清单。无异常时不强行添加原因假设、固定检查清单或无关提醒。用户明确追问某项波形或算法细节时才针对该问题解释。这条要求同样适用于中文和英文，优先于通用的‘列出事实、原因、方案’模板。\n"
+
+
+def analysis_result(result):
+    """Hide final-best bookkeeping from AI reports; preserve the saved result."""
+    if not result or result.get("error"):
+        return result
+    result = dict(result)
+    diagnostics = dict(result.get("diagnostics", {}))
+    if "pann" in diagnostics:
+        diagnostics["pann"] = {k: v for k, v in diagnostics["pann"].items()
+                               if k not in {"best_epoch", "best_step", "best_at_budget_end"}}
+    result["diagnostics"] = diagnostics
+    ignored = {
+        "最佳训练结果位于最后一轮，仅作记录；是否稳定由末段损失和参数变化共同判断。",
+        "PANN 最佳结果出现在最后一次训练评估，尚不能确认充分收敛；请增加训练轮数或对照不同窗口长度。",
+    }
+    result["warnings"] = [note for note in result.get("warnings", []) if note not in ignored]
+    if "review_reasons" in result:
+        result["review_reasons"] = [reason for reason in result["review_reasons"] if reason.get("code") != "pann_best_at_end"]
+    return result
+
+
 for tool in TOOLS:
     if tool["function"]["name"] == "search_knowledge":
         tool["function"]["description"] = "检索 Buck 功率级、实际模拟控制电路、公式推导、参数误差或器件知识。可提供更具体的中英文查询词。"
@@ -45,6 +71,8 @@ for tool in TOOLS:
 
 
 def local_response(message, summary, result, documents, job=None, task=None):
+    if result and result.get("error"):
+        return result["error"]
     if job:
         response = "已启动参数辨识，使用左侧确认的工况与区间。完成后参数、预测曲线和留出误差会显示在结果区。请注意：R 表示负载电阻。"
         if formula_question(message):
@@ -66,15 +94,33 @@ def local_response(message, summary, result, documents, job=None, task=None):
         from .convergence import assess_result
         assessment = assess_result(m, result.get("diagnostics", {}), result.get("method"))
         stability = {"stable": "末段符合经验稳定判据（非收敛证明）", "not_stable": "尚未达到末段稳定判据", "not_applicable": "积分方法不涉及迭代训练", "insufficient_history": "逐轮证据不足，需重新辨识"}[assessment["training"]["status"]]
+        comparison = result.get("parameter_comparison")
+        accuracy = "参数准确性未验证（未提供当前结果的有效真值对照）"
+        if comparison:
+            truth, errors = comparison["ground_truth"], comparison["relative_error_pct"]
+            accuracy = (f"用户提供真实电感 {truth['L_H']*1e6:.6g} μH、真实电容 {truth['C_F']*1e6:.6g} μF；"
+                        f"电感相对误差 {errors['L']:.6g}%，电容相对误差 {errors['C']:.6g}%。"
+                        "真值由用户提供，未独立核验")
+        conclusion = f"训练稳定性：{stability}" if result.get("method") == "pann" else "已完成参数计算"
+        if assessment["waveform"]["status"] != "passed":
+            conclusion += "；验证尚未通过，结果仍需复核"
+        elif result.get("quality") == "需复核":
+            conclusion += "；结果仍有复核项，暂不据此确认参数准确"
+        else:
+            conclusion += "；验证通过"
+        next_step = ("请按实验要求判断 L、C 相对误差是否满足目标；如需改进，保持数据及其他设置一致，单独调整一项辨识设置做对照。"
+                     if comparison else "请在结果卡片输入真实电感、电容并点击计算相对误差，再对照参数准确性。")
+        detail = ""
+        if re.search(r"(?<![a-z])nrmse(?![a-z])|归一化.*误差|归一化.*RMSE", message, re.I):
+            current, voltage = m.get("current_nrmse_pct"), m.get("voltage_nrmse_pct")
+            detail = (f"留出电流 NRMSE = {current:.6g}%，留出电压 NRMSE = {voltage:.6g}%。这是波形误差。\n\n"
+                      if current is not None and voltage is not None else "当前结果未记录完整的留出 NRMSE。\n\n")
+        elif re.search(r"(?<![a-z])rmse(?![a-z])|均方根误差", message, re.I):
+            detail = (f"留出电流 RMSE = {m['current_rmse_A']:.6g} A，留出电压 RMSE = {m['voltage_rmse_V']:.6g} V。"
+                      "这是波形误差。\n\n")
         return (f"当前估计：L = {p['L_H'] * 1e6:.4g} μH，C = {p['C_F'] * 1e6:.4g} μF，"
                 f"R = {p['R_ohm']:.4g} Ω（{'估计' if result['R_estimated'] else '固定已知'}）。\n\n"
-                f"计算证据：后段电流 RMSE {m['current_rmse_A']:.4g} A，电压 RMSE {m['voltage_rmse_V']:.4g} V；"
-                f"状态为“{result['quality']}”。这些是波形误差，不是参数真实误差。\n\n"
-                f"分项判断：波形拟合{'达标' if assessment['waveform']['status']=='passed' else '未达标'}；训练稳定性：{stability}；参数准确性未验证（未提供真值）。标签颜色和显示精度内相同的参数不能证明精度提升。\n\n"
-                "可能原因需通过对照实验区分：PWM 时间对齐、选定区间内的负载变化、采样分辨率、初始状态及遗漏寄生。\n\n"
-                "修改计划：① 核对 Vin、开关频率和单位；② 在恒定负载段单独辨识；③ 对比开关边沿附近与平滑区的残差；"
-                "④ 使用另一工况和多个初值复测；⑤ 若偏差仍有系统性，再加入 ESR、绕组电阻或反馈取样支路。\n\n"
-                + "\n".join(result["warnings"]))
+                f"{accuracy}。\n\n{detail}结论：{conclusion}。\n\n{next_step}")
     if task == "diagnosis":
         return "当前没有与数据和配置匹配的已完成辨识结果。请先进入参数辨识并完成计算，再分析误差；也可以先核对单位、PWM 对齐和负载区间。本次没有自动启动辨识。"
     if task == "guidance":
@@ -100,7 +146,7 @@ async def answer(request, invoke):
     docs = retrieve(request.message)
     traces = []
     summary = await invoke("get_waveform_summary") if "get_waveform_summary" in allowed_tools and request.dataset_id and request.mapping else None
-    result = await invoke("get_identification_result") if "get_identification_result" in allowed_tools and request.result_id else None
+    result = analysis_result(await invoke("get_identification_result")) if "get_identification_result" in allowed_tools and request.result_id else None
     key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     local_job = None
     intent = identification_intent(request.message)
@@ -160,6 +206,8 @@ async def answer(request, invoke):
                         output = local_job
                     else:
                         output = await invoke(name)
+                        if name == "get_identification_result":
+                            output = analysis_result(output)
                         if name == "start_identification" and output.get("job_id"):
                             local_job = output
                     traces.append({"name": name, "status": "未执行" if isinstance(output, dict) and output.get("error") else "已执行"})

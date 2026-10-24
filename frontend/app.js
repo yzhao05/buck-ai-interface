@@ -553,8 +553,10 @@ async function sendMessage(value) {
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
     if (state.mapping) await ensureDatasetAvailable();
+    const comparison=fitOptions ? parameterComparison() : null;
     const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,
       dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,options:fitOptions,result_id:fitOptions ? state.resultId : null,
+      ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
       identification_enabled:state.identificationOpen}});
     pending.remove();
     const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
@@ -660,7 +662,7 @@ async function exportReports() {
   // Capture once: editing inputs or switching conversations must never mix runs.
   const exportedAt = new Date(), language = window.BuckI18n.language;
   const report = structuredClone({application:"Buck Lab 0.1.0",exported_at:exportedAt.toISOString(),summary:state.summary,
-    result:{...state.result,quality:resultQuality(state.result),parameter_comparison:parameterComparison(),parameter_error_note:parameterErrorNote(),assessment:resultAssessment(state.result),review_reasons:resultReviewReasons(state.result)},conversation:state.history});
+    result:{...state.result,quality:resultQuality(state.result),parameter_comparison:parameterComparison(),parameter_error:parameterComparison(),parameter_error_note:parameterErrorNote(),assessment:resultAssessment(state.result),review_reasons:resultReviewReasons(state.result)},conversation:state.history});
   const filename = reportFilename(report.result, exportedAt);
   const notes = (report.result.warnings || []).map(note=>tr(note));
   $("report-downloads").hidden = false;

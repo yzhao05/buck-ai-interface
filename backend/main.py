@@ -17,6 +17,7 @@ from . import chat
 from .data import MAX_BYTES, analyze, read_csv, suggest_mapping
 from .identification import identify
 from .pann_adapter import available as pann_available
+from .parameter_comparison import with_ground_truth
 from .schemas import AnalysisRequest, ChatRequest, FitRequest
 from .report import ReportRequest, build_pdf
 
@@ -269,7 +270,7 @@ async def chat_route(body: ChatRequest, owner: str = Depends(session)):
                     return None
                 if job["config"]["mapping"] != (body.mapping.model_dump() if body.mapping else None) or job["config"]["options"] != body.options.model_dump():
                     return None
-                return compact(job["result"])
+                return compact(with_ground_truth(job["result"], body.ground_truth))
             if name == "start_identification":
                 if not body.identification_enabled:
                     return {"error": "请先点击左侧“进入参数辨识”，确认基本信息后再执行辨识。"}

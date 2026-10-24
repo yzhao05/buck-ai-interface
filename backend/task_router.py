@@ -25,7 +25,7 @@ TASKS = {
     "identification": {"label": "参数辨识", "tools": (*READ, "start_identification"),
                        "prompt": "你负责执行参数辨识。用户要求执行时调用 start_identification；以工具的报错或任务 ID 为准，不提前编造结果。"},
     "diagnosis": {"label": "误差诊断", "tools": READ,
-                  "prompt": "你负责结果解释和修改计划。先读取对应结果与波形，再给出事实、可能原因和单因素验证方案。无结果时说明缺失。"},
+                  "prompt": "你负责结果解释和必要修改建议。读取对应结果与波形作为内部判断依据，默认只展示预测参数、真值相对误差、简短结论及必要建议；不罗列或分析过程事实、数据和波形事实，不复述原始诊断字段。只有用户明确追问具体细节时才解释该项。无结果时说明缺失。"},
     "hardware": {"label": "硬件寿命", "tools": READ,
                  "prompt": "你负责器件应力、损耗、选型与寿命问答。引用资料；缺少型号、温度与运行历史时不能报告剩余年数。"},
     "general": {"label": "一般问答", "tools": ("search_knowledge",),

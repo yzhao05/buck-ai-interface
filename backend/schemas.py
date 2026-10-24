@@ -71,6 +71,12 @@ class ChatMessage(StrictModel):
     content: str = Field(max_length=8000)
 
 
+class ChatGroundTruth(StrictModel):
+    result_id: str = Field(min_length=1, max_length=128)
+    L_H: float = Field(gt=0, le=1e30)
+    C_F: float = Field(gt=0, le=1e30)
+
+
 class ChatRequest(StrictModel):
     identification_enabled: bool = False
     message: str = Field(min_length=1, max_length=4000)
@@ -79,3 +85,10 @@ class ChatRequest(StrictModel):
     mapping: Mapping | None = None
     options: FitOptions = Field(default_factory=FitOptions)
     result_id: str | None = None
+    ground_truth: ChatGroundTruth | None = None
+
+    @model_validator(mode="after")
+    def truth_matches_result(self):
+        if self.ground_truth and self.ground_truth.result_id != self.result_id:
+            raise ValueError("Ground truth must belong to the requested result.")
+        return self
