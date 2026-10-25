@@ -61,7 +61,7 @@ const assert=require('node:assert/strict'), fs=require('node:fs');
   assert.match(await page.locator('#accuracy-assessment').innerText(),/Unverified/);
   assert(await page.locator('#report-downloads').isHidden());
   assert.equal((await ask()).ground_truth,undefined,'Editing truth without recalculating must not send the old comparison');
-  assert.match(await page.locator('.message.assistant').last().innerText(),/未提供当前结果的有效真值对照/);
+  assert.match(await page.locator('.message.assistant').last().innerText(),/未计算参数相对误差/);
   await calculate();await page.setViewportSize({width:390,height:844});
   await page.locator('#language-toggle').click();await page.locator('#truth-comparison').scrollIntoViewIfNeeded();
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));

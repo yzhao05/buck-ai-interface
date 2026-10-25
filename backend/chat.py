@@ -40,6 +40,7 @@ TOOLS = [
 ]
 SYSTEM += "\n撰写结果分析、实验报告和修改建议时，忽略最佳结果是否位于末轮：不要提及 best_epoch、best_step、best_at_budget_end 或‘最后一轮最佳’，不要引用此类历史 warnings，也不要据此质疑稳定性、建议增加轮数或降低评价。即使历史对话曾强调此项，也不要重复。训练稳定性依据当前 convergence 判据；波形误差、参数边界、条件数、真值误差等其他实际证据仍正常分析。\n"
 SYSTEM += "\n默认结果分析和实验报告采用精简表达：只呈现预测参数、用户真值与参数相对误差、简短结论和必要的下一步建议。不列出或展开分析‘其他过程事实’‘数据和波形事实’，也不换标题复述这些内容；不逐项罗列数据点数、采样时间段、波形统计、RMSE/NRMSE、窗口选择过程、噪声估计、状态修正、条件数、PWM 重建边沿或代码字段。上述数据仅供内部判断；确有影响结论的异常时，用一句通俗结论说明并给出必要建议，不粘贴诊断清单。无异常时不强行添加原因假设、固定检查清单或无关提醒。用户明确追问某项波形或算法细节时才针对该问题解释。这条要求同样适用于中文和英文，优先于通用的‘列出事实、原因、方案’模板。\n"
+SYSTEM += "\n分析正文不输出‘明确无法给出的结论’‘不能得出的结论’‘局限性声明’等清单，也不在正文或结尾以其他标题或段落重复：parameter_error=null、unverified、稳定不等于准确、非数学收敛证明、并非独立泛化验证等例行声明。上述技术边界仅用于内部判断，不因此作出缺乏证据的正面结论。没有当前有效真值对照时，只在参数误差位置写‘未计算参数相对误差’，不猜测百分比；有对照时直接展示用户提供的真值与误差。不以‘如果你希望，我可以……’或类似继续服务邀请结束。保留直接相关的计算失败或验证未通过等简短事实。用户明确询问某一技术边界时才针对问题解释；中英文均遵循此规则。\n"
 
 
 def analysis_result(result):
@@ -93,19 +94,18 @@ def local_response(message, summary, result, documents, job=None, task=None):
         p, m = result["parameters"], result["metrics"]
         from .convergence import assess_result
         assessment = assess_result(m, result.get("diagnostics", {}), result.get("method"))
-        stability = {"stable": "末段符合经验稳定判据（非收敛证明）", "not_stable": "尚未达到末段稳定判据", "not_applicable": "积分方法不涉及迭代训练", "insufficient_history": "逐轮证据不足，需重新辨识"}[assessment["training"]["status"]]
+        stability = {"stable": "符合稳定性判据", "not_stable": "尚未达到稳定性判据", "not_applicable": "不适用", "insufficient_history": "待确认"}[assessment["training"]["status"]]
         comparison = result.get("parameter_comparison")
-        accuracy = "参数准确性未验证（未提供当前结果的有效真值对照）"
+        accuracy = "未计算参数相对误差"
         if comparison:
             truth, errors = comparison["ground_truth"], comparison["relative_error_pct"]
             accuracy = (f"用户提供真实电感 {truth['L_H']*1e6:.6g} μH、真实电容 {truth['C_F']*1e6:.6g} μF；"
-                        f"电感相对误差 {errors['L']:.6g}%，电容相对误差 {errors['C']:.6g}%。"
-                        "真值由用户提供，未独立核验")
+                        f"电感相对误差 {errors['L']:.6g}%，电容相对误差 {errors['C']:.6g}%")
         conclusion = f"训练稳定性：{stability}" if result.get("method") == "pann" else "已完成参数计算"
         if assessment["waveform"]["status"] != "passed":
             conclusion += "；验证尚未通过，结果仍需复核"
         elif result.get("quality") == "需复核":
-            conclusion += "；结果仍有复核项，暂不据此确认参数准确"
+            conclusion += "；结果仍需复核"
         else:
             conclusion += "；验证通过"
         next_step = ("请按实验要求判断 L、C 相对误差是否满足目标；如需改进，保持数据及其他设置一致，单独调整一项辨识设置做对照。"

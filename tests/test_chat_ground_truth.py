@@ -42,11 +42,12 @@ def test_local_comparison_and_no_persistent_truth(context):
     answer = response.json()["answer"]
     assert "真实电感 60 μH" in answer and "真实电容 500 μF" in answer
     assert "电感相对误差 0.0368333%" in answer and "电容相对误差 0.006%" in answer
-    assert "未提供" not in answer and "未独立核验" in answer and "RMSE" not in answer
+    assert "未提供" not in answer and "未独立核验" not in answer and "RMSE" not in answer
     assert main.jobs[body["result_id"]]["result"] == original
     del body["ground_truth"]
     answer = client.post("/api/chat", json=body).json()["answer"]
-    assert "未提供当前结果的有效真值对照" in answer
+    assert "未计算参数相对误差" in answer
+    assert "电感相对误差 0.0368333%" not in answer
 
 
 @pytest.mark.parametrize("change", ["result", "owner", "options"])
@@ -97,6 +98,8 @@ def test_deepseek_context_tool_and_fallback_share_comparison(context, monkeypatc
             messages = kwargs["json"]["messages"]
             assert "不列出或展开分析‘其他过程事实’‘数据和波形事实’" in messages[0]["content"]
             assert "默认只展示预测参数、真值相对误差、简短结论及必要建议" in messages[0]["content"]
+            assert "分析正文不输出‘明确无法给出的结论’" in messages[0]["content"]
+            assert "不以‘如果你希望，我可以……’" in messages[0]["content"]
             data = json.loads(messages[1]["content"].split("：", 1)[1])["previous_result"]
             seen.append(copy.deepcopy(data))
             assert data["parameter_error"] == data["parameter_comparison"]
@@ -139,6 +142,25 @@ def test_concise_report_still_mentions_failed_validation(context):
     assert "电感相对误差" in answer
     for hidden in ("其他过程事实", "数据和波形事实", "窗口选择过程", "PWM 重建边沿", "RMSE", "可能原因"):
         assert hidden not in answer
+
+
+@pytest.mark.parametrize("include_truth", [False, True])
+def test_analysis_omits_routine_limitations_without_inventing_accuracy(context, include_truth):
+    client, body, _ = context
+    stored = main.jobs[body["result_id"]]["result"]
+    stored["method"] = "pann"
+    stored["diagnostics"] = {"pann": {"convergence": {"status": "stable", "reasons": []}}}
+    if not include_truth:
+        del body["ground_truth"]
+    answer = client.post("/api/chat", json=body).json()["answer"]
+    assert "符合稳定性判据" in answer
+    for hidden in ("明确无法", "不能得出", "parameter_error", "unverified", "非收敛证明", "未独立核验", "如果你希望"):
+        assert hidden not in answer
+    if include_truth:
+        assert "电感相对误差 0.0368333%" in answer
+    else:
+        assert "未计算参数相对误差" in answer
+        assert "%" not in answer
 
 
 def test_analysis_ignores_only_final_best_evidence():
