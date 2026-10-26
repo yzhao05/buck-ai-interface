@@ -33,6 +33,7 @@ const assert=require('node:assert/strict'), fs=require('node:fs');
   const ask=async()=>{
    const pending=page.waitForRequest(r=>r.url().endsWith('/api/chat'));
    await page.locator('#ask-error').click();
+   await page.locator('#analyze-here').click();
    const request=await pending;
    await page.waitForFunction(()=>!state.chatBusy);
    return request.postDataJSON();
@@ -66,9 +67,9 @@ const assert=require('node:assert/strict'), fs=require('node:fs');
   await page.locator('#language-toggle').click();await page.locator('#truth-comparison').scrollIntoViewIfNeeded();
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.screenshot({path:'runtime/parameter-error-mobile.png'});
-  await page.locator('#vin').fill('29');assert(await page.locator('#parameter-error-values').isHidden());
-  assert.equal(await page.locator('#truth-l').inputValue(),'');assert(await page.locator('#calculate-parameter-error').isDisabled());
+  await page.locator('#vin').fill('29');assert(await page.locator('#parameter-error-values').isVisible());
+  assert.equal(await page.locator('#truth-l').inputValue(),'61');assert(!(await page.locator('#calculate-parameter-error').isDisabled()));
   assert.deepEqual(errors,[]);
-  console.log('PASS: full-precision absolute relative errors, input validation, no refit, bilingual labels, restore, export, edit invalidation and mobile layout.');
+  console.log('PASS: full-precision absolute relative errors, input validation, no refit, bilingual labels, restore, export, truth edit invalidation, draft preservation and mobile layout.');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

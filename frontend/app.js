@@ -119,14 +119,14 @@ function prepareControllerDefaults() {
 }
 function controls() {
   const waiting = historyLocked();
+  $("ask-error").disabled = waiting || !state.result;
+  if (waiting || !state.result) closeAnalysisMenu();
   renderAnalysisHistory();
   for (const id of ["truth-l","truth-c","calculate-parameter-error"]) $(id).disabled=waiting || !state.result;
   window.BuckCircuit.setBusy(waiting); window.BuckCircuit.render();
   $("chat-input").disabled = state.syncBusy;
-  $("open-settings").disabled = state.syncBusy;
-  $("sync-now").disabled = waiting || !state.connected;
-  $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting || Boolean(state.result);
-  $("identify-complete-hint").hidden = !state.result;
+  $("open-settings").disabled = state.syncBusy || archiveRunning;
+  $("sync-now").disabled = waiting || !state.connected || archiveRunning;
   $("apply-mapping").disabled = !state.dataset || waiting;
   $("load-demo").disabled = waiting;
   $("toggle-csv-library").disabled = waiting || !activeConversation;
@@ -145,6 +145,12 @@ function controls() {
   $("controller-settings").hidden = !reconstructed;
   $("fit-mode").querySelector('[value="LCR"]').disabled = reconstructed;
   if (reconstructed) $("fit-mode").value = "LC";
+  const sameResult = resultMatchesCurrent(state.result);
+  $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting || sameResult;
+  $("identify-complete-hint").hidden = !state.result;
+  ui($("identify-complete-hint"), sameResult
+    ? "当前配置已完成辨识。修改上方参数后可重新辨识。"
+    : "左侧设置已更改。右侧保留上次结果，点击开始参数辨识后更新。");
   $("fixed-r-label").hidden = $("fit-mode").value !== "LC";
   ui($("method-hint"), $("fit-method").value === "pann"
     ? "从加权积分初值继续优化窗口状态和参数；不保证比积分结果更准确。"
@@ -167,7 +173,6 @@ async function connect() {
     ui(pannOption, health.pann_available ? "PANN · 物理网络微调" : "PANN · 需后端 PyTorch");
     if (!health.pann_available && $("fit-method").value !== "weighted_integral") {
       $("fit-method").value = "weighted_integral";
-      invalidateResult();
     }
     const source = health.source_url || config.sourceUrl;
     if (source && /^https:\/\//.test(source)) { $("source-link").href = source; ui($("source-link"), "本项目源码 ↗"); }
@@ -207,15 +212,22 @@ function options() {
     epochs:$("fit-method").value === "pann" ? numeric("pann-epochs") : 100,
     pann_initial_state:$("pann-state").value, pann_window_cycles:Number($("pann-cycles").value)};
 }
-function resultMatchesCurrent(result) {
+function resultMatchesData(result) {
   return Boolean(result && state.dataset && state.mapping
     && result.file_sha256 === state.dataset.sha256
-    && Object.entries(options()).every(([key,value]) => value && typeof value === "object"
-      ? Object.entries(value).every(([field,number])=>result.options?.[key]?.[field] === number)
-      : (result.options?.[key] ?? null) === value)
     && Object.entries(state.mapping).every(([key,value]) => result.mapping?.[key] === value));
 }
+function resultMatchesCurrent(result) {
+  // Drafts may be temporarily blank/invalid while typing. They never invalidate a completed run.
+  if (!resultMatchesData(result)) return false;
+  try {
+    return Object.entries(options()).every(([key,value]) => value && typeof value === "object"
+      ? Object.entries(value).every(([field,number])=>result.options?.[key]?.[field] === number)
+      : (result.options?.[key] ?? null) === value);
+  } catch { return false; }
+}
 function invalidateResult() {
+  closeAnalysisMenu();
   clearReportDownloads();
   state.result = null; state.resultId = null;
   state.truthDraft={l:"",c:""};state.truthComparison=null;state.truthError="";displayTruthComparison();
@@ -239,6 +251,9 @@ function fillMappings(dataset) {
 }
 async function importData(file = null, resolveFile = null) {
   if (historyLocked()) return;
+  // An explicit import belongs to the latest clear generation already received
+  // locally. A later clear during this request must still invalidate this file.
+  const uploadEpoch=Math.max(activeConversation.file_epoch || 0,readConversation(activeConversation.id)?.file_epoch || 0);
   state.busy = true; controls(); notice();
   ui($("job-status"), "正在读取并检查数据…");
   try {
@@ -249,6 +264,7 @@ async function importData(file = null, resolveFile = null) {
       const form = new FormData(); form.append("file", file);
       uploaded = await api("/api/datasets", {method:"POST", body:form});
     } else uploaded = await api("/api/demo", {method:"POST"});
+    activeConversation.file_epoch=uploadEpoch;
     state.dataset = uploaded; state.mapping = null; state.summary = null; state.chart = null; state.zoom = null;
     $("chart-container").hidden=true; $("chart-empty").hidden=false;
     for (const id of ["stat-voltage","stat-current","stat-duration"]) ui($(id),"—");
@@ -301,34 +317,73 @@ function displaySummary() {
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
 }
 async function startFit() {
-  if (!state.identificationOpen || !state.mapping || historyLocked() || state.result) return;
+  if (!state.identificationOpen || !state.mapping || historyLocked() || resultMatchesCurrent(state.result)) return;
+  let submitted=false;
   try {
     const fitOptions = options();
     state.busy = true; controls(); invalidateResult(); notice();
     await ensureDatasetAvailable();
     ui($("job-status"), "正在提交辨识任务…");
+    submitted=true;
     const response = await api("/api/identify", {method:"POST", body:{dataset_id:state.dataset.dataset_id,mapping:state.mapping,options:fitOptions}});
+    if (response.resumed) notice("已找回正在运行的辨识任务，正在恢复进度。",true);
     state.busy = false;
     await watchJob(response.job_id);
-  } catch (error) { notice(error.message); ui($("job-status"), "辨识未完成"); }
+  } catch (error) {
+    // The POST may have reached the server even when its response was lost.
+    if (submitted && (!error.status || error.status===409 || error.status>=500)) {
+      try { if (await resumeActiveJob()) return; } catch { /* Keep the original error visible. */ }
+    }
+    notice(error.message);
+    ui($("job-status"), submitted && (!error.status || error.status>=500) ? "提交状态暂未确认，请检查连接后重试。" : "辨识未完成");
+  }
   finally { state.busy = false; controls(); }
 }
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function resumeActiveJob() {
+  if (state.job) return true;
+  const conversationId=activeConversation?.id;
+  let response;
+  try { response=await api("/api/jobs/active",{timeout:10000}); }
+  catch (error) { if (error.status===404) return false; throw error; }
+  if (activeConversation?.id!==conversationId || !response.job?.job_id) return false;
+  notice("已找回正在运行的辨识任务，正在恢复进度。",true);
+  void watchJob(response.job.job_id);
+  return true;
+}
 async function watchJob(id) {
   if (state.job) return;
   state.job = id; persistConversation(); controls();
   const started = Date.now();
+  let retries=0, refreshExperiments=false;
   try {
     // A long training run has no total polling deadline; the job decides when it ends.
     while (true) {
-      const response = await api(`/api/jobs/${id}`);
+      let response;
+      try {
+        response = await api(`/api/jobs/${id}`);
+        if (!["queued","running","complete","failed"].includes(response.status)) throw new Error("任务进度响应不完整。");
+      } catch (error) {
+        if (error.status && ![408,429].includes(error.status) && error.status<500) throw error;
+        retries++;
+        // Keep the ID and lock: a failed GET does not cancel server training.
+        ui($("job-status"),"暂时无法读取进度，正在自动重连；后端任务可能仍在运行。");
+        await pause(Math.min(10000,1200*2**Math.min(retries-1,3)));
+        continue;
+      }
+      if (retries) notice();
+      retries=0;
       const stages = {checking:"正在检查数据与电路配置…", pwm_reconstruction:"正在重建 PWM，获取训练段开关信息…",
         initialization:"正在计算参数初值…", pann_training:"正在使用开关信息训练 PANN…", validation:"正在验证预测波形…"};
       ui($("job-status"), response.status === "queued" ? "任务已排队…" : stages[response.stage] || `正在拟合与验证 · ${Math.round((Date.now()-started)/1000)} 秒`);
       if (response.status === "complete") {
-        if (!resultMatchesCurrent(response.result)) {
-          invalidateResult();
-          throw new Error("辨识结果与当前数据或配置不一致，请重新辨识。");
+        let matches=false;
+        try { matches=resultMatchesCurrent(response.result); } catch { /* The user may have edited fields before recovery. */ }
+        if (!matches) {
+          refreshExperiments=true;
+          notice("原辨识任务已完成，结果将恢复到实验历史；当前配置已更改，可重新开始辨识。");
+          ui($("job-status"),"原任务已完成，当前配置尚未辨识");
+          return;
         }
         state.result = response.result; state.resultId = id; displayResult();
         ui($("job-status"), `辨识完成 · 用时 ${response.result.elapsed_s} 秒`);
@@ -338,7 +393,10 @@ async function watchJob(id) {
       await pause(1200);
     }
   } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); }
-  finally { state.job = null; persistConversation(); controls(); }
+  finally {
+    try { if (refreshExperiments) await recoverExperiments(); }
+    finally { state.job = null; persistConversation(); controls(); }
+  }
 }
 function resultReviewReasons(result) {
   if (Array.isArray(result.review_reasons)) {
@@ -557,8 +615,11 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   const useConversation=wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0);
   const compareSaved=!requestsIdentificationExecution(text) && (useConversation || (comparingExperiments(text) && chatExperiments().length>0));
   const analysisMeta=analysisRequest || resultAnalysisPrompts.has(text) ? analysisDescriptor() : null;
+  // Read-only analysis belongs to the displayed completed run, not unsubmitted form edits.
+  const analyzeResult = Boolean(state.result) && !requestsIdentificationExecution(text) && !compareSaved;
+  const analysisMapping = analyzeResult ? state.result.mapping : state.mapping;
   let fitOptions;
-  try { fitOptions = options(); } catch (error) {
+  try { fitOptions = analyzeResult ? structuredClone(state.result.options) : options(); } catch (error) {
     if (state.identificationOpen && !compareSaved) { notice(error.message); return; }
   }
   state.chatBusy = true; controls();
@@ -575,13 +636,13 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     if (state.mapping && !compareSaved) await ensureDatasetAvailable();
     const comparison=fitOptions && !compareSaved ? parameterComparison() : null;
     const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,
-      dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,
+      dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
       options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
       conversation_messages:corpus,conversation_retrieval_requested:useConversation,
       // Keep execution context for explicit mixed requests (run, then compare).
       // The backend classifier enforces read-only tools for comparison alone.
-      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions)}});
+      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult}});
     pending.remove();
     const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
     const article = message("assistant", answer,
@@ -743,18 +804,18 @@ $("dropzone").ondrop = event => {event.preventDefault();$("dropzone").classList.
 $("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await applyMapping();notice("列映射已应用。",true);}catch(e){notice(e.message);}finally{state.busy=false;persistConversation();controls();}};
 for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();ui($("job-status"), "映射已更改，请点击应用并检查数据");controls();};
 for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{
-  invalidateResult();
   if(["vin","frequency","fixed-r"].includes(id) && pwmSource()==="controller") $("controller-confirmed").value="no";
   $("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");controls();
   if(state.mapping)readyStatus();
+  persistConversation();
 };
 $("pwm-source").onchange=()=>{
   prepareControllerDefaults();
-  invalidateResult(); controls(); if (state.mapping) readyStatus(); persistConversation();
+  controls(); if (state.mapping) readyStatus(); persistConversation();
 };
-$("controller-confirmed").onchange=()=>{invalidateResult();controls();if(state.mapping)readyStatus();persistConversation();};
+$("controller-confirmed").onchange=()=>{controls();if(state.mapping)readyStatus();persistConversation();};
 document.addEventListener("buck-circuit-change",()=>{
-  $("controller-confirmed").value="no";invalidateResult();controls();
+  $("controller-confirmed").value="no";controls();
   if(state.mapping)readyStatus();persistConversation();
 });
 $("identify").onclick=()=>void startFit();
@@ -772,11 +833,30 @@ for (const side of ["left", "right"]) {
 $("leave-identification").onclick=()=>setIdentificationOpen(false);
 $("toggle-import").onclick=()=>toggleSection("toggle-import","import-content","导入波形");
 $("view-full").onclick=()=>{state.zoom=null;drawCharts();};
-$("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;state.zoom=[Math.max(t[0],t[t.length-1]-10/(Number($("frequency").value)*1000)),t[t.length-1]];drawCharts();}};
+$("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;const frequency=state.result?.options.frequency_hz || Number($("frequency").value)*1000;state.zoom=[Math.max(t[0],t[t.length-1]-10/frequency),t[t.length-1]];drawCharts();}};
 $("chat-form").onsubmit=event=>{event.preventDefault();void sendMessage($("chat-input").value);};
 $("chat-input").onkeydown=event=>{if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing){event.preventDefault();void sendMessage($("chat-input").value);}};
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));
-$("ask-error").onclick=()=>void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"),{analysisRequest:true});
+function closeAnalysisMenu() {
+  $("analysis-menu").hidden=true;$("ask-error").setAttribute("aria-expanded","false");
+}
+$("ask-error").onclick=()=>{
+  if (historyLocked() || !state.result) return;
+  const open=$("analysis-menu").hidden;
+  $("analysis-menu").hidden=!open;$("ask-error").setAttribute("aria-expanded",String(open));
+  if(open)$("analyze-here").focus();
+};
+$("analyze-here").onclick=()=>{closeAnalysisMenu();void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"),{analysisRequest:true});};
+$("analyze-new").onclick=()=>{closeAnalysisMenu();void analyzeInNewConversation();};
+document.addEventListener("click",event=>{if(!event.target.closest(".analysis-action"))closeAnalysisMenu();});
+document.addEventListener("keydown",event=>{
+  if($("analysis-menu").hidden)return;
+  if(event.key==="Escape"){event.preventDefault();closeAnalysisMenu();$("ask-error").focus();}
+  if(["ArrowDown","ArrowUp"].includes(event.key)){
+    event.preventDefault();(document.activeElement===$("analyze-here")?$("analyze-new"):$("analyze-here")).focus();
+  }
+});
+document.addEventListener("buck-language-change",closeAnalysisMenu);
 $("compare-analyses").onclick=()=>{
   const input=$("chat-input");
   if (!input.value.trim()) {
@@ -828,7 +908,7 @@ $("settings-form").onsubmit=async event=>{
     const url=new URL($("api-url").value.trim());
     if(!["http:","https:"].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error("请输入有效的 http(s) 后端地址。");
     if(location.protocol==="https:"&&url.protocol!=="https:")throw new Error("HTTPS 页面需要连接 HTTPS 后端。");
-    if(historyLocked())throw new Error("请等待当前请求结束后切换连接。");
+    if(historyLocked() || archiveRunning)throw new Error("请等待当前请求结束后切换连接。");
     const next=url.toString().replace(/\/$/,"");
     if(base&&next!==base&&state.dataset)throw new Error("切换后端前请先清除当前数据。");
     const backendChanged=next!==base;
@@ -869,7 +949,7 @@ window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");
 controls();void (async()=>{await initializeHistory();if(await connect()){
-  await synchronizeArchive({preferRemote:true,background:true});
+  await synchronizeArchive({preferRemote:true});
   if(!state.dataset)await restoreAttachment(activeConversation?.attachment);
   await recoverExperiments();
   scheduleArchiveSync();

@@ -34,8 +34,9 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
   assert(await page.locator('#review-reasons').isVisible(),'Legacy green label is not stability evidence');
   await page.evaluate(()=>{state.result={...state.result,method:'weighted_integral',quality:'需复核',review_reasons:[],diagnostics:{}};displayResult();});
   assert.match(await page.locator('#review-reasons').innerText(),/no identifiable review reason/);
-  await page.locator('#vin').fill('29');assert(await page.locator('#review-reasons').isHidden());
+  await page.locator('#vin').fill('29');assert(await page.locator('#review-reasons').isVisible());
+  assert.match(await page.locator('#review-reasons').innerText(),/no identifiable review reason/);
   assert.deepEqual(errors,[]);
-  console.log('PASS: actual quality triggers and exported evidence, old result fallback, PANN budget-only reasons, bilingual/mobile display, unknown and invalidated results.');
+  console.log('PASS: actual quality triggers and exported evidence, old result fallback, PANN budget-only reasons, bilingual/mobile display, unknown results and draft preservation.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

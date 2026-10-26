@@ -74,63 +74,97 @@ function storedMessages(id) {
 function readConversation(id) {
   try {
     if (localStorage.getItem(conversationPrefix+"deleted:"+id)) { conversationCache.delete(id); return null; }
-    const cached=conversationCache.get(id), disk=JSON.parse(localStorage.getItem(conversationPrefix + id));
-    const record = disk && (!cached || (disk.meta_updated || 0)>(cached.meta_updated || 0)) ? disk : cached || disk;
-    if (!record || record.id !== id || !Number.isFinite(new Date(record.updated).getTime()) || !Array.isArray(record.messages) || !record.messages.every(m =>
-      ["user","assistant"].includes(m.role) && typeof m.content === "string")) return null;
-    record.messages=mergeMessages(id,cached?.messages || [],record.messages,storedMessages(id));
-    record.experiments=mergeExperiments(cached?.experiments,disk?.experiments,record.experiments,storedExperiments(id));
-    record.updated=record.messages.reduce((latest,m)=>Math.max(latest,m.created),record.updated);
+    const valid = r => r?.id===id && Number.isFinite(new Date(r.updated).getTime()) && Array.isArray(r.messages)
+      && r.messages.every(m=>["user","assistant"].includes(m.role) && typeof m.content==="string");
+    let disk;
+    try { disk=JSON.parse(localStorage.getItem(conversationPrefix+id)); } catch { /* Recover from individual records below. */ }
+    if (!valid(disk)) disk=null;
+    const memory=conversationCache.get(id),cached=valid(memory) ? memory : null;
+    const messages=storedMessages(id),experiments=storedExperiments(id);
+    let record = disk && (!cached || (disk.meta_updated || 0)>(cached.meta_updated || 0)) ? disk : cached || disk;
+    if (!record) {
+      if (!messages.length && !experiments.length) return null;
+      // A partially failed metadata write must not hide intact message/experiment keys.
+      record={id,updated:Math.max(0,...messages.map(m=>m.created),...experiments.map(r=>r.updated || 0)),meta_updated:0,messages:[],draft:"",attachment:null};
+    }
+    // Metadata version selects fields, never which immutable messages survive.
+    record.messages=mergeMessages(id,disk?.messages || [],cached?.messages || [],record.messages,messages);
+    record.experiments=mergeExperiments(cached?.experiments,disk?.experiments,record.experiments,experiments);
+    record.updated=record.messages.reduce((latest,m)=>Math.max(latest,m.created),new Date(record.updated).getTime());
     conversationCache.set(id, record); return record;
   } catch { return conversationCache.get(id) || null; }
 }
 function persistConversation() {
-  if (!activeConversation) return;
-  if (savedValue(conversationPrefix+"deleted:"+activeConversation.id)) return;
-  const previousMeta=JSON.stringify([activeConversation.draft,activeConversation.fields,activeConversation.attachment]);
-  activeConversation.draft = $("chat-input").value;
-  activeConversation.fields = Object.fromEntries(experimentFields.map(id => [id, $(id).value]));
-  activeConversation.attachment = state.dataset ? {dataset:state.dataset, mapping:state.mapping,
+  if (!activeConversation) return true;
+  if (savedValue(conversationPrefix+"deleted:"+activeConversation.id)) return false;
+  let savedCompletely=true;
+  const write = operation => { try { operation(); } catch { savedCompletely=false; } };
+  let disk=null;
+  write(()=>{disk=JSON.parse(localStorage.getItem(conversationPrefix+activeConversation.id));});
+  // The visible form is a baseline, not necessarily the latest synchronized
+  // metadata. Only actual edits may override fields received in the background.
+  const candidates=[activeConversation,conversationCache.get(activeConversation.id),disk].filter(r=>r?.id===activeConversation.id);
+  const latest={...candidates.reduce((a,b)=>(b.meta_updated || 0)>=(a.meta_updated || 0)?b:a)};
+  const draft=$("chat-input").value;
+  const fields=Object.fromEntries(experimentFields.map(id=>[id,$(id).value]));
+  const changedFields=Object.fromEntries(Object.entries(fields).filter(([id,value])=>value!==activeConversation.fields?.[id]));
+  const attachment = state.dataset ? {dataset:state.dataset, mapping:state.mapping,
     mappingDraft:mappingFromForm(), resultId:state.resultId, jobId:state.job, csvEpoch:activeConversation.file_epoch || 0,
     truthDraft:{...state.truthDraft},truthComparison:state.truthComparison} : pendingAttachment;
-  if (previousMeta!==JSON.stringify([activeConversation.draft,activeConversation.fields,activeConversation.attachment])) {
-    activeConversation.meta_updated=Math.max(Date.now(),(activeConversation.meta_updated || 0)+1);
+  const saved={...latest,
+    draft:draft!==activeConversation.draft ? draft : latest.draft || "",
+    fields:{...latest.fields,...changedFields},
+    attachment:JSON.stringify(attachment)!==JSON.stringify(activeConversation.attachment) ? attachment : latest.attachment,
+    file_epoch:Math.max(activeConversation.file_epoch || 0,latest.file_epoch || 0)};
+  if(saved.attachment && (saved.attachment.csvEpoch || 0)!==saved.file_epoch)saved.attachment=null;
+  if(JSON.stringify([saved.draft,saved.fields,saved.attachment,saved.file_epoch])!==JSON.stringify([latest.draft,latest.fields,latest.attachment,latest.file_epoch])) {
+    saved.meta_updated=Math.max(Date.now(),(latest.meta_updated || 0)+1);
   }
-  conversationCache.set(activeConversation.id, activeConversation);
-  try {
-    captureExperiment();
-    saveExperimentKeys(activeConversation);
-    // Append-only message keys prevent an older tab from replacing newer messages.
-    activeConversation.messages=mergeMessages(activeConversation.id,activeConversation.messages);
-    for (const item of activeConversation.messages) {
+  activeConversation.draft=draft;activeConversation.fields=fields;activeConversation.attachment=attachment;
+  activeConversation.meta_updated=saved.meta_updated;
+  // Chat writes are independent of experiments and metadata: one quota failure
+  // must not silently skip every subsequent message in the conversation.
+  activeConversation.messages=mergeMessages(activeConversation.id,latest.messages || [],activeConversation.messages);
+  for (const item of activeConversation.messages) {
+    write(()=>{
       const key=conversationPrefix+activeConversation.id+":message:"+item.id;
       if (!localStorage.getItem(key)) localStorage.setItem(key,JSON.stringify(item));
-    }
+    });
+  }
+  write(()=>captureExperiment());
+  saved.messages=mergeMessages(activeConversation.id,latest.messages || [],activeConversation.messages);
+  saved.experiments=mergeExperiments(latest.experiments,activeConversation.experiments);
+  activeConversation.experiments=saved.experiments;
+  saved.updated=saved.messages.reduce((time,m)=>Math.max(time,m.created),Math.max(latest.updated,activeConversation.updated));
+  // Keep the merged retry copy even if localStorage is full. Do not use the
+  // stale visible form as the baseline for a later retry.
+  conversationCache.set(saved.id,saved);
+  write(()=>saveExperimentKeys(saved));
+  write(()=>{
     activeConversation.messages=mergeMessages(activeConversation.id,activeConversation.messages,storedMessages(activeConversation.id));
     activeConversation.updated=activeConversation.messages.reduce((latest,m)=>Math.max(latest,m.created),activeConversation.updated);
-    const disk=JSON.parse(localStorage.getItem(conversationPrefix+activeConversation.id));
-    let saved=activeConversation;
-    if (disk && (disk.meta_updated || 0)>(activeConversation.meta_updated || 0)) {
-      // A background save/pagehide in an untouched old tab must not overwrite
-      // newer CSV mappings or settings from another tab.
-      saved={...activeConversation,draft:disk.draft,fields:disk.fields,attachment:disk.attachment,
-        meta_updated:disk.meta_updated,file_epoch:Math.max(disk.file_epoch || 0,activeConversation.file_epoch || 0)};
-      conversationCache.set(saved.id,saved);
-    }
+    saved.messages=mergeMessages(saved.id,saved.messages,activeConversation.messages);
+    saved.updated=Math.max(saved.updated,activeConversation.updated);
     localStorage.setItem(conversationPrefix + activeConversation.id, JSON.stringify({...saved,messages:[],messageStoreVersion:1}));
     localStorage.setItem(conversationPrefix + "active", activeConversation.id);
-    historyWarning();
-  } catch { historyWarning("历史保存失败：浏览器存储不可用或已满。当前对话仍可使用，请勿关闭页面。"); }
+  });
+  historyWarning(savedCompletely ? "" : "历史保存失败：浏览器存储不可用或已满。当前对话仍可使用，请勿关闭页面。");
   scheduleArchiveSync();
   renderExperiments();
   renderAnalysisHistory();
+  return savedCompletely;
 }
 function renderHistory() {
   try {
+    const ids=new Set();
     for (let i=0; i<localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith(conversationPrefix) && key !== conversationPrefix + "active" && !key.slice(conversationPrefix.length).includes(":")) readConversation(key.slice(conversationPrefix.length));
+      if (!key?.startsWith(conversationPrefix)) continue;
+      const suffix=key.slice(conversationPrefix.length);
+      const match=suffix.match(/^([a-f0-9-]{36})(?::(?:message|experiment):.+)?$/i);
+      if (match) ids.add(match[1]);
     }
+    for (const id of ids) readConversation(id);
   } catch { historyWarning("历史保存失败：浏览器存储不可用或已满。当前对话仍可使用，请勿关闭页面。"); }
   $("history-list").replaceChildren();
   for (const record of [...conversationCache.values()].sort((a,b) => b.updated-a.updated)) {
@@ -140,11 +174,15 @@ function renderHistory() {
     button.disabled = historyLocked();
     const title = document.createElement("strong");
     const first = record.messages.find(m=>m.role === "user");
-    if (first) title.textContent = first.content.slice(0,80); else ui(title,"新会话");
+    if (first) title.textContent = first.content.slice(0,80);
+    else if (record.draft?.trim()) title.textContent=record.draft.trim().slice(0,80);
+    else ui(title,"新会话");
     const date = document.createElement("time");
     date.textContent = new Date(record.updated).toLocaleString(window.BuckI18n.language === "en" ? "en-GB" : "zh-CN", {month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
     date.dateTime = new Date(record.updated).toISOString();
-    button.append(title,date); button.onclick = () => void openConversation(record.id);
+    const count=document.createElement("small");count.className="history-message-count";
+    count.append(window.BuckI18n.node("消息数："),document.createTextNode(String(record.messages.length)));
+    button.append(title,date,count); button.onclick = () => void openConversation(record.id);
     $("history-list").append(button);
   }
 }
@@ -197,10 +235,15 @@ async function restoreAttachment(attachment) {
     ui($("file-rows"),`${state.dataset.rows.toLocaleString()} 行 · CSV 已读取`);
     ui($("chat-context"),`已关联：${state.dataset.filename}`);
     const jobId=attachment.jobId || attachment.resultId;
-    if (jobId && attachment.mapping) {
+    let resumed=false;
+    try { resumed=await resumeActiveJob(); }
+    catch { /* A saved job ID still allows polling while the recovery endpoint is unavailable. */ }
+    if (!resumed && attachment.jobId) {
+      void watchJob(attachment.jobId);
+    } else if (!resumed && jobId && attachment.mapping) {
       try {
         const job=await api(`/api/jobs/${jobId}`);
-        if (job.status === "complete" && resultMatchesCurrent(job.result)) {
+        if (job.status === "complete" && resultMatchesData(job.result)) {
           state.result=job.result; state.resultId=jobId; restoreTruthComparison(attachment);displayResult();
         }
         else if (["running","queued"].includes(job.status)) void watchJob(jobId);
@@ -242,7 +285,9 @@ async function deleteConversation() {
 }
 async function openConversation(id, saveCurrent = true) {
   if (historyLocked()) return;
-  if (saveCurrent) persistConversation();
+  if (saveCurrent && !persistConversation()) {
+    notice("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");return;
+  }
   const record=readConversation(id);
   if (!record) return;
   activeConversation=record; sessionId=record.id;
@@ -276,11 +321,47 @@ async function openConversation(id, saveCurrent = true) {
 }
 async function newConversation() {
   if (historyLocked()) return;
-  persistConversation();
+  if (!persistConversation()) {
+    notice("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");return;
+  }
   const id=crypto.randomUUID();
   conversationCache.set(id,{id,updated:Date.now(),messages:[],draft:"",attachment:null});
   await openConversation(id,false);
   persistConversation(); renderHistory();
+}
+async function analyzeInNewConversation() {
+  if (historyLocked() || !state.result || !state.resultId) return;
+  if (!persistConversation()) {
+    notice("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");return;
+  }
+  const source=activeConversation, result=structuredClone(state.result), comparison=parameterComparison();
+  const truthDraft={...state.truthDraft}, truthComparison=structuredClone(state.truthComparison);
+  state.busy=true;controls();notice("正在为新对话复制实验结果…",true);
+  let copied;
+  try {
+    copied=await api(`/api/jobs/${state.resultId}/analysis-copy`,{method:"POST"});
+    const now=Date.now(),opts=result.options,fields={...source.fields,
+      vin:String(opts.vin),frequency:String(opts.frequency_hz/1000),"fit-mode":opts.mode,"fixed-r":String(opts.resistance_ohm),
+      "fit-method":opts.method,"pwm-source":opts.pwm_source,"controller-confirmed":opts.controller_confirmed?"yes":"no",
+      "controller-parameters":opts.controller?JSON.stringify(opts.controller):"",
+      "start-ms":opts.start_s===null?"":String(opts.start_s*1000),"end-ms":opts.end_s===null?"":String(opts.end_s*1000),
+      "train-fraction":String(opts.train_fraction*100),"pann-epochs":String(opts.epochs),
+      "pann-state":opts.pann_initial_state,"pann-cycles":String(opts.pann_window_cycles)};
+    if(truthComparison)truthComparison.result_id=copied.job_id;
+    const record={id:copied.session_id,updated:now,meta_updated:now,messages:[],draft:"",fields,file_epoch:0,
+      attachment:{dataset:copied.dataset,mapping:result.mapping,mappingDraft:result.mapping,resultId:copied.job_id,jobId:null,csvEpoch:0,truthDraft,truthComparison},
+      experiments:[{id:copied.job_id,created:now,updated:now,dataset:{filename:copied.dataset.filename,sha256:copied.dataset.sha256},
+        result:experimentSnapshot(result),ground_truth:comparison?{result_id:copied.job_id,...comparison.ground_truth}:null}]};
+    // Save the destination before leaving the source. A storage error keeps the source open.
+    saveExperimentKeys(record);
+    localStorage.setItem(conversationPrefix+record.id,JSON.stringify(record));
+    conversationCache.set(record.id,record);
+  } catch(error) {notice(error.message);return;}
+  finally {state.busy=false;controls();}
+  await openConversation(copied.session_id,false);
+  if(activeConversation?.id!==copied.session_id || !state.result)return;
+  setIdentificationOpen(true);
+  await sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"),{analysisRequest:true});
 }
 async function initializeHistory() {
   clearTimeout(archiveTimer);

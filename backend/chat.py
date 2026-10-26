@@ -85,6 +85,10 @@ def local_response(message, summary, result, documents, job=None, task=None):
         return result["error"]
     if job:
         response = "已启动参数辨识，使用左侧确认的工况与区间。完成后参数、预测曲线和留出误差会显示在结果区。请注意：R 表示负载电阻。"
+        if job.get("resumed"):
+            response = "已找回当前会话正在运行的辨识任务，正在恢复进度，没有重复启动计算。"
+            if job.get("configuration_changed"):
+                response += "原任务仍使用提交时的配置；修改后的配置需等它完成后再启动。"
         if formula_question(message):
             formulas = [d["content"] for d in documents if d.get("kind") == "formula"]
             if formulas:

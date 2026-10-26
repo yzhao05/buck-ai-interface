@@ -20,7 +20,7 @@ const assert=require('node:assert/strict');
     assert.equal(integralResult.conditions.method,'weighted_integral');
     assert.equal(integralResult.method.pann,undefined);
     await page.locator('#fit-method').selectOption('pann');
-    assert(await page.locator('#download-report').isDisabled());
+    assert(await page.locator('#download-report').isEnabled(),'Draft method change keeps the completed result available');
     assert(await page.locator('#pann-settings').isVisible());
     assert.equal(await page.locator('#pann-state').inputValue(),'joint');
     assert.equal(await page.locator('#pann-cycles').inputValue(),'0');
@@ -47,7 +47,7 @@ const assert=require('node:assert/strict');
     assert.equal(diagnostics.conditions.mode,'LC');
     assert.equal(await page.locator('#result-r').textContent(),'6');
     await page.locator('#pann-state').selectOption('measured');
-    assert(await page.locator('#download-report').isDisabled(),'Changing states invalidates the old result');
+    assert(await page.locator('#download-report').isEnabled(),'Changing draft states preserves the completed result');
     const first=await page.locator('.history-item[aria-current=true]').getAttribute('data-conversation-id');
     await page.locator('#new-chat').click(); await ready();
     await page.locator(`.history-item[data-conversation-id="${first}"]`).click(); await ready();
@@ -69,7 +69,7 @@ const assert=require('node:assert/strict');
       await page.locator('#fit-method').evaluate(el=>el.outerHTML));
     await page.locator('#identify').click(); await ready();
     assert.equal(JSON.parse(await page.locator('#diagnostic-text').textContent()).conditions.method,'weighted_integral');
-    // Legacy history must not show an old integral result under the new method.
+    // A legacy result remains its original method, separate from the migrated draft.
     await page.evaluate(()=>{
       for(const key of Object.keys(localStorage)){
         if(!key.startsWith('buck-history:'))continue;
@@ -81,13 +81,15 @@ const assert=require('node:assert/strict');
     });
     await context.route('**/api/jobs/*',async route=>{
       const response=await route.fetch(),body=await response.json();
-      body.result.options.method='integral'; await route.fulfill({json:body});
+      if(body.result){body.result.options.method='integral';body.result.method='integral';} await route.fulfill({json:body});
     });
     // Read the edited storage from a fresh tab, avoiding the old tab's save-on-unload.
     const restored=await context.newPage(); await restored.goto('http://127.0.0.1:8001');
     await restored.locator('#send-chat:not([disabled])').waitFor();
     assert.equal(await restored.locator('#fit-method').inputValue(),'weighted_integral');
-    assert(await restored.locator('#download-report').isDisabled());
+    assert(await restored.locator('#download-report').isEnabled());
+    assert.equal(await restored.evaluate(()=>state.result.options.method),'integral');
+    assert.equal(await restored.evaluate(()=>resultMatchesCurrent(state.result)),false);
     await restored.close();
     for(const width of [1500,390]){
       await page.setViewportSize({width,height:1050});

@@ -56,6 +56,7 @@ const assert = require('node:assert/strict');
   assert.equal(await page.locator('.parameter-grid').innerText(), values, 'Results survive exiting identification');
   assert.equal(await page.locator('#end-ms').inputValue(), '0.8');
   await page.locator('#ask-error').click();
+  await page.locator('#analyze-here').click();
   await page.locator('.message.assistant').filter({hasText:'RMSE'}).waitFor({timeout:30000});
   await page.evaluate(()=>window.scrollTo(0,0));
   await page.waitForTimeout(200);

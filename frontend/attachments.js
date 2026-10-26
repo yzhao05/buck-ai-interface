@@ -33,7 +33,13 @@ window.BuckAttachments = (() => {
   }
   return {
     save(conversation, sha256, filename, blob, epoch = 0) {
-      return transaction("readwrite", store => store.put({key:conversation+":"+sha256, conversation, sha256, filename, blob, epoch}));
+      return transaction("readwrite", store => {
+        const key=conversation+":"+sha256, request=store.get(key);
+        request.onsuccess=()=>{
+          // A slow background download must not overwrite a newer re-upload.
+          if (!request.result || (request.result.epoch || 0)<=epoch) store.put({key,conversation,sha256,filename,blob,epoch});
+        };
+      });
     },
     load(conversation, sha256, epoch = 0) {
       return transaction("readonly", (store, done) => {
@@ -52,7 +58,7 @@ window.BuckAttachments = (() => {
         const request = store.index("conversation").openCursor(IDBKeyRange.only(conversation));
         request.onsuccess = () => {
           const cursor = request.result;
-          if (cursor) { if (keepEpoch === null || (cursor.value.epoch || 0) !== keepEpoch) cursor.delete(); cursor.continue(); }
+          if (cursor) { if (keepEpoch === null || (cursor.value.epoch || 0) < keepEpoch) cursor.delete(); cursor.continue(); }
         };
       });
     }

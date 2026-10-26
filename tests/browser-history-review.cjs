@@ -5,6 +5,10 @@ const assert=require('node:assert/strict');
   const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
   try {
     const context=await browser.newContext();
+    // Exercise local multi-tab persistence without an unrelated cloud reconciliation.
+    await context.route('**/api/health',async route=>{
+      const response=await route.fetch(),body=await response.json();body.archive_enabled=false;await route.fulfill({json:body});
+    });
     await context.route('**/api/chat',route=>route.fulfill({json:{answer:'回答 '+route.request().postDataJSON().message,mode:'deepseek'}}));
     let a=await context.newPage();await a.goto('http://127.0.0.1:8001');
     const ready=p=>p.locator('#send-chat:not([disabled])').waitFor();
@@ -35,24 +39,26 @@ const assert=require('node:assert/strict');
     try {
       let polls=0;
       await pendingContext.route('**/api/jobs/*',async route=>{
+        if(route.request().url().endsWith('/active'))return route.continue();
         const response=await route.fetch(),body=await response.json();
         if (++polls === 1) { body.status='running'; body.result=null; }
         else body.result.options.method='pann';
         await route.fulfill({json:body});
       });
       const pending=await pendingContext.newPage();await pending.goto('http://127.0.0.1:8001');
-      await pending.waitForFunction(()=>document.querySelector('#job-status').textContent.includes('任务未完成'));
+      await pending.waitForFunction(()=>document.querySelector('#job-status').textContent.includes('当前配置尚未辨识'));
       await ready(pending);
       assert(polls>=2,'Restore must resume polling the pending job');
       assert.equal(await pending.locator('#result-l').textContent(),'—','Reject mismatched results when a restored job finishes');
       assert(await pending.locator('#download-report').isDisabled(),'Mismatched results must not be downloadable');
     } finally { await pendingContext.close(); }
     await a.route('**/api/jobs/*',async route=>{
-      const response=await route.fetch(),body=await response.json();body.result.options.vin=999;
+      if(route.request().url().endsWith('/active'))return route.continue();
+      const response=await route.fetch(),body=await response.json();body.result.mapping.time_unit='ms';
       await route.fulfill({json:body});
     });
     await a.reload();await ready(a);
-    assert.equal(await a.locator('#result-l').textContent(),'—','Do not restore results with incompatible settings');
-    console.log('PASS: stale/concurrent tabs preserve messages, unconfirmed mapping survives, incompatible completed and pending results are rejected.');
+    assert.equal(await a.locator('#result-l').textContent(),'—','Do not restore results with incompatible data mapping');
+    console.log('PASS: stale/concurrent tabs preserve messages, unconfirmed mapping survives, incompatible mapping and pending results are rejected.');
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

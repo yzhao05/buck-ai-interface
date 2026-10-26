@@ -135,7 +135,7 @@
         <section id="review-reasons" class="review-reasons" hidden aria-label="需复核的触发原因"><h3>需复核的触发原因</h3><ul id="review-reason-list"></ul></section>
         <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>
         <details id="diagnostics" hidden><summary>查看计算条件与诊断</summary><pre id="diagnostic-text"></pre></details>
-        <div class="result-actions"><button class="button subtle small" id="ask-error" disabled>让助手分析结果 ↗</button><button class="button subtle small" id="download-report" disabled>↓ 导出报告（PDF + JSON）</button></div>
+        <div class="result-actions"><div class="analysis-action"><button type="button" class="button subtle small" id="ask-error" aria-expanded="false" aria-controls="analysis-menu" disabled>让助手分析结果 ▾</button><div id="analysis-menu" class="analysis-menu" hidden><button type="button" id="analyze-here">在本对话中分析</button><button type="button" id="analyze-new">新对话分析</button></div></div><button class="button subtle small" id="download-report" disabled>↓ 导出报告（PDF + JSON）</button></div>
         <div id="report-downloads" class="report-downloads" hidden aria-live="polite">
           <p id="report-export-status"></p>
           <a id="report-pdf-link" hidden>下载 PDF</a>

@@ -39,13 +39,24 @@ const assert=require('node:assert/strict'), fs=require('node:fs');
   assert(await page.locator('#report-pdf-link').isHidden());assert(await page.locator('#report-json-link').isVisible());
   assert(await page.locator('#download-report').isEnabled());
   await page.unroute('**/api/reports/pdf');
-  // Changing settings while export is pending must not attach an old PDF to new results.
+  // Editing drafts while export is pending must preserve the completed result's PDF.
   let release;const gate=new Promise(resolve=>release=resolve);
   await page.route('**/api/reports/pdf',async route=>{await gate;await route.fulfill({status:200,contentType:'application/pdf',body:'%PDF-test'});});
   const pending=page.waitForRequest('**/api/reports/pdf');
   await page.locator('#download-report').click();await pending;
   await page.evaluate(()=>{document.getElementById('vin').value='29';document.getElementById('vin').dispatchEvent(new Event('input'));});
   const finished=page.waitForResponse('**/api/reports/pdf');release();await finished;
+  await page.waitForTimeout(150);
+  assert(await page.locator('#report-downloads').isVisible());assert(await page.locator('#download-report').isEnabled());
+  assert(await page.locator('#report-pdf-link').isVisible());
+  // Explicitly invalidating for a new computation still discards an in-flight old PDF.
+  let finishOld;const oldGate=new Promise(resolve=>finishOld=resolve);
+  await page.unroute('**/api/reports/pdf');
+  await page.route('**/api/reports/pdf',async route=>{await oldGate;await route.fulfill({status:200,contentType:'application/pdf',body:'%PDF-test'});});
+  const oldPending=page.waitForRequest('**/api/reports/pdf');
+  await page.locator('#download-report').click();await oldPending;
+  await page.evaluate(()=>invalidateResult());
+  const oldFinished=page.waitForResponse('**/api/reports/pdf');finishOld();await oldFinished;
   await page.waitForTimeout(150);
   assert(await page.locator('#report-downloads').isHidden());assert(await page.locator('#download-report').isDisabled());
   assert.deepEqual(errors,[]);

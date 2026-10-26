@@ -1,4 +1,8 @@
 /* Conversation is primary; imports preview waveforms, identification requires entry. */
+.analysis-action { position: relative; max-width: 100%; }
+.analysis-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 5; min-width: 180px; width: max-content; max-width: min(260px, 80vw); padding: 5px; background: white; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px #173f4020; }
+.analysis-menu button { display: block; width: 100%; padding: 10px 12px; border: 0; background: transparent; color: var(--text); text-align: left; font-size: 12px; border-radius: 5px; }
+.analysis-menu button:hover, .analysis-menu button:focus-visible { background: var(--teal-light); color: var(--teal); }
 .language-toggle { min-width: 43px; font-weight: 600; white-space: nowrap; }
 .csv-library-heading { display: flex; align-items: center; gap: 6px; }
 .csv-library-heading #load-demo { flex: 1; min-width: 0; white-space: normal; }
@@ -66,7 +70,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .history-item:hover { background: #f0f5f3; }
 .history-item[aria-current="true"] { background: var(--teal-light); border-color: #cce1db; color: var(--teal); }
 .history-item strong { font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.history-item time { font-size: 9px; color: #829795; }
+.history-item time, .history-message-count { font-size: 9px; color: #829795; }
 #history-status { color: #9a6223; }
 .section-toggle {
   width: 26px;

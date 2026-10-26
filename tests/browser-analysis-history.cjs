@@ -66,7 +66,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#enter-identification').click();await page.locator('#fit-method').selectOption('weighted_integral');
   await page.locator('#identify').click();await page.waitForFunction(()=>state.result&&!state.job);await ready();
   await page.route('**/api/chat',route=>route.fulfill({json:{answer:'New result analysis',mode:'deepseek'}}));
-  await page.locator('#ask-error').click();await ready();
+  await page.locator('#ask-error').click();await page.locator('#analyze-here').click();await ready();
   const latest=await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1));
   assert.equal(latest.response.analysis.kind,'identification_analysis');assert.equal(latest.response.analysis.method,'weighted_integral');
   assert.equal(latest.response.request_message_id,latest.response.analysis.request_id);assert(latest.response.analysis.filename);

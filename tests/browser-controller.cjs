@@ -57,10 +57,11 @@ const fs=require('node:fs');
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   }
   await page.setViewportSize({width:1500,height:1000});
+  const previousL=await page.locator('#result-l').textContent();
   await page.locator('#pwm-source').selectOption('measured');
   assert(!(await page.locator('#fit-mode option[value=LCR]').evaluate(el=>el.disabled)));
   assert(await page.locator('#controller-settings').isHidden());
-  assert.equal(await page.locator('#result-l').textContent(),'—','Changing the drive source invalidates old results');
+  assert.equal(await page.locator('#result-l').textContent(),previousL,'Changing draft drive source preserves previous results');
   await page.locator('#pwm-source').selectOption('auto');
   await page.locator('#csv-file').setInputFiles('examples/plecs_buck_case16a.csv');await ready();
   assert.notEqual(await page.locator('#map-pwm').inputValue(),'');

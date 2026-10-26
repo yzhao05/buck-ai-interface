@@ -50,7 +50,7 @@ async def size_limit(request: Request, call_next):
             return JSONResponse(status_code=401, content={"detail": "访问口令不正确，请在连接设置中输入后端 APP_ACCESS_TOKEN。"})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    if request.url.path.startswith("/api/archive"):
+    if request.url.path.startswith(("/api/archive", "/api/jobs")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -201,8 +201,11 @@ def start_fit(body: FitRequest, owner):
         raise HTTPException(422, "此后端未安装 PANN 依赖，请选择积分辨识。")
     with lock:
         pending = [j for j in jobs.values() if j["status"] in ("queued", "running")]
-        if any(j["owner"] == owner for j in pending):
-            raise HTTPException(409, "当前会话已有辨识任务，请等待完成。")
+        for job_id, job in jobs.items():
+            if job["owner"] == owner and job["status"] in ("queued", "running"):
+                if job.get("config") == body.model_dump():
+                    return {"job_id": job_id, "status": job["status"], "resumed": True}
+                raise HTTPException(409, "当前会话已有辨识任务，请等待完成。")
         if len(pending) >= 3:
             raise HTTPException(503, "辨识队列已满，请稍后重试。")
         if len(jobs) >= 24:
@@ -235,7 +238,13 @@ def start_fit(body: FitRequest, owner):
                 import logging
                 logging.exception("Identification failure")
             finish(status="failed", error=error)
-    pool.submit(execute)
+    try:
+        pool.submit(execute)
+    except RuntimeError:
+        # A rejected submission must not leave a permanent queued task behind.
+        with lock:
+            jobs[identifier].update(status="failed", stage="failed", error="辨识任务未能启动，请稍后重试。")
+        raise HTTPException(503, "辨识任务未能启动，请稍后重试。")
     return {"job_id": identifier, "status": "queued"}
 
 
@@ -243,6 +252,16 @@ def start_fit(body: FitRequest, owner):
 def fit_route(body: FitRequest, owner: str = Depends(session)):
     throttle(owner, "fit", 6)
     return start_fit(body, owner)
+
+
+@app.get("/api/jobs/active")
+def active_job(owner: str = Depends(session)):
+    """Recover a lost submission response without creating another job."""
+    with lock:
+        for identifier, job in jobs.items():
+            if job["owner"] == owner and job["status"] in ("queued", "running"):
+                return {"job": {"job_id": identifier, "status": job["status"]}}
+    return {"job": None}
 
 
 @app.get("/api/jobs/{identifier}")
@@ -305,11 +324,42 @@ async def chat_route(body: ChatRequest, owner: str = Depends(session)):
                 throttle(owner, "fit", 6)
                 return start_fit(FitRequest(dataset_id=body.dataset_id, mapping=body.mapping, options=body.options), owner)
         except (HTTPException, ValueError) as exc:
+            if name == "start_identification" and isinstance(exc, HTTPException) and exc.status_code == 409:
+                existing = active_job(owner)["job"]
+                if existing:
+                    return {**existing, "resumed": True, "configuration_changed": True}
             if name == "get_waveform_summary":
                 raise HTTPException(422, exc.detail if isinstance(exc, HTTPException) else str(exc))
             return {"error": exc.detail if isinstance(exc, HTTPException) else str(exc)}
         return None
     return await chat.answer(body, invoke)
+
+
+@app.post("/api/jobs/{identifier}/analysis-copy")
+def copy_analysis(identifier: str, owner: str = Depends(session)):
+    """Copy a completed experiment into a fresh owner; never execute a new fit."""
+    throttle(owner, "analysis-copy", 6)
+    with lock:
+        source = jobs.get(identifier)
+        if not source or source["owner"] != owner:
+            raise HTTPException(404, "实验结果已过期，无法复制到新对话。请重新辨识后再试。")
+        if source["status"] != "complete":
+            raise HTTPException(409, "请等待辨识完成后再创建分析会话。")
+        stored = datasets.get(source["dataset_id"])
+        if not stored or stored["owner"] != owner:
+            raise HTTPException(404, "实验结果已过期，无法复制到新对话。请重新辨识后再试。")
+        copied = json.loads(json.dumps(source))
+        target = str(uuid.uuid4())
+        dataset = add_dataset(stored["raw"], stored["data"].name, target)
+        if len(jobs) >= 24:
+            removable = next((key for key, job in jobs.items() if key != identifier and job["status"] not in ("queued", "running")), None)
+            if removable:
+                del jobs[removable]
+        job_id = uuid.uuid4().hex
+        copied.update(owner=target, created=time.time(), dataset_id=dataset["dataset_id"])
+        copied["config"]["dataset_id"] = dataset["dataset_id"]
+        jobs[job_id] = copied
+    return {"session_id": target, "dataset": dataset, "job_id": job_id}
 
 
 # Local convenience; GitHub Pages deploys only this directory, never backend or .env.

@@ -4,7 +4,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
  const page=await browser.newPage({viewport:{width:1500,height:1080}}),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
- const ready=()=>page.locator('#send-chat:not([disabled])').waitFor({timeout:60000});
+ const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning&&!archiveBootstrap,{},{timeout:60000});
  try {
   await page.goto('http://127.0.0.1:8001');await ready();
   const csv=fs.readFileSync('examples/plecs_buck_case16a.csv','utf8').split(/\r?\n/).filter(Boolean).map(s=>s.split(',').slice(0,3).join(',')).join('\n');
@@ -49,7 +49,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
   await page.locator('#circuit-file').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
   await page.locator('#circuit-drawing img').waitFor();await page.locator('#save-circuit').click();
   assert(await page.locator('#circuit-preview img').isVisible());
-  assert.equal(await page.locator('#result-l').textContent(),'—','Saving a reference resets results and confirmation');
+  assert.equal(await page.evaluate(()=>state.result.parameters.L_H),result.parameters.L_H,'Saving a reference preserves the previous result');
+  assert(await page.locator('#download-report').isEnabled());
   assert.equal(await page.locator('#controller-confirmed').inputValue(),'no');
   const savedImage=await page.locator('#controller-image').inputValue();
   await page.locator('#sync-now').click();await ready();
