@@ -611,10 +611,13 @@ function decorateResponse(article, response) {
 async function sendMessage(value, {analysisRequest=false}={}) {
   const text = value.trim(); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { notice("请先连接分析后端。"); return; }
-  const corpus=conversationMessages(readConversation(activeConversation.id));
-  const useConversation=wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0);
+  const currentOnly=analysisRequest || resultAnalysisPrompts.has(text);
+  const targetResultId=state.resultId;
+  if(currentOnly && (!state.result || !targetResultId)){notice("当前结果已失效，请重新辨识后再分析。");return;}
+  const corpus=currentOnly ? [] : conversationMessages(readConversation(activeConversation.id));
+  const useConversation=!currentOnly && (wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0));
   const compareSaved=!requestsIdentificationExecution(text) && (useConversation || (comparingExperiments(text) && chatExperiments().length>0));
-  const analysisMeta=analysisRequest || resultAnalysisPrompts.has(text) ? analysisDescriptor() : null;
+  const analysisMeta=currentOnly ? analysisDescriptor() : null;
   // Read-only analysis belongs to the displayed completed run, not unsubmitted form edits.
   const analyzeResult = Boolean(state.result) && !requestsIdentificationExecution(text) && !compareSaved;
   const analysisMapping = analyzeResult ? state.result.mapping : state.mapping;
@@ -627,22 +630,23 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   $("chat-input").value = "";
   $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
   const userArticle=message("user", text);
-  const previousHistory = readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
+  const previousHistory = currentOnly ? [] : readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
     .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000)}));
   const requestMessage=rememberMessage("user", text, analysisMeta ? {analysis_request:analysisMeta} : null);
   userArticle.dataset.messageId=requestMessage.id;
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
     if (state.mapping && !compareSaved) await ensureDatasetAvailable();
+    if(currentOnly && (!state.result || state.resultId!==targetResultId))throw new Error("当前结果已失效，请重新辨识后再分析。");
     const comparison=fitOptions && !compareSaved ? parameterComparison() : null;
-    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,
+    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,current_result_analysis:currentOnly,
       dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
       options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
       conversation_messages:corpus,conversation_retrieval_requested:useConversation,
       // Keep execution context for explicit mixed requests (run, then compare).
       // The backend classifier enforces read-only tools for comparison alone.
-      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult}});
+      experiments:currentOnly ? [] : chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult}});
     pending.remove();
     const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
     const article = message("assistant", answer,

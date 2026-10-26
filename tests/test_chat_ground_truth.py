@@ -189,3 +189,79 @@ def test_explicit_waveform_error_question_is_answered(context, question, expecte
     answer = client.post("/api/chat", json=body).json()["answer"]
     assert expected in answer and excluded not in answer
     assert "电感相对误差" in answer
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_current_lc_analysis_excludes_old_lcr_on_repeated_requests(context, monkeypatch, legacy):
+    client, body, _ = context
+    body["message"] = "请分析当前辨识结果的误差，并给出有依据的修改计划。"
+    if not legacy:
+        body["current_result_analysis"] = True
+    body["options"]["mode"] = "LC"
+    job = main.jobs[body["result_id"]]
+    job["config"]["options"] = copy.deepcopy(body["options"])
+    job["result"]["parameters"] = {"L_H": 60.020985e-6, "C_F": 493.6151e-6, "R_ohm": 6}
+    job["result"]["options"] = copy.deepcopy(body["options"])
+    body["history"] = [{"role": "assistant", "content": "OLD_LCR_RESULT: C=489.8 uF, R=5.7 ohm"}]
+    body["conversation_messages"] = [{"id": "old-answer", "role": "assistant", "content": body["history"][0]["content"], "created": 1}]
+    body["experiments"] = [{"id": "OLD_LCR_RESULT", "dataset": {"filename": "same.csv"},
+                            "parameters": {"L_H": 60.02e-6, "C_F": 489.8e-6, "R_ohm": 5.7}}]
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only")
+    async def forbidden_classifier(request):
+        raise AssertionError("The explicit result action must not rely on model classification")
+    monkeypatch.setattr(chat, "classify", forbidden_classifier)
+    seen = []
+    class Provider:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            payload = kwargs["json"]
+            assert "OLD_LCR_RESULT" not in json.dumps(payload)
+            names = {t["function"]["name"] for t in payload["tools"]}
+            assert not names.intersection({"start_identification", "get_experiment_history", "get_analysis_history", "search_conversation", "read_conversation_message"})
+            messages = payload["messages"]
+            data = json.loads(messages[1]["content"].split("：", 1)[1])
+            assert data["analysis_scope"] == "current_result"
+            assert data["current_result_id"] == body["result_id"]
+            result = data["previous_result"]
+            assert result["result_id"] == body["result_id"]
+            assert result["options"]["mode"] == "LC" and result["R_estimated"] is False
+            assert result["parameters"]["R_ohm"] == 6
+            assert result["parameters"]["C_F"] == pytest.approx(493.6151e-6)
+            assert result["parameter_comparison"]["relative_error_pct"]["C"] == pytest.approx(1.27698)
+            seen.append(result)
+            if messages[-1]["role"] != "tool":
+                msg = {"role": "assistant", "content": None, "tool_calls": [{"id": "current", "type": "function",
+                       "function": {"name": "get_identification_result", "arguments": "{}"}}]}
+            else:
+                assert json.loads(messages[-1]["content"]) == result
+                msg = {"role": "assistant", "content": "LC，R 固定为 6 Ω，C=493.6151 μF。"}
+            return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"message": msg}]})
+    monkeypatch.setattr(chat.httpx, "AsyncClient", Provider)
+    for _ in range(2):
+        response = client.post("/api/chat", json=body)
+        assert response.status_code == 200
+        assert response.json()["mode"] == "deepseek"
+        assert "固定为 6" in response.json()["answer"]
+    assert len(seen) == 4
+
+
+@pytest.mark.parametrize("change", ["expired", "options", "owner"])
+def test_current_analysis_unavailable_never_uses_history(context, monkeypatch, change):
+    client, body, _ = context
+    body.update(current_result_analysis=True, history=[{"role": "assistant", "content": "旧结果 R=5.7"}])
+    if change == "expired":
+        main.jobs.pop(body["result_id"])
+    elif change == "options":
+        body["options"]["mode"] = "LC"
+    else:
+        client.headers["X-Session-ID"] = str(uuid.uuid4())
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only")
+    def forbidden_provider(**kwargs):
+        raise AssertionError("Missing current result must not be sent to the model")
+    monkeypatch.setattr(chat.httpx, "AsyncClient", forbidden_provider)
+    response = client.post("/api/chat", json=body)
+    assert response.status_code == 200
+    assert "本次没有使用历史结果" in response.json()["answer"]
+    assert "5.7" not in response.json()["answer"]

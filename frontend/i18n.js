@@ -2,6 +2,7 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "当前结果已失效，请重新辨识后再分析。": "The current result is no longer available. Run identification again before analyzing it.",
     "让助手分析结果 ▾": "Analyze results with AI ▾",
     "在本对话中分析": "Analyze in this conversation",
     "新对话分析": "Analyze in a new conversation",

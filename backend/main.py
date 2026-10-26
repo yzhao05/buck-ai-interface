@@ -315,7 +315,7 @@ async def chat_route(body: ChatRequest, owner: str = Depends(session)):
                     return None
                 if job["config"]["mapping"] != (body.mapping.model_dump() if body.mapping else None) or job["config"]["options"] != body.options.model_dump():
                     return None
-                return compact(with_ground_truth(job["result"], body.ground_truth))
+                return compact({**with_ground_truth(job["result"], body.ground_truth), "result_id": body.result_id})
             if name == "start_identification":
                 if not body.identification_enabled:
                     return {"error": "请先点击左侧“进入参数辨识”，确认基本信息后再执行辨识。"}

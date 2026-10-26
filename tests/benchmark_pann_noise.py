@@ -25,7 +25,7 @@ def main():
     parser.add_argument("archive", type=Path)
     parser.add_argument("--truth-l-uh", type=float, required=True)
     parser.add_argument("--truth-c-uf", type=float, required=True)
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--cycles", type=int, default=1)
     parser.add_argument("--seed-only", action="store_true", help="Evaluate initialization only; no PANN refinement")
     parser.add_argument("--indices", type=int, nargs="+", default=list(range(7)))
