@@ -148,6 +148,8 @@ async def classify(request):
     if not key:
         return make_route(fallback, request.message, "rules")
     context = {"has_dataset": bool(request.dataset_id and request.mapping),
+               "historical_analysis_count": len(request.analysis_history),
+               "analysis_history_requested": request.analysis_history_requested,
                "saved_experiment_count": len(request.experiments),
                "has_result_reference": bool(request.result_id),
                "identification_enabled": request.identification_enabled}

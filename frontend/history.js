@@ -123,6 +123,7 @@ function persistConversation() {
   } catch { historyWarning("历史保存失败：浏览器存储不可用或已满。当前对话仍可使用，请勿关闭页面。"); }
   scheduleArchiveSync();
   renderExperiments();
+  renderAnalysisHistory();
 }
 function renderHistory() {
   try {
@@ -149,11 +150,13 @@ function renderHistory() {
 }
 function rememberMessage(role, content, response = null, mode = "") {
   const created=Math.max(Date.now(),(activeConversation.messages.at(-1)?.created || 0)+1);
-  activeConversation.messages.push({id:crypto.randomUUID(),created,role,content,response,mode});
+  const item={id:crypto.randomUUID(),created,role,content,response,mode};
+  activeConversation.messages.push(item);
   activeConversation.updated = Date.now();
   state.history = activeConversation.messages.filter(m => m.mode !== "请求未完成")
     .map(m=>({role:m.role,content:m.content.slice(0,8000)})).slice(-10);
   persistConversation(); renderHistory();
+  return item;
 }
 function resetExperiment() {
   closeCsvLibrary();
@@ -255,6 +258,7 @@ async function openConversation(id, saveCurrent = true) {
   $("chat-input").value=record.draft || "";
   for (const item of record.messages) {
     const article=message(item.role,item.content,item.mode);
+    article.dataset.messageId=item.id;
     if (item.response) decorateResponse(article,item.response);
   }
   const empty=!record.messages.length;

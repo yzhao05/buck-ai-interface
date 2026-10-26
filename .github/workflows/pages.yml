@@ -29,6 +29,7 @@ jobs:
           node --check frontend/csv-library.js
           node --check frontend/history.js
           node --check frontend/experiments.js
+          node --check frontend/analyses.js
           node --check frontend/i18n.js
           node --check frontend/attachments.js
           node --check frontend/sync.js

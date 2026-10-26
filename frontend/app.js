@@ -27,7 +27,7 @@ const state = { dataset: null, csvFile: null, mapping: null, summary: null, resu
   history: [], connected: false, busy: false, chatBusy: false, syncBusy: false, job: null, chart: null, zoom: null,
   identificationOpen: false, waveformOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
-const tools = {get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
+const tools = {search_conversation:"检索会话记录", read_conversation_message:"读取历史消息", get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", get_analysis_history:"读取历史分析", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
   const button = $(buttonId), content = $(contentId);
@@ -119,6 +119,7 @@ function prepareControllerDefaults() {
 }
 function controls() {
   const waiting = historyLocked();
+  renderAnalysisHistory();
   for (const id of ["truth-l","truth-c","calculate-parameter-error"]) $(id).disabled=waiting || !state.result;
   window.BuckCircuit.setBusy(waiting); window.BuckCircuit.render();
   $("chat-input").disabled = state.syncBusy;
@@ -527,6 +528,7 @@ function message(role, content, mode = "") {
   return article;
 }
 function decorateResponse(article, response) {
+    decorateConversationRetrieval(article,response.conversation_retrieval);
     if (response.route) {
       const task = document.createElement("div"); task.className = "message-tools message-task";
       task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
@@ -548,10 +550,13 @@ function decorateResponse(article, response) {
       }); article.append(sources);
     }
 }
-async function sendMessage(value) {
+async function sendMessage(value, {analysisRequest=false}={}) {
   const text = value.trim(); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { notice("请先连接分析后端。"); return; }
-  const compareSaved=comparingExperiments(text) && chatExperiments().length>0;
+  const corpus=conversationMessages(readConversation(activeConversation.id));
+  const useConversation=wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0);
+  const compareSaved=!requestsIdentificationExecution(text) && (useConversation || (comparingExperiments(text) && chatExperiments().length>0));
+  const analysisMeta=analysisRequest || resultAnalysisPrompts.has(text) ? analysisDescriptor() : null;
   let fitOptions;
   try { fitOptions = options(); } catch (error) {
     if (state.identificationOpen && !compareSaved) { notice(error.message); return; }
@@ -560,10 +565,11 @@ async function sendMessage(value) {
   $("conversation-panel").classList.remove("is-empty");
   $("chat-input").value = "";
   $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
-  message("user", text);
+  const userArticle=message("user", text);
   const previousHistory = readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
     .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000)}));
-  rememberMessage("user", text);
+  const requestMessage=rememberMessage("user", text, analysisMeta ? {analysis_request:analysisMeta} : null);
+  userArticle.dataset.messageId=requestMessage.id;
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
     if (state.mapping && !compareSaved) await ensureDatasetAvailable();
@@ -572,6 +578,7 @@ async function sendMessage(value) {
       dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,
       options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
+      conversation_messages:corpus,conversation_retrieval_requested:useConversation,
       // Keep execution context for explicit mixed requests (run, then compare).
       // The backend classifier enforces read-only tools for comparison alone.
       experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions)}});
@@ -580,7 +587,10 @@ async function sendMessage(value) {
     const article = message("assistant", answer,
       response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
     decorateResponse(article, response);
-    rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources}, response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+    const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,
+      request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
+      ...(analysisMeta && !response.job_id ? {analysis:{...analysisMeta,request_id:requestMessage.id}} : {})}, response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+    article.dataset.messageId=savedReply.id;
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
   } catch (error) { pending.remove(); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
   finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; }
@@ -766,7 +776,17 @@ $("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;state.zoo
 $("chat-form").onsubmit=event=>{event.preventDefault();void sendMessage($("chat-input").value);};
 $("chat-input").onkeydown=event=>{if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing){event.preventDefault();void sendMessage($("chat-input").value);}};
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));
-$("ask-error").onclick=()=>void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"));
+$("ask-error").onclick=()=>void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"),{analysisRequest:true});
+$("compare-analyses").onclick=()=>{
+  const input=$("chat-input");
+  if (!input.value.trim()) {
+    input.value=tr("请检索本会话中关于……的讨论，并根据原文总结结论与后续安排。");
+    persistConversation();
+    input.focus();
+    const placeholder=/…+/.exec(input.value);
+    if (placeholder) input.setSelectionRange(placeholder.index,placeholder.index+placeholder[0].length);
+  } else input.focus();
+};
 $("clear-chat").onclick=$("new-chat").onclick=()=>void newConversation();$("download-report").onclick=downloadReport;
 $("delete-chat").onclick=()=>void deleteConversation();
 $("clear-data").onclick=async()=>{

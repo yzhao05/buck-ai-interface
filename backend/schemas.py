@@ -129,6 +129,32 @@ class ChatExperiment(StrictModel):
         return self
 
 
+class HistoricalAnalysis(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(min_length=1, max_length=128)
+    content: str = Field(min_length=1, max_length=100000)
+    method: Literal["pann", "weighted_integral", "integral"] | None = None
+    pwm_source: Literal["measured", "controller"] | None = None
+    result_id: str | None = Field(default=None, max_length=128)
+
+
+class AnalysisMetadata(StrictModel):
+    kind: Literal["identification_analysis"] = "identification_analysis"
+    method: Literal["pann", "weighted_integral", "integral"] | None = None
+    pwm_source: Literal["measured", "controller"] | None = None
+    result_id: str | None = Field(default=None, max_length=128)
+    filename: str | None = Field(default=None, max_length=1024)
+
+
+class ConversationMessage(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=100000)
+    created: int | None = None
+    request_message_id: str | None = Field(default=None, max_length=128)
+    analysis: AnalysisMetadata | None = None
+
+
 class ChatRequest(StrictModel):
     identification_enabled: bool = False
     message: str = Field(min_length=1, max_length=4000)
@@ -139,9 +165,19 @@ class ChatRequest(StrictModel):
     result_id: str | None = None
     ground_truth: ChatGroundTruth | None = None
     experiments: list[ChatExperiment] = Field(default_factory=list, max_length=200)
+    # Legacy clients only. New clients send the searchable full conversation.
+    analysis_history: list[HistoricalAnalysis] = Field(default_factory=list, max_length=4)
+    analysis_history_total: int = Field(default=0, ge=0, le=10000)
+    analysis_history_requested: bool = False
+    conversation_messages: list[ConversationMessage] = Field(default_factory=list, max_length=10000)
+    conversation_retrieval_requested: bool = False
 
     @model_validator(mode="after")
     def truth_matches_result(self):
+        if len({m.id for m in self.conversation_messages}) != len(self.conversation_messages):
+            raise ValueError("Conversation message IDs must be unique.")
+        if sum(len(m.content) for m in self.conversation_messages) > 8000000:
+            raise ValueError("Conversation retrieval exceeds the 8 million character request limit.")
         if self.ground_truth and self.ground_truth.result_id != self.result_id:
             raise ValueError("Ground truth must belong to the requested result.")
         return self

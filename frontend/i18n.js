@@ -2,6 +2,20 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "会话检索": "Conversation search",
+    "会话检索与分析": "Conversation search and analysis",
+    "填写检索问题": "Enter a search question",
+    "检索会话记录": "Search conversation",
+    "读取历史消息": "Read historical message",
+    "提问时检索本会话完整记录，将相关原文提供给 AI；支持查找、总结与比较，不依赖实验记录数量。长文按片段读取并标明出处。": "Search the full conversation for relevant passages to share with AI for lookup, summaries and comparisons, regardless of saved experiments. Long messages are read in excerpts with sources.",
+    "请检索本会话中关于……的讨论，并根据原文总结结论与后续安排。": "Search this conversation for discussions about … and summarize the conclusions and next steps from the original messages.",
+    "本次检索会话消息：": "Conversation messages searched: ",
+    "；已读取材料：": "; sources read: ",
+    "查看消息": "View message",
+    "片段": "Excerpt",
+    "全文": "Full text",
+    "原消息暂未加载，请重新打开本会话。": "The source message is not loaded. Please reopen this conversation.",
+    "读取历史分析": "Read previous analyses",
     "读取实验历史": "Read experiment history",
     "抗噪加权积分": "Noise-aware weighted integral",
     "积分辨识": "Integral identification",
