@@ -201,3 +201,29 @@ def test_mixed_request_routes_to_identification_and_knowledge(monkeypatch):
     assert response["route"]["task"] == "identification"
     assert response["route"]["secondary_tasks"] == ["knowledge"]
     assert response["job_id"] == "real-test-job" and calls == ["start_identification"]
+
+
+@pytest.mark.parametrize("question", ["为什么？", "还有其他可能吗？", "请复查刚才的结论", "Why?", "Any other possible causes?", "Please recheck that conclusion"])
+def test_result_followup_requires_matching_recent_analysis(question):
+    request = ChatRequest(message=question, result_id="current", conversation_messages=[
+        {"id": "a", "role": "assistant", "content": "current analysis", "analysis": {"result_id": "current"}}])
+    assert task_router.result_followup_history(request) == [{"role": "assistant", "content": "current analysis"}]
+    request.result_id = "different"
+    assert task_router.result_followup_history(request) is None
+
+
+@pytest.mark.parametrize("question", ["比较刚才两次结果", "为什么之前那几次不一样，请检索", "为什么上次的 LCR 结果不同？", "Why was R different in the previous experiment?", "Why was R 5.7 last time?", "请开始参数辨识", "总结整个会话", "如何上传 CSV", "为什么上传失败", "为什么 MOSFET 寿命短", "Search previous analyses", "Compare these results"])
+def test_unrelated_requests_do_not_become_result_followups(question):
+    request = ChatRequest(message=question, result_id="current", conversation_messages=[
+        {"id": "a", "role": "assistant", "content": "current analysis", "analysis": {"result_id": "current"}}])
+    assert task_router.result_followup_history(request) is None
+
+
+def test_long_followup_keeps_analysis_anchor_and_marks_excerpts():
+    messages = [{"id": "analysis", "role": "assistant", "content": "A"*9000, "analysis": {"result_id": "current"}}]
+    messages += [{"id": str(i), "role": "user" if i%2==0 else "assistant", "content": f"turn-{i}"} for i in range(16)]
+    request = ChatRequest(message="为什么？", result_id="current", conversation_messages=messages)
+    history = task_router.result_followup_history(request)
+    assert history[0]["content"].startswith("A"*8000)
+    assert "片段" in history[0]["content"]
+    assert [m["content"] for m in history[1:]] == [f"turn-{i}" for i in range(8,16)]

@@ -97,7 +97,9 @@ def test_deepseek_context_tool_and_fallback_share_comparison(context, monkeypatc
         async def post(self, url, **kwargs):
             messages = kwargs["json"]["messages"]
             assert "不列出或展开分析‘其他过程事实’‘数据和波形事实’" in messages[0]["content"]
-            assert "默认只展示预测参数、真值相对误差、简短结论及必要建议" in messages[0]["content"]
+            assert "完整分析保留预测参数、单位、R 固定或估计身份" in messages[0]["content"]
+            assert "不固定使用同一组标题" in messages[0]["content"]
+            assert "不为了让回答不同而提出新原因" in messages[0]["content"]
             assert "分析正文不输出‘明确无法给出的结论’" in messages[0]["content"]
             assert "不以‘如果你希望，我可以……’" in messages[0]["content"]
             data = json.loads(messages[1]["content"].split("：", 1)[1])["previous_result"]
@@ -265,3 +267,46 @@ def test_current_analysis_unavailable_never_uses_history(context, monkeypatch, c
     assert response.status_code == 200
     assert "本次没有使用历史结果" in response.json()["answer"]
     assert "5.7" not in response.json()["answer"]
+
+
+@pytest.mark.parametrize("question", ["为什么？", "还有其他可能吗？", "请复查刚才的结论", "Why?", "Any other possible causes?", "Please recheck that conclusion"])
+def test_followup_keeps_current_analysis_and_live_truth_only(context, monkeypatch, question):
+    client, body, _ = context
+    body["message"] = question
+    body["conversation_messages"] = [
+        {"id": "old", "role": "assistant", "content": "OLD_LCR: R=5.7", "analysis": {"result_id": "old-result"}},
+        {"id": "user-new", "role": "user", "content": "分析当前结果"},
+        {"id": "new", "role": "assistant", "content": "CURRENT_EXPLANATION: 请核对这个假设。", "request_message_id": "user-new", "analysis": {"result_id": body["result_id"]}},
+        {"id": "next-question", "role": "user", "content": "这个解释有依据吗？"},
+        {"id": "next-answer", "role": "assistant", "content": "FOLLOWUP_EXPLANATION: 这是待验证假设。"},
+    ]
+    body["history"] = [{"role": "assistant", "content": "OLD_LCR: stale recent history"}]
+    # Re-evaluate the ground truth instead of trusting numbers in earlier prose.
+    body["ground_truth"]["C_F"] = 510e-6
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only")
+    seen = []
+    class Provider:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            payload = kwargs["json"]; serialized = json.dumps(payload)
+            assert "OLD_LCR" not in serialized
+            assert "CURRENT_EXPLANATION" in serialized and "FOLLOWUP_EXPLANATION" in serialized
+            assert "temperature" not in payload
+            messages = payload["messages"]
+            assert "重新核对上一条推理的数字、假设和因果链" in messages[0]["content"]
+            assert "本次是同一结果的继续讨论" in messages[0]["content"]
+            data = json.loads(messages[1]["content"].split("：", 1)[1])
+            assert data["analysis_scope"] == "result_followup"
+            assert data["current_result_id"] == body["result_id"]
+            assert data["previous_result"]["parameter_comparison"]["ground_truth"]["C_F"] == 510e-6
+            assert data["experiment_history"] == []
+            assert not {t["function"]["name"] for t in payload["tools"]}.intersection({"start_identification", "get_experiment_history", "search_conversation"})
+            seen.append(data)
+            return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"message": {"role": "assistant", "content": "针对前文证据继续解释。"}}]})
+    monkeypatch.setattr(chat.httpx, "AsyncClient", Provider)
+    response = client.post("/api/chat", json=body)
+    assert response.status_code == 200
+    assert response.json()["mode"] == "deepseek" and response.json()["route"]["task"] == "diagnosis"
+    assert len(seen) == 1

@@ -40,7 +40,25 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   }
   assert(await page.evaluate(()=>activeConversation.messages.some(m=>m.content.includes('OLD_LCR_RESULT'))),'Old answers remain saved');
   assert(await page.evaluate(()=>activeConversation.experiments.some(r=>r.id===state.resultId)));
+  // A reference to the preceding conclusion is a result follow-up, not a search
+  // that drops the current result ID. Both Chinese and English stay anchored.
+  for(const question of ['为什么？','请复查刚才的结论','Any other possible causes?']){
+   const req=page.waitForRequest(r=>r.url().endsWith('/api/chat'));
+   const response=page.waitForResponse(r=>r.url().endsWith('/api/chat'));
+   await page.locator('#chat-input').fill(question);await page.locator('#send-chat').click();
+   const body=(await req).postDataJSON();const answer=await (await response).json();await ready();
+   assert.equal(body.current_result_analysis,false);assert.equal(body.result_id,current.id);
+   assert.equal(body.conversation_retrieval_requested,false);assert.equal(body.options.mode,'LC');
+   assert(body.conversation_messages.some(m=>m.analysis?.result_id===current.id));
+   assert.equal(answer.route.task,'diagnosis');
+  }
   // General comparison still receives prior experiments and searchable messages.
+  const pastRequest=page.waitForRequest(r=>r.url().endsWith('/api/chat'));
+  await page.locator('#chat-input').fill('为什么上次的 LCR 结果不同？');await page.locator('#send-chat').click();
+  const past=(await pastRequest).postDataJSON();await ready();
+  assert.equal(past.result_id,null,'An explicit earlier-run question must not be bound to the current LC result');
+  assert.equal(past.conversation_retrieval_requested,true);
+  assert(past.conversation_messages.some(m=>m.content.includes('OLD_LCR_RESULT')));
   const compareRequest=page.waitForRequest(r=>r.url().endsWith('/api/chat'));
   await page.locator('#chat-input').fill('比较本会话的两次实验');await page.locator('#send-chat').click();
   const compare=(await compareRequest).postDataJSON();await ready();

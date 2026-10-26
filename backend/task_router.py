@@ -25,7 +25,7 @@ TASKS = {
     "identification": {"label": "参数辨识", "tools": (*READ, "start_identification"),
                        "prompt": "你负责执行参数辨识。用户要求执行时调用 start_identification；以工具的报错或任务 ID 为准，不提前编造结果。"},
     "diagnosis": {"label": "误差诊断", "tools": READ,
-                  "prompt": "你负责结果解释和必要修改建议。读取对应结果与波形作为内部判断依据，默认只展示预测参数、真值相对误差、简短结论及必要建议；不罗列或分析过程事实、数据和波形事实，不复述原始诊断字段。只有用户明确追问具体细节时才解释该项。无结果时说明缺失。"},
+                  "prompt": "你负责结果解释和有依据的建议。完整分析保留预测参数、单位、R 固定或估计身份、可用的真值及相对误差和关键结论；按问题选择段落、列表或对比表，不固定模板。追问只展开相关证据和推理，复查要检查上一条结论而非改写措辞。有异常才给一到两个针对性验证步骤，满足用户明确目标时不强行建议修改。不为求变化编造原因，不默认罗列过程事实、数据和波形事实或原始诊断字段。无有效结果时说明缺失。"},
     "hardware": {"label": "硬件寿命", "tools": READ,
                  "prompt": "你负责器件应力、损耗、选型与寿命问答。引用资料；缺少型号、温度与运行历史时不能报告剩余年数。"},
     "general": {"label": "一般问答", "tools": ("search_knowledge",),
@@ -109,6 +109,38 @@ def rule_selection(message):
     if re.search(r"波形|纹波|超调|\b(?:waveform|waveforms|ripple|overshoot)\b", text):
         return TaskSelection(task="waveform")
     return TaskSelection(task="general")
+
+
+def result_followup_history(request):
+    """Resolve a short follow-up against the latest marked analysis of this run."""
+    if not request.result_id or identification_intent(request.message) == "execute":
+        return None
+    text = request.message.strip()
+    # Explicit earlier-run references take precedence over a leading "why".
+    if re.search(r"历史|之前|上次|此前|前面|最早|早先|\b(?:previous|earlier|historical|oldest|last\s+time)\b", text, re.I):
+        return None
+    if re.search(r"检索|搜索|找出|对比|比较|横向|纵向|\b(?:search|find|compare|comparison|versus)\b", text, re.I):
+        return None
+    if rule_selection(text).task in {"guidance", "knowledge", "hardware", "waveform"}:
+        return None
+    if not re.match(r"^(?:请|那|那么|please\s+)?(?:为什么|为何|还有.*(?:可能|原因|解释)|复查|再检查|重新检查|重新分析|详细解释|展开|继续解释|why\b|any other\b|what else\b|recheck\b|double.check\b|explain (?:more|further)\b)", text, re.I):
+        return None
+    messages = request.conversation_messages
+    for index in range(len(messages)-1, -1, -1):
+        item = messages[index]
+        if item.role != "assistant" or not item.analysis:
+            continue
+        if item.analysis.result_id != request.result_id:
+            return None
+        start = index
+        if index and messages[index-1].role == "user" and messages[index-1].id == item.request_message_id:
+            start -= 1
+        discussion = list(messages[start:])
+        if len(discussion) > 10:
+            # Keep the analysis that establishes the referent, plus recent turns.
+            discussion = discussion[:index-start+1] + discussion[-8:]
+        return [{"role": m.role, "content": m.content[:8000] + ("\n【本条为前 8000 字符片段，后续内容未读取。】" if len(m.content) > 8000 else "")} for m in discussion]
+    return None
 
 
 def make_route(selection, message, mode, notice=None):

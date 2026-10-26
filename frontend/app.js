@@ -615,7 +615,8 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   const targetResultId=state.resultId;
   if(currentOnly && (!state.result || !targetResultId)){notice("当前结果已失效，请重新辨识后再分析。");return;}
   const corpus=currentOnly ? [] : conversationMessages(readConversation(activeConversation.id));
-  const useConversation=!currentOnly && (wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0));
+  const resultFollowup=!currentOnly && continuesResultAnalysis(text,corpus);
+  const useConversation=!currentOnly && !resultFollowup && (wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0));
   const compareSaved=!requestsIdentificationExecution(text) && (useConversation || (comparingExperiments(text) && chatExperiments().length>0));
   const analysisMeta=currentOnly ? analysisDescriptor() : null;
   // Read-only analysis belongs to the displayed completed run, not unsubmitted form edits.

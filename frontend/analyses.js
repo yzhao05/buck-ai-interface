@@ -50,6 +50,13 @@ function renderAnalysisHistory() {
 function wantsConversationRetrieval(text) {
   return /历史|之前|前面|此前|上次|早先|最早|最近|当时|刚才|刚刚|(?:本|当前|整个|这次)会话|这段对话|聊天记录|我们.*(?:聊|讨论|说过)|横向|纵向|(?:总结|回顾|汇总).*(?:对话|讨论|聊天)|\b(?:previous|earlier|history|historical|last|latest|oldest|conversation|chat|discussed|said before)\b/i.test(text);
 }
+function continuesResultAnalysis(text,corpus) {
+  if(/历史|之前|上次|此前|前面|最早|早先|\b(?:previous|earlier|historical|oldest|last\s+time)\b/i.test(text))return false;
+  if(!state.resultId || requestsIdentificationExecution(text) || /检索|搜索|找出|对比|比较|横向|纵向|\b(?:search|find|compare|comparison|versus)\b/i.test(text))return false;
+  if(!/^(?:请|那|那么|please\s+)?(?:为什么|为何|还有.*(?:可能|原因|解释)|复查|再检查|重新检查|重新分析|详细解释|展开|继续解释|why\b|any other\b|what else\b|recheck\b|double.check\b|explain (?:more|further)\b)/i.test(text.trim()))return false;
+  const index=corpus.findLastIndex(m=>m.role==="assistant" && m.analysis);
+  return index>=0 && corpus[index].analysis.result_id===state.resultId;
+}
 function requestsIdentificationExecution(text) {
   // This only decides whether CSV restoration is needed. The backend remains
   // authoritative about execution permission and numerical configuration.
