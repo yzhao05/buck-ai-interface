@@ -1,4 +1,6 @@
 from typing import Literal
+import json
+import math
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -77,6 +79,56 @@ class ChatGroundTruth(StrictModel):
     C_F: float = Field(gt=0, le=1e30)
 
 
+class ExperimentDataset(StrictModel):
+    filename: str = Field(default="", max_length=500)
+    sha256: str = Field(default="", max_length=64)
+
+
+class SavedExperiment(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    created: int = Field(ge=0, le=9007199254740991)
+    updated: int = Field(ge=0, le=9007199254740991)
+    dataset: ExperimentDataset
+    result: dict
+    ground_truth: ChatGroundTruth | None = None
+
+    @model_validator(mode="after")
+    def validate_snapshot(self):
+        if len(json.dumps(self.result, allow_nan=False).encode()) > 128*1024:
+            raise ValueError("Experiment snapshot exceeds 128 KB")
+        parameters = self.result.get("parameters", {})
+        if not isinstance(parameters, dict):
+            raise ValueError("Invalid experiment parameters")
+        for key in ("L_H", "C_F", "R_ohm"):
+            value = parameters.get(key)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 < value <= 1e30 or not math.isfinite(value):
+                raise ValueError("Invalid experiment parameters")
+        if self.ground_truth and self.ground_truth.result_id != self.id:
+            raise ValueError("Ground truth must belong to this experiment")
+        return self
+
+
+class ExperimentParameters(StrictModel):
+    L_H: float = Field(gt=0, le=1e30)
+    C_F: float = Field(gt=0, le=1e30)
+    R_ohm: float = Field(gt=0, le=1e30)
+
+
+class ChatExperiment(StrictModel):
+    id: str = Field(min_length=1, max_length=128)
+    dataset: ExperimentDataset
+    method: Literal["pann", "weighted_integral", "integral"] | None = None
+    pwm_source: Literal["measured", "controller"] | None = None
+    parameters: ExperimentParameters
+    ground_truth: ChatGroundTruth | None = None
+
+    @model_validator(mode="after")
+    def truth_matches_experiment(self):
+        if self.ground_truth and self.ground_truth.result_id != self.id:
+            raise ValueError("Ground truth must belong to this experiment")
+        return self
+
+
 class ChatRequest(StrictModel):
     identification_enabled: bool = False
     message: str = Field(min_length=1, max_length=4000)
@@ -86,6 +138,7 @@ class ChatRequest(StrictModel):
     options: FitOptions = Field(default_factory=FitOptions)
     result_id: str | None = None
     ground_truth: ChatGroundTruth | None = None
+    experiments: list[ChatExperiment] = Field(default_factory=list, max_length=200)
 
     @model_validator(mode="after")
     def truth_matches_result(self):

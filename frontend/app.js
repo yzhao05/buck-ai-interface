@@ -27,7 +27,7 @@ const state = { dataset: null, csvFile: null, mapping: null, summary: null, resu
   history: [], connected: false, busy: false, chatBusy: false, syncBusy: false, job: null, chart: null, zoom: null,
   identificationOpen: false, waveformOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
-const tools = {get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
+const tools = {get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
   const button = $(buttonId), content = $(contentId);
@@ -388,11 +388,24 @@ function calculateParameterError() {
     state.truthComparison={result_id:state.resultId,parameters:{L_H:state.result.parameters.L_H,C_F:state.result.parameters.C_F},ground_truth:{L_H,C_F}};
     if (!parameterComparison()) {state.truthComparison=null;state.truthError="数值超出可计算范围，请检查真实值及单位。";}
   }
+  captureExperiment({updateTruth:true});
   displayResult({preserveZoom:true});controls();persistConversation();
 }
 function restoreTruthComparison(attachment) {
   state.truthDraft={l:String(attachment.truthDraft?.l ?? ""),c:String(attachment.truthDraft?.c ?? "")};
   state.truthComparison=attachment.truthComparison || null;state.truthError="";
+  const saved=readConversation(activeConversation.id)?.experiments?.find(run=>run.id===state.resultId);
+  if (saved) {
+    const truth=saved.ground_truth;
+    if (!truth) state.truthComparison=null;
+    else if (saved.result.parameters.L_H===state.result.parameters.L_H && saved.result.parameters.C_F===state.result.parameters.C_F) {
+      if (state.truthComparison?.ground_truth?.L_H!==truth.L_H || state.truthComparison?.ground_truth?.C_F!==truth.C_F) {
+        state.truthDraft={l:String(truth.L_H*1e6),c:String(truth.C_F*1e6)};
+      }
+      state.truthComparison={result_id:state.resultId,parameters:{L_H:state.result.parameters.L_H,C_F:state.result.parameters.C_F},
+        ground_truth:{L_H:truth.L_H,C_F:truth.C_F}};
+    }
+  }
   if (!parameterComparison())state.truthComparison=null;
 }
 function resultAssessment(r) {
@@ -538,9 +551,10 @@ function decorateResponse(article, response) {
 async function sendMessage(value) {
   const text = value.trim(); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { notice("请先连接分析后端。"); return; }
+  const compareSaved=comparingExperiments(text) && chatExperiments().length>0;
   let fitOptions;
   try { fitOptions = options(); } catch (error) {
-    if (state.identificationOpen) { notice(error.message); return; }
+    if (state.identificationOpen && !compareSaved) { notice(error.message); return; }
   }
   state.chatBusy = true; controls();
   $("conversation-panel").classList.remove("is-empty");
@@ -552,12 +566,15 @@ async function sendMessage(value) {
   rememberMessage("user", text);
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
-    if (state.mapping) await ensureDatasetAvailable();
-    const comparison=fitOptions ? parameterComparison() : null;
+    if (state.mapping && !compareSaved) await ensureDatasetAvailable();
+    const comparison=fitOptions && !compareSaved ? parameterComparison() : null;
     const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,
-      dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,options:fitOptions,result_id:fitOptions ? state.resultId : null,
+      dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:state.mapping,
+      options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
-      identification_enabled:state.identificationOpen}});
+      // Keep execution context for explicit mixed requests (run, then compare).
+      // The backend classifier enforces read-only tools for comparison alone.
+      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions)}});
     pending.remove();
     const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
     const article = message("assistant", answer,
@@ -734,6 +751,7 @@ $("identify").onclick=()=>void startFit();
 $("calculate-parameter-error").onclick=calculateParameterError;
 for (const [id,key] of [["truth-l","l"],["truth-c","c"]]) $(id).oninput=()=>{
   state.truthDraft[key]=$(id).value;state.truthComparison=null;state.truthError="";
+  captureExperiment({updateTruth:true});
   if(state.result)displayResult({preserveZoom:true});else displayTruthComparison();
   persistConversation();
 };
@@ -826,12 +844,13 @@ for (const [button,content,label] of [["toggle-experiment","experiment-content",
     try {localStorage.setItem(`buck-panel:${new URL(".",location.href).pathname}:${button}`,$(content).hidden ? "closed" : "open");} catch {}
   };
 }
-document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; displaySummary(); displayDiagnostics(); displayReviewReasons(); displayAssessment(); drawCharts(); renderHistory(); });
+document.addEventListener("buck-language-change",()=>{ $("chart-tooltip").hidden=true; displaySummary(); displayDiagnostics(); displayReviewReasons(); displayAssessment(); drawCharts(); renderHistory(); renderExperiments(); });
 window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");
 controls();void (async()=>{await initializeHistory();if(await connect()){
-  await synchronizeArchive({preferRemote:true});
+  await synchronizeArchive({preferRemote:true,background:true});
   if(!state.dataset)await restoreAttachment(activeConversation?.attachment);
+  await recoverExperiments();
   scheduleArchiveSync();
 }})();

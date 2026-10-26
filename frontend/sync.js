@@ -3,6 +3,16 @@
 let archiveKey = "", archiveEnabled = false, archivePersistent = true;
 let archiveTimer = null, archiveRunning = false, archiveAgain = false, archiveApplying = false;
 let archiveBootstrap = false;
+let archiveComposing = false, archiveDeferred = false, archivePreferRemote = false;
+function archiveEditorActive() {
+  const editor=document.activeElement;
+  return archiveComposing || Boolean(editor?.matches("input,textarea,select") || editor?.isContentEditable);
+}
+function deferArchiveSync(preferRemote=false) {
+  clearTimeout(archiveTimer);archiveTimer=null;
+  archiveDeferred=true;archivePreferRemote ||= preferRemote;
+  syncStatus("正在编辑，自动同步将在离开输入框后继续。");
+}
 function syncStatus(text) {
   const warning="同步恢复码无法保存，请复制保管；关闭页面后可能需要重新输入。";
   // A successful upload does not mean this browser remembered its recovery key.
@@ -30,8 +40,9 @@ async function archivePrefix(root) {
 }
 function scheduleArchiveSync() {
   if (archiveApplying || !archiveEnabled || !state.connected) return;
-  clearTimeout(archiveTimer);
-  archiveTimer=setTimeout(()=>void synchronizeArchive(),1000);
+  clearTimeout(archiveTimer);archiveTimer=null;
+  if (archiveEditorActive()) {deferArchiveSync();return;}
+  archiveTimer=setTimeout(()=>{archiveTimer=null;void synchronizeArchive({background:true});},1000);
 }
 function archiveRequest(path, options={}) {
   return api("/api/archive"+path,{...options,archiveCode:archiveKey});
@@ -39,12 +50,14 @@ function archiveRequest(path, options={}) {
 function wireRecord(record) {
   return {id:record.id,updated:record.updated,meta_updated:record.meta_updated || record.updated,
     file_epoch:record.file_epoch || 0,draft:record.draft || "",fields:record.fields || {},attachment:record.attachment || null,
+    experiments:mergeExperiments(record.experiments,storedExperiments(record.id)),
     messages:record.messages.map(m=>({id:m.id,created:m.created,role:m.role,content:m.content,mode:m.mode || "",response:m.response || null}))};
 }
 function saveMergedRecord(record) {
   // Persist the complete merged record before clearing any old state. A quota
   // failure leaves the original browser copy intact and is reported to the user.
   for (const message of record.messages) localStorage.setItem(conversationPrefix+record.id+":message:"+message.id,JSON.stringify(message));
+  saveExperimentKeys(record);
   localStorage.setItem(conversationPrefix+record.id,JSON.stringify({...record,messages:[],messageStoreVersion:1}));
   conversationCache.set(record.id,record);
 }
@@ -52,7 +65,7 @@ async function removeLocalArchive(id) {
   const scope=conversationPrefix+id;
   localStorage.setItem(conversationPrefix+"deleted:"+id,"1");
   await BuckAttachments.remove(scope);
-  for (const key of Object.keys(localStorage)) if (key===scope || key.startsWith(scope+":message:")) localStorage.removeItem(key);
+  for (const key of Object.keys(localStorage)) if (key===scope || key.startsWith(scope+":message:") || key.startsWith(scope+":experiment:")) localStorage.removeItem(key);
   conversationCache.delete(id);
 }
 async function reconcileFiles(record, remoteFiles) {
@@ -78,16 +91,19 @@ async function reconcileFiles(record, remoteFiles) {
   }
   return missing;
 }
-async function synchronizeArchive({preferRemote=false}={}) {
-  clearTimeout(archiveTimer);
+async function synchronizeArchive({preferRemote=false,background=false}={}) {
+  clearTimeout(archiveTimer);archiveTimer=null;
   if (!archiveEnabled || !state.connected) return;
-  if (archiveRunning) { archiveAgain=true; return; }
-  if (historyLocked() || document.getElementById("circuit-dialog")?.open || !document.getElementById("csv-library-menu").hidden) { scheduleArchiveSync(); return; }
+  if (background && archiveEditorActive()) {deferArchiveSync(preferRemote);return;}
+  if (archiveRunning) { archiveAgain=true;archivePreferRemote ||= preferRemote;return; }
+  if (historyLocked() || document.getElementById("circuit-dialog")?.open || !document.getElementById("csv-library-menu").hidden) { archivePreferRemote ||= preferRemote;scheduleArchiveSync(); return; }
+  preferRemote ||= archivePreferRemote;
+  archiveDeferred=false;archivePreferRemote=false;
   archiveRunning=true; archiveApplying=true; state.syncBusy=true; controls();
   const previousId=activeConversation?.id;
   const before=activeConversation ? JSON.stringify(wireRecord(activeConversation)) : "";
   let missing=false, failed=false;
-  syncStatus("正在核对并同步对话和 CSV…");
+  syncStatus("正在核对并同步对话、实验记录和 CSV…");
   try {
     // Input/import handlers have already saved local edits. Do not synthesize a
     // new metadata edit from a stale tab's untouched DOM during background sync.
@@ -117,7 +133,7 @@ async function synchronizeArchive({preferRemote=false}={}) {
       missing=(await reconcileFiles(merged.record,merged.files)) || missing;
     }
     archiveBootstrap=false;
-    syncStatus(missing ? "对话已同步；部分 CSV 两端均无有效副本，请重新上传。" : archivePersistent ? "对话和 CSV 已同步" : "已同步；Render 尚未配置持久磁盘，后端副本可能随重启丢失。");
+    syncStatus(missing ? "对话与实验记录已同步；部分 CSV 两端均无有效副本，请重新上传。" : archivePersistent ? "对话、实验记录和 CSV 已同步" : "已同步；Render 尚未配置持久磁盘，后端副本可能随重启丢失。");
   } catch(error) {
     failed=true;
     syncStatus("同步未完成，本地数据保留；连接恢复后会重试："+error.message);
@@ -134,7 +150,7 @@ async function synchronizeArchive({preferRemote=false}={}) {
       renderHistory(); controls();
     } finally { archiveApplying=false;archiveRunning=false; }
     if (archiveAgain) { archiveAgain=false;scheduleArchiveSync(); }
-    else if (failed) archiveTimer=setTimeout(()=>void synchronizeArchive(),30000);
+    else if (failed) archiveTimer=setTimeout(()=>{archiveTimer=null;void synchronizeArchive({background:true,preferRemote});},30000);
   }
 }
 async function recoverCsvFromArchive(dataset) {
@@ -148,3 +164,11 @@ async function recoverCsvFromArchive(dataset) {
 }
 window.addEventListener("online",()=>{scheduleArchiveSync();});
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")scheduleArchiveSync();});
+// Local input handlers still save every edit. Full reconciliation can reopen
+// the conversation, so never begin it while an editor/IME owns the focus.
+document.addEventListener("focusin",()=>{
+  if (archiveTimer!==null && archiveEditorActive() && archiveEnabled && state.connected) deferArchiveSync();
+});
+document.addEventListener("focusout",()=>{queueMicrotask(()=>{if(archiveDeferred)scheduleArchiveSync();});});
+document.addEventListener("compositionstart",()=>{archiveComposing=true;});
+document.addEventListener("compositionend",()=>{archiveComposing=false;if(archiveDeferred)scheduleArchiveSync();});

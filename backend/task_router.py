@@ -14,7 +14,7 @@ from typing import Literal
 from .knowledge import formula_question
 
 Task = Literal["guidance", "knowledge", "waveform", "identification", "diagnosis", "hardware", "general"]
-READ = ("get_waveform_summary", "get_identification_result", "search_knowledge")
+READ = ("get_waveform_summary", "get_identification_result", "get_experiment_history", "search_knowledge")
 TASKS = {
     "guidance": {"label": "使用指导", "tools": ("search_knowledge",),
                  "prompt": "你负责使用指导。给出 CSV 导出、列映射、连接或辨识入口的具体步骤。"},
@@ -42,7 +42,7 @@ class TaskSelection(BaseModel):
 CLASSIFIER_SYSTEM = """你是 Buck Lab 的任务分类 Agent，参考 PE-GPT 的任务调度方式。
 你只分类，不回答专业问题、不执行计算、不修改参数。调用 route_task 恰好一次。
 类别：guidance=界面/CSV/部署使用指导；knowledge=电路原理、公式推导；waveform=已有波形观测；
-identification=用户明确要求执行 L/C/R 辨识；diagnosis=辨识结果、误差原因、修改计划；
+identification=用户明确要求执行 L/C/R 辨识；diagnosis=辨识结果、误差原因、修改计划、多次实验对比；
 hardware=器件应力、损耗、选型、寿命；general=其他问答或尚未支持的自动仿真/设计任务。
 选一个主任务，最多两个次任务。若明确要求执行辨识并解释公式，主任务为 identification，次任务为 knowledge。
 只询问“如何辨识”“辨识原理”或明确不要执行时不能选择 identification。
@@ -56,8 +56,8 @@ CLASSIFIER_TOOL = {"type": "function", "function": {
 
 READ_ONLY_LANGUAGE = (
     r"原理|如何|怎么|为什么|什么|哪里|方法|解释|误差|不要|不用|无需|不需要|"
-    r"结果|按钮|入口|状态|进度|报告|型号|已完成|(?:辨识|识别|拟合)(?:已经|已)?完成|"
-    r"\b(?:how|why|what|where|explain|not|don't|do not|show|view|results?|errors?|causes?|part number|status|progress|completed)\b"
+    r"对比|比较|结果|按钮|入口|状态|进度|报告|型号|已完成|(?:辨识|识别|拟合)(?:已经|已)?完成|"
+    r"\b(?:compare|comparison|versus|how|why|what|where|explain|not|don't|do not|show|view|results?|errors?|causes?|part number|status|progress|completed)\b"
 )
 
 
@@ -102,7 +102,7 @@ def rule_selection(message):
         return TaskSelection(task="hardware", secondary_tasks=["knowledge"] if formula_question(text) else [])
     if formula_question(text) or re.search(r"原理|\bprinciple|how.*identif|辨识方法|如何辨识|怎么辨识", text):
         return TaskSelection(task="knowledge")
-    if re.search(r"误差|修改|计划|结果|偏差|(?:辨识|识别|拟合).*完成|\b(?:error|errors|result|results|diagnos|plan|rmse)", text):
+    if re.search(r"对比|比较|横向|纵向|误差|修改|计划|结果|偏差|(?:辨识|识别|拟合).*完成|\b(?:compare|comparison|error|errors|result|results|diagnos|plan|rmse)", text):
         return TaskSelection(task="diagnosis")
     if re.search(r"上传|导入|列映射|连接|界面|按钮|入口|使用|怎么用|\b(?:upload|import|mapping|connect|setup)\b", text):
         return TaskSelection(task="guidance")
@@ -148,6 +148,7 @@ async def classify(request):
     if not key:
         return make_route(fallback, request.message, "rules")
     context = {"has_dataset": bool(request.dataset_id and request.mapping),
+               "saved_experiment_count": len(request.experiments),
                "has_result_reference": bool(request.result_id),
                "identification_enabled": request.identification_enabled}
     messages = [{"role": "system", "content": CLASSIFIER_SYSTEM},

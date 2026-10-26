@@ -79,6 +79,7 @@ function readConversation(id) {
     if (!record || record.id !== id || !Number.isFinite(new Date(record.updated).getTime()) || !Array.isArray(record.messages) || !record.messages.every(m =>
       ["user","assistant"].includes(m.role) && typeof m.content === "string")) return null;
     record.messages=mergeMessages(id,cached?.messages || [],record.messages,storedMessages(id));
+    record.experiments=mergeExperiments(cached?.experiments,disk?.experiments,record.experiments,storedExperiments(id));
     record.updated=record.messages.reduce((latest,m)=>Math.max(latest,m.created),record.updated);
     conversationCache.set(id, record); return record;
   } catch { return conversationCache.get(id) || null; }
@@ -97,6 +98,8 @@ function persistConversation() {
   }
   conversationCache.set(activeConversation.id, activeConversation);
   try {
+    captureExperiment();
+    saveExperimentKeys(activeConversation);
     // Append-only message keys prevent an older tab from replacing newer messages.
     activeConversation.messages=mergeMessages(activeConversation.id,activeConversation.messages);
     for (const item of activeConversation.messages) {
@@ -119,6 +122,7 @@ function persistConversation() {
     historyWarning();
   } catch { historyWarning("历史保存失败：浏览器存储不可用或已满。当前对话仍可使用，请勿关闭页面。"); }
   scheduleArchiveSync();
+  renderExperiments();
 }
 function renderHistory() {
   try {
@@ -208,7 +212,7 @@ async function restoreAttachment(attachment) {
 }
 async function deleteConversation() {
   if (historyLocked() || !activeConversation) return;
-  if (!window.confirm(tr("删除当前会话及其在浏览器和后端保存的 CSV？离线时后端删除将在重连后同步。此操作无法撤销。"))) return;
+  if (!window.confirm(tr("删除当前会话、实验记录及其在浏览器和后端保存的 CSV？离线时后端删除将在重连后同步。此操作无法撤销。"))) return;
   state.busy=true; controls();
   try {
     const id=activeConversation.id, scope=csvScope();
@@ -220,7 +224,7 @@ async function deleteConversation() {
     const keys=[];
     for (let i=0;i<localStorage.length;i++) {
       const key=localStorage.key(i);
-      if (key===scope || key?.startsWith(scope+":message:")) keys.push(key);
+      if (key===scope || key?.startsWith(scope+":message:") || key?.startsWith(scope+":experiment:")) keys.push(key);
     }
     keys.forEach(key=>localStorage.removeItem(key));
     // Deletion is local-first; an offline backend cache will expire by itself.
@@ -261,6 +265,8 @@ async function openConversation(id, saveCurrent = true) {
   try { localStorage.setItem(conversationPrefix+"active",id); } catch { /* persist reports storage errors */ }
   renderHistory();
   await restoreAttachment(record.attachment);
+  await recoverExperiments();
+  renderExperiments();
   $("chat-messages").scrollTop=$("chat-messages").scrollHeight;
   controls();
 }

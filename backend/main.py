@@ -1,4 +1,5 @@
 import hmac
+import json
 import os
 import threading
 import time
@@ -210,6 +211,7 @@ def start_fit(body: FitRequest, owner):
                 del jobs[removable]
         identifier = uuid.uuid4().hex
         jobs[identifier] = {"owner": owner, "created": time.time(), "status": "queued", "stage": "queued",
+                            "dataset_snapshot": {"filename": dataset.name, "sha256": dataset.sha256},
                             "dataset_id": body.dataset_id, "config": body.model_dump(), "result": None, "error": None}
     def execute():
         def finish(**updates):
@@ -251,6 +253,30 @@ def get_job(identifier: str, owner: str = Depends(session)):
             raise HTTPException(404, "任务不存在或已过期。")
         return {"job_id": identifier, "status": job["status"], "stage": job.get("stage"),
                 "result": job["result"], "error": job["error"]}
+
+
+@app.get("/api/experiments")
+def completed_experiments(owner: str = Depends(session)):
+    """Backfill completed jobs that predate durable browser run snapshots."""
+    with lock:
+        runs = []
+        for identifier, job in jobs.items():
+            if job["owner"] != owner or job["status"] != "complete":
+                continue
+            dataset = job.get("dataset_snapshot")
+            if not dataset:
+                cached = datasets.get(job["dataset_id"])
+                data = cached["data"] if cached and cached["owner"] == owner else None
+                dataset = {"filename": data.name if data else job["result"].get("filename", ""),
+                           "sha256": data.sha256 if data else job["result"].get("file_sha256", "")}
+            result = compact(job["result"])
+            result = json.loads(json.dumps(result))
+            pann = result.get("diagnostics", {}).get("pann", {})
+            pann.pop("history", None)
+            pann.pop("epoch_history", None)
+            runs.append({"id": identifier, "created": int(job["created"]*1000),
+                         "updated": 0, "dataset": dataset, "result": result, "ground_truth": None})
+        return {"experiments": runs}
 
 
 @app.post("/api/chat")

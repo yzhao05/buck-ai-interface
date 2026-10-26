@@ -19,7 +19,7 @@ from fastapi.responses import Response
 from pydantic import Field
 
 from .data import MAX_BYTES
-from .schemas import StrictModel
+from .schemas import StrictModel, SavedExperiment
 
 
 class SavedMessage(StrictModel):
@@ -40,6 +40,7 @@ class SavedConversation(StrictModel):
     fields: dict[str, str] = Field(default_factory=dict, max_length=30)
     attachment: dict | None = None
     messages: list[SavedMessage] = Field(default_factory=list, max_length=10000)
+    experiments: list[SavedExperiment] = Field(default_factory=list, max_length=200)
 
 
 class ArchiveStore:
@@ -96,12 +97,20 @@ class ArchiveStore:
             messages = {m["id"]:m for m in incoming["messages"]}
             messages.update({m["id"]:m for m in previous["messages"]})
             merged["messages"] = sorted(messages.values(),key=lambda m:(m["created"],m["id"]))
+            experiments = {}
+            for run in [*previous.get("experiments", []), *incoming.get("experiments", [])]:
+                old = experiments.get(run["id"])
+                def run_version(item):
+                    return (item["updated"], json.dumps(item, sort_keys=True))
+                if old is None or run_version(run) > run_version(old):
+                    experiments[run["id"]] = run
+            merged["experiments"] = sorted(experiments.values(), key=lambda r:(r["created"],r["id"]))
             merged["updated"] = max(previous["updated"],incoming["updated"])
             merged["file_epoch"] = max(previous.get("file_epoch",0),incoming.get("file_epoch",0))
             attachment = merged.get("attachment")
             if attachment and attachment.get("csvEpoch",0) != merged["file_epoch"]: merged["attachment"] = None
             encoded = json.dumps(merged,ensure_ascii=False)
-            if len(encoded.encode()) > 8*1024*1024 or len(messages)>10000:
+            if len(encoded.encode()) > 8*1024*1024 or len(messages)>10000 or len(experiments)>200:
                 raise HTTPException(413,"Conversation archive is full; start a new conversation")
             db.execute("INSERT OR REPLACE INTO conversations VALUES(?,?,0,?)",(owner,identifier,encoded))
             db.execute("DELETE FROM files WHERE owner=? AND id=? AND epoch<>?",(owner,identifier,merged["file_epoch"]))
