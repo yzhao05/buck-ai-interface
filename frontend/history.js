@@ -4,7 +4,7 @@ let activeConversation = null;
 let conversationPrefix = "";
 let pendingAttachment = null;
 const conversationCache = new Map();
-const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "controller-confirmed", "controller-parameters", "controller-image"];
+const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "controller-confirmed", "controller-parameters", "controller-image", "selected-result", "chat-images"];
 const experimentDefaults = {vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"200", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
 function historyWarning(text = "") {
   ui($("history-status"), text); $("history-status").hidden = !text;
@@ -186,9 +186,9 @@ function renderHistory() {
     $("history-list").append(button);
   }
 }
-function rememberMessage(role, content, response = null, mode = "") {
+function rememberMessage(role, content, response = null, mode = "", images = []) {
   const created=Math.max(Date.now(),(activeConversation.messages.at(-1)?.created || 0)+1);
-  const item={id:crypto.randomUUID(),created,role,content,response,mode};
+  const item={id:crypto.randomUUID(),created,role,content,response,mode,...(images.length?{images:structuredClone(images)}:{})};
   activeConversation.messages.push(item);
   activeConversation.updated = Date.now();
   state.history = activeConversation.messages.filter(m => m.mode !== "请求未完成")
@@ -290,10 +290,13 @@ async function openConversation(id, saveCurrent = true) {
   }
   const record=readConversation(id);
   if (!record) return;
+  const selectedResultId=record.fields?.["selected-result"];
   activeConversation=record; sessionId=record.id;
+  $("chat-image-dialog").close();
   notice(); resetExperiment(); clearChat();
   pendingAttachment=record.attachment;
   for (const field of experimentFields) $(field).value=record.fields?.[field] ?? experimentDefaults[field] ?? "";
+  renderChatImages();
   window.BuckCircuit.render();
   // A legacy "integral" value is no longer in the selector. The new identifier
   // also prevents restoreAttachment from relabelling an old result as weighted.
@@ -302,7 +305,7 @@ async function openConversation(id, saveCurrent = true) {
   ui($("train-label"),$("train-fraction").value+"%");
   $("chat-input").value=record.draft || "";
   for (const item of record.messages) {
-    const article=message(item.role,item.content,item.mode);
+    const article=message(item.role,item.content,item.mode,item.images || []);
     article.dataset.messageId=item.id;
     if (item.response) decorateResponse(article,item.response);
   }
@@ -315,6 +318,7 @@ async function openConversation(id, saveCurrent = true) {
   renderHistory();
   await restoreAttachment(record.attachment);
   await recoverExperiments();
+  if(selectedResultId)await selectExperiment(selectedResultId);
   renderExperiments();
   $("chat-messages").scrollTop=$("chat-messages").scrollHeight;
   controls();
@@ -339,8 +343,8 @@ async function analyzeInNewConversation() {
   state.busy=true;controls();notice("正在为新对话复制实验结果…",true);
   let copied;
   try {
-    copied=await api(`/api/jobs/${state.resultId}/analysis-copy`,{method:"POST"});
-    const now=Date.now(),opts=result.options,fields={...source.fields,
+    copied=state.savedRun ? {session_id:crypto.randomUUID(),job_id:crypto.randomUUID(),dataset:null} : await api(`/api/jobs/${state.resultId}/analysis-copy`,{method:"POST"});
+    const now=Date.now(),opts=result.options,fields={...source.fields,"chat-images":"","selected-result":state.savedRun ? copied.job_id : "",
       vin:String(opts.vin),frequency:String(opts.frequency_hz/1000),"fit-mode":opts.mode,"fixed-r":String(opts.resistance_ohm),
       "fit-method":opts.method,"pwm-source":opts.pwm_source,"controller-confirmed":opts.controller_confirmed?"yes":"no",
       "controller-parameters":opts.controller?JSON.stringify(opts.controller):"",
@@ -349,8 +353,8 @@ async function analyzeInNewConversation() {
       "pann-state":opts.pann_initial_state,"pann-cycles":String(opts.pann_window_cycles)};
     if(truthComparison)truthComparison.result_id=copied.job_id;
     const record={id:copied.session_id,updated:now,meta_updated:now,messages:[],draft:"",fields,file_epoch:0,
-      attachment:{dataset:copied.dataset,mapping:result.mapping,mappingDraft:result.mapping,resultId:copied.job_id,jobId:null,csvEpoch:0,truthDraft,truthComparison},
-      experiments:[{id:copied.job_id,created:now,updated:now,dataset:{filename:copied.dataset.filename,sha256:copied.dataset.sha256},
+      attachment:copied.dataset ? {dataset:copied.dataset,mapping:result.mapping,mappingDraft:result.mapping,resultId:copied.job_id,jobId:null,csvEpoch:0,truthDraft,truthComparison} : null,
+      experiments:[{id:copied.job_id,created:now,updated:now,dataset:copied.dataset ? {filename:copied.dataset.filename,sha256:copied.dataset.sha256} : {...state.savedRun.dataset},
         result:experimentSnapshot(result),ground_truth:comparison?{result_id:copied.job_id,...comparison.ground_truth}:null}]};
     // Save the destination before leaving the source. A storage error keeps the source open.
     saveExperimentKeys(record);

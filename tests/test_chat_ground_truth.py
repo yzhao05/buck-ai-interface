@@ -50,6 +50,67 @@ def test_local_comparison_and_no_persistent_truth(context):
     assert "电感相对误差 0.0368333%" not in answer
 
 
+def saved_request(body, result):
+    body = copy.deepcopy(body)
+    body["current_result_analysis"] = True
+    body["saved_result"] = {"id": body["result_id"], "created": 1000, "updated": 1000,
+                            "dataset": {"filename": "archived.csv", "sha256": "a"*64},
+                            "result": {**copy.deepcopy(result), "options": copy.deepcopy(body["options"]), "mapping": None}}
+    return body
+
+
+def test_saved_result_without_dataset_or_cached_job(context, monkeypatch):
+    client, body, result = context
+    body = saved_request(body, result)
+    main.jobs.pop(body["result_id"])
+    def no_fit(*args, **kwargs):
+        pytest.fail("Reading a saved result must not start identification")
+    monkeypatch.setattr(main, "start_fit", no_fit)
+    response = client.post("/api/chat", json=body)
+    assert response.status_code == 200
+    assert "电感相对误差 0.0368333%" in response.json()["answer"]
+    assert not response.json().get("job_id")
+
+
+@pytest.mark.parametrize("change", ["id", "options", "mapping", "execute"])
+def test_saved_result_requires_matching_read_only_request(context, change):
+    client, body, result = context
+    body = saved_request(body, result)
+    if change == "id":
+        body["saved_result"]["id"] = "different-run"
+    elif change == "options":
+        body["options"]["vin"] += 1
+    elif change == "mapping":
+        body["saved_result"]["result"]["mapping"] = {"time": "different"}
+    else:
+        body["identification_enabled"] = True
+    assert client.post("/api/chat", json=body).status_code == 422
+
+
+def test_saved_snapshot_provenance_reaches_model(context, monkeypatch):
+    client, body, result = context
+    body = saved_request(body, result)
+    main.jobs.pop(body["result_id"])
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only")
+    class Provider:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, **kwargs):
+            messages = kwargs["json"]["messages"]
+            assert "来自用户会话保存的实验快照" in messages[0]["content"]
+            data = json.loads(messages[1]["content"].split("：", 1)[1])["previous_result"]
+            assert data["result_source"] == "saved_conversation_snapshot"
+            assert data["result_id"] == body["result_id"]
+            assert data["parameters"] == result["parameters"]
+            assert data["parameter_comparison"]["relative_error_pct"]["L"] == pytest.approx(.0368333333333)
+            return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"message": {"role": "assistant", "content": "已读取历史结果。"}}]})
+    monkeypatch.setattr(chat.httpx, "AsyncClient", Provider)
+    response = client.post("/api/chat", json=body)
+    assert response.status_code == 200
+    assert response.json()["mode"] == "deepseek"
+
+
 @pytest.mark.parametrize("change", ["result", "owner", "options"])
 def test_truth_cannot_bypass_result_binding(context, change):
     client, body, _ = context

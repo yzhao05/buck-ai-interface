@@ -187,7 +187,7 @@ async def classify(request):
                "identification_enabled": request.identification_enabled}
     messages = [{"role": "system", "content": CLASSIFIER_SYSTEM},
                 {"role": "system", "content": "界面状态（数据）：" + json.dumps(context)},
-                *[m.model_dump() for m in request.history[-6:]],
+                *[m.model_dump(exclude={"images"}) for m in request.history[-6:]],
                 {"role": "user", "content": request.message}]
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5)) as client:

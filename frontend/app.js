@@ -22,7 +22,7 @@ function savedToken(address) {
 let base = savedValue("buck-api-url") || config.apiBaseUrl || (local ? location.origin : "");
 let accessToken = savedToken(base);
 let sessionId = crypto.randomUUID();
-const state = { dataset: null, csvFile: null, mapping: null, summary: null, result: null, resultId: null,
+const state = { dataset: null, csvFile: null, mapping: null, summary: null, result: null, resultId: null, savedRun: null,
   truthDraft: {l:"",c:""}, truthComparison: null, truthError: "",
   history: [], connected: false, busy: false, chatBusy: false, syncBusy: false, job: null, chart: null, zoom: null,
   identificationOpen: false, waveformOpen: false };
@@ -119,6 +119,9 @@ function prepareControllerDefaults() {
 }
 function controls() {
   const waiting = historyLocked();
+  for(const id of ["attach-chat-image","chat-use-circuit","attach-circuit-image","chat-image-file","reuse-chat-image"]) $(id).disabled=waiting;
+  $("toggle-result-library").disabled=waiting || !activeConversation;
+  if(waiting)closeResultLibrary();
   $("ask-error").disabled = waiting || !state.result;
   if (waiting || !state.result) closeAnalysisMenu();
   renderAnalysisHistory();
@@ -227,6 +230,8 @@ function resultMatchesCurrent(result) {
   } catch { return false; }
 }
 function invalidateResult() {
+  closeResultLibrary();state.savedRun=null;$("selected-result").value="";
+  $("selected-result-name").hidden=true;$("result-archive-note").hidden=true;
   closeAnalysisMenu();
   clearReportDownloads();
   state.result = null; state.resultId = null;
@@ -540,6 +545,10 @@ function resultQuality(r) {
   return r.quality==="需复核" || resultReviewReasons(r).length>0 ? "需复核" : r.quality;
 }
 function displayResult({preserveZoom=false}={}) {
+  $("result-archive-note").hidden=!state.savedRun;
+  if(state.savedRun)ui($("result-archive-note"),state.result.chart
+    ? "正在查看已保存实验。左侧设置与上方波形仍对应当前导入的数据。"
+    : "正在查看已保存实验摘要，未包含完整波形和逐轮训练记录。左侧设置与上方波形仍对应当前导入的数据。");
   clearReportDownloads();
   displayTruthComparison();
   const r = state.result, p = r.parameters;
@@ -556,7 +565,7 @@ function displayResult({preserveZoom=false}={}) {
   $("diagnostics").hidden = false;
   displayDiagnostics();
   $("ask-error").disabled = false; $("download-report").disabled = false;
-  state.chart = r.chart; if (!preserveZoom) state.zoom = null; drawCharts();
+  state.chart = state.savedRun ? state.summary?.chart || null : r.chart; if (!preserveZoom) state.zoom = null; drawCharts();
 }
 function displayDiagnostics() {
   if (!state.result) return;
@@ -573,7 +582,7 @@ function clearChat() {
   $("chat-messages").querySelector(".welcome").hidden = false;
   $("chat-messages").querySelector(".suggestions").hidden = false;
 }
-function message(role, content, mode = "") {
+function message(role, content, mode = "", images = []) {
   const article = document.createElement("article"); article.className = `message ${role}`;
   const label = document.createElement("div"); label.className = "message-label";
   if (role === "assistant") { const icon = document.createElement("span"); icon.className = "assistant-icon"; icon.textContent = "✳"; label.append(icon); }
@@ -581,7 +590,7 @@ function message(role, content, mode = "") {
   if (mode) { const badge = document.createElement("span"); badge.className = "message-mode"; ui(badge, mode); label.append(badge); }
   const text = document.createElement("div"); text.className = "message-content"; text.textContent = content;
   if (role === "assistant" && window.BuckMarkdown) window.BuckMarkdown.render(text,content);
-  article.append(label, text); $("chat-messages").append(article);
+  article.append(label, text); renderMessageImages(article,images); $("chat-messages").append(article);
   $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
   return article;
 }
@@ -609,7 +618,8 @@ function decorateResponse(article, response) {
     }
 }
 async function sendMessage(value, {analysisRequest=false}={}) {
-  const text = value.trim(); if (!text || historyLocked() || !activeConversation) return;
+  const images=chatImages();
+  const text = value.trim() || (images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { notice("请先连接分析后端。"); return; }
   const currentOnly=analysisRequest || resultAnalysisPrompts.has(text);
   const targetResultId=state.resultId;
@@ -618,36 +628,41 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   const resultFollowup=!currentOnly && continuesResultAnalysis(text,corpus);
   const useConversation=!currentOnly && !resultFollowup && (wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0));
   const compareSaved=!requestsIdentificationExecution(text) && (useConversation || (comparingExperiments(text) && chatExperiments().length>0));
+  const imageQuestion=images.length>0;
   const analysisMeta=currentOnly ? analysisDescriptor() : null;
   // Read-only analysis belongs to the displayed completed run, not unsubmitted form edits.
   const analyzeResult = Boolean(state.result) && !requestsIdentificationExecution(text) && !compareSaved;
   const analysisMapping = analyzeResult ? state.result.mapping : state.mapping;
   let fitOptions;
   try { fitOptions = analyzeResult ? structuredClone(state.result.options) : options(); } catch (error) {
-    if (state.identificationOpen && !compareSaved) { notice(error.message); return; }
+    if (state.identificationOpen && !compareSaved && !imageQuestion) { notice(error.message); return; }
   }
   state.chatBusy = true; controls();
   $("conversation-panel").classList.remove("is-empty");
   $("chat-input").value = "";
   $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
-  const userArticle=message("user", text);
+  const userArticle=message("user", text,"",images);
   const previousHistory = currentOnly ? [] : readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
-    .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000)}));
-  const requestMessage=rememberMessage("user", text, analysisMeta ? {analysis_request:analysisMeta} : null);
+    .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000),...(m.images?.length?{images:m.images}:{})}));
+  const requestMessage=rememberMessage("user", text, analysisMeta ? {analysis_request:analysisMeta} : null,"",images);
+  setChatImages([]);persistConversation();
   userArticle.dataset.messageId=requestMessage.id;
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
-    if (state.mapping && !compareSaved) await ensureDatasetAvailable();
+    if (state.mapping && !compareSaved && !imageQuestion && !(analyzeResult && state.savedRun)) await ensureDatasetAvailable();
     if(currentOnly && (!state.result || state.resultId!==targetResultId))throw new Error("当前结果已失效，请重新辨识后再分析。");
     const comparison=fitOptions && !compareSaved ? parameterComparison() : null;
-    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,history:previousHistory,current_result_analysis:currentOnly,
-      dataset_id:state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
+    const imageResult=imageQuestion && analyzeResult ? readConversation(activeConversation.id)?.experiments?.find(run=>run.id===state.resultId) : null;
+    const savedResult=analyzeResult ? state.savedRun || imageResult : null;
+    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,
+      dataset_id:savedResult || imageQuestion ? null : state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
+      saved_result:savedResult ? {...savedResult,result:experimentSnapshot(state.result)} : undefined,
       options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
       conversation_messages:corpus,conversation_retrieval_requested:useConversation,
       // Keep execution context for explicit mixed requests (run, then compare).
       // The backend classifier enforces read-only tools for comparison alone.
-      experiments:currentOnly ? [] : chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult}});
+      experiments:currentOnly ? [] : chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult && !imageQuestion}});
     pending.remove();
     const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
     const article = message("assistant", answer,
@@ -680,7 +695,7 @@ function drawChart(id, channel, predictedChannel) {
   for (const i of indices) { yMin=Math.min(yMin,ys[i],ps?.[i]??Infinity); yMax=Math.max(yMax,ys[i],ps?.[i]??-Infinity); }
   const pad = Math.max((yMax-yMin)*.12, Math.abs(yMax)*.01, .001); yMin-=pad; yMax+=pad;
   const x = v => left+(v-lo)/(hi-lo)*(w-left-right), y = v => h-bottom-(v-yMin)/(yMax-yMin)*(h-top-bottom);
-  if (state.result && state.result.train_end_s < hi) {
+  if (state.result && !state.savedRun && state.result.train_end_s < hi) {
     const sx = x(Math.max(lo,state.result.train_end_s));
     svg.append(svgNode("rect", {x:sx,y:top,width:Math.max(0,w-right-sx),height:h-top-bottom,fill:"#f1f6f9"}));
     if (state.result.train_end_s >= lo) {
@@ -754,9 +769,10 @@ async function exportReports() {
   reportExportBusy = true; $("download-report").disabled = true;
   // Capture once: editing inputs or switching conversations must never mix runs.
   const exportedAt = new Date(), language = window.BuckI18n.language;
-  const report = structuredClone({application:"Buck Lab 0.1.0",exported_at:exportedAt.toISOString(),summary:state.summary,
+  const report = structuredClone({application:"Buck Lab 0.1.0",exported_at:exportedAt.toISOString(),summary:state.savedRun ? null : state.summary,
     result:{...state.result,quality:resultQuality(state.result),parameter_comparison:parameterComparison(),parameter_error:parameterComparison(),parameter_error_note:parameterErrorNote(),assessment:resultAssessment(state.result),review_reasons:resultReviewReasons(state.result)},conversation:state.history});
-  const filename = reportFilename(report.result, exportedAt);
+  const run=activeConversation?.experiments?.find(item=>item.id===state.resultId);
+  const filename = run ? experimentReportName(run) : reportFilename(report.result, exportedAt);
   const notes = (report.result.warnings || []).map(note=>tr(note));
   $("report-downloads").hidden = false;
   ui($("report-export-status"), "JSON 已生成，正在生成 PDF…");
@@ -799,9 +815,12 @@ function reportFilename(result, date = new Date()) {
 function downloadReport() {
   void exportReports();
 }
+setupChatImages();
 $("csv-file").onchange = event => { if(event.target.files[0]) void importData(event.target.files[0]); };
 $("close-notice").onclick = () => notice();
 $("load-demo").onclick = $("empty-demo").onclick = () => void importData();
+$("toggle-result-library").onclick=toggleResultLibrary;
+document.addEventListener("buck-language-change",()=>{closeResultLibrary();renderResultLibrary();});
 $("toggle-csv-library").onclick = () => void toggleCsvLibrary();
 $("dropzone").ondragover = event => {event.preventDefault();$("dropzone").classList.add("dragover");};
 $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
@@ -838,7 +857,7 @@ for (const side of ["left", "right"]) {
 $("leave-identification").onclick=()=>setIdentificationOpen(false);
 $("toggle-import").onclick=()=>toggleSection("toggle-import","import-content","导入波形");
 $("view-full").onclick=()=>{state.zoom=null;drawCharts();};
-$("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;const frequency=state.result?.options.frequency_hz || Number($("frequency").value)*1000;state.zoom=[Math.max(t[0],t[t.length-1]-10/frequency),t[t.length-1]];drawCharts();}};
+$("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;const frequency=(!state.savedRun && state.result?.options.frequency_hz) || Number($("frequency").value)*1000;state.zoom=[Math.max(t[0],t[t.length-1]-10/frequency),t[t.length-1]];drawCharts();}};
 $("chat-form").onsubmit=event=>{event.preventDefault();void sendMessage($("chat-input").value);};
 $("chat-input").onkeydown=event=>{if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing){event.preventDefault();void sendMessage($("chat-input").value);}};
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));

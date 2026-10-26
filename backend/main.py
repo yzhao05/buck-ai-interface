@@ -310,6 +310,10 @@ async def chat_route(body: ChatRequest, owner: str = Depends(session)):
             if name == "get_identification_result":
                 if not body.result_id:
                     return None
+                if body.saved_result:
+                    # User's persisted experiment snapshot, not a newly computed job.
+                    return compact({**with_ground_truth(body.saved_result.result, body.ground_truth),
+                                    "result_id": body.result_id, "result_source": "saved_conversation_snapshot"})
                 job = jobs.get(body.result_id)
                 if not job or job["owner"] != owner or job["dataset_id"] != body.dataset_id or job["status"] != "complete":
                     return None

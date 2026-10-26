@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./chat-images.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -52,11 +52,11 @@
           <section class="circuit-card" aria-label="参考电路">
             <div class="circuit-card-heading"><strong>参考电路</strong><button type="button" id="edit-circuit" class="text-button">放大 / 编辑</button></div>
             <button type="button" id="circuit-preview" class="circuit-preview" aria-label="放大并编辑电路图"></button>
-            <div class="circuit-actions"><button type="button" id="upload-circuit" class="text-button">上传电路图片</button><button type="button" id="show-default-circuit" class="text-button" hidden>恢复默认图</button></div>
+            <div class="circuit-actions"><button type="button" id="upload-circuit" class="text-button">上传电路图片</button><button type="button" id="attach-circuit-image" class="text-button">交给助手分析</button><button type="button" id="show-default-circuit" class="text-button" hidden>恢复默认图</button></div>
             <p class="field-note" id="circuit-caption"></p>
             <input type="hidden" id="controller-parameters" value=""><input type="hidden" id="controller-image" value="">
           </section>
-          <p class="field-note">仅适用于与默认图接线相同的非同步 Buck 和 RC 控制器。默认参数来自 Case09/10，可在图中点击参数修改；计算使用当前设置。上传图片仅替换参考图，不会自动识别参数或改变接线模型。</p>
+          <p class="field-note">仅适用于与默认图接线相同的非同步 Buck 和 RC 控制器。默认参数来自 Case09/10，可在图中点击参数修改；计算使用当前设置。上传图片后可交给助手分析，识图建议不会自动写入参数或改变接线模型。</p>
           <label>确认电路配置<select id="controller-confirmed"><option value="no">尚未确认</option><option value="yes">接线与默认图一致，参数与当前设置一致</option></select></label>
           <p class="field-note">CSV 必须从 t=0 开始。固定已知负载 R，仅识别 L、C；区间内负载须恒定，结束时间小于 1 ms，建议 0～0.8 ms。训练段重建 PWM，留出段自主闭环验证。</p>
         </div>
@@ -97,8 +97,8 @@
         <div class="welcome"><span class="eyebrow">LET’S INVESTIGATE</span><h3>上传仿真波形，<br>识别电感、电容和电阻。</h3><p>选择 PANN 或加权积分方法计算 L、C、R，向 AI 提问，分析辨识误差并获取参数调整建议。</p></div>
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
-      <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
-      <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要与对话将发送至已配置的 DeepSeek。<br>清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
+      <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><input type="hidden" id="chat-images" value=""><input type="file" id="chat-image-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><div id="chat-image-list" class="message-images" hidden></div><div class="chat-image-tools"><button type="button" id="attach-chat-image" class="button subtle small">添加图片</button><button type="button" id="chat-use-circuit" class="button subtle small">添加电路图</button><span>支持选择、粘贴或拖入图片；每次最多 3 张，单张最大 8 MB。图片会压缩，GIF 仅发送首帧。</span></div><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
+      <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要、对话及随消息附加的图片将发送至已配置的 DeepSeek。<br>清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
     </main>
     <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>
       <div class="pane-controls page-heading"><span class="eyebrow">WAVEFORM INTELLIGENCE</span><h2>波形与辨识结果</h2><button type="button" id="toggle-right-pane" class="section-toggle" aria-controls="analysis-panel" aria-expanded="true" aria-label="收起右栏" title="收起右栏">›</button><p>查看测量波形、模型预测与验证误差。</p><span class="pane-rail-label">波形与结果</span></div>
@@ -118,7 +118,10 @@
         </div>
       </section>
       <section class="card results-card" id="results-card" hidden>
-        <div class="card-heading"><div><h2>参数辨识</h2><p>物理模型计算 · 同记录后段验证</p></div><span id="result-badge" class="badge">等待计算</span></div>
+        <div class="card-heading"><div class="result-title"><div class="result-title-row"><h2>参数辨识</h2><button type="button" id="toggle-result-library" class="section-toggle" aria-label="查看本会话辨识记录" title="查看本会话辨识记录" aria-expanded="false" aria-controls="result-library-menu">⌄</button></div><p>物理模型计算 · 同记录后段验证</p><p id="selected-result-name" hidden></p></div><span id="result-badge" class="badge">等待计算</span></div>
+        <input id="selected-result" type="hidden" value="">
+        <div id="result-library-menu" class="result-library-menu" hidden><p id="result-library-status"></p><div id="result-library-list"></div></div>
+        <p id="result-archive-note" class="result-archive-note" hidden></p>
         <div class="parameter-grid"><div><span>预测电感 L</span><strong id="result-l">—</strong><small>μH</small></div><div><span>预测电容 C</span><strong id="result-c">—</strong><small>μF</small></div><div><span id="r-label">负载电阻 R</span><strong id="result-r">—</strong><small>Ω</small></div></div>
         <section id="truth-comparison" class="truth-comparison" aria-label="参数真值对照">
           <div class="two-fields"><label>真实电感 L<div class="unit-input"><input id="truth-l" type="number" step="any" min="0" placeholder="输入真实电感" disabled><span>μH</span></div></label><label>真实电容 C<div class="unit-input"><input id="truth-c" type="number" step="any" min="0" placeholder="输入真实电容" disabled><span>μF</span></div></label></div>
@@ -155,12 +158,13 @@
         <p>C2 初始电压 = va − vm；C3 初始电压 = vb − vm。载波相位以周期为单位。小屏幕可左右滑动查看完整电路图。</p>
         <div class="circuit-actions"><button type="button" id="circuit-upload-edit" class="button secondary small">上传电路图片</button><button type="button" id="circuit-default-edit" class="button secondary small">恢复默认图</button><button type="button" id="reset-controller" class="button secondary small">恢复默认参数</button></div>
         <input type="file" id="circuit-file" accept="image/png,image/jpeg,image/webp" hidden>
-        <p>支持 PNG、JPG、WebP，最大 5 MB。图片会压缩后随会话保存和同步；仅作参考，不自动读取其中的数值。上传图片后仍需在参数栏填写数值。</p>
+        <p>支持 PNG、JPG、WebP，最大 5 MB。图片会压缩后随会话保存和同步。保存后可点击“交给助手分析”附加到提问；识别的参数仍需核对并手动填写。</p>
         <p id="circuit-error" role="alert"></p>
       </div><div id="circuit-fields" class="circuit-fields"></div></div>
       <div class="circuit-dialog-footer"><span>保存修改后需重新确认电路，并重新辨识。</span><button type="submit" class="button primary" id="save-circuit">保存电路设置</button></div>
     </form>
   </dialog>
+  <dialog id="chat-image-dialog" class="chat-image-dialog"><div class="chat-image-dialog-heading"><span id="chat-image-name"></span><button type="button" id="close-chat-image" class="section-toggle" aria-label="关闭图片">×</button></div><img id="chat-image-preview" alt=""><button type="button" id="reuse-chat-image" class="button secondary small">附加到当前提问</button></dialog>
   <div id="chart-tooltip" class="chart-tooltip" hidden></div>
 </body>
 </html>

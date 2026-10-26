@@ -1,0 +1,62 @@
+const assert=require('node:assert/strict');
+const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
+(async()=>{
+ const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+ const page=await browser.newPage({viewport:{width:1500,height:1000}}),errors=[],requests=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ page.on('request',r=>{if(r.url().endsWith('/api/chat'))requests.push(r.postDataJSON());});
+ const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
+ try{
+  await page.goto('http://127.0.0.1:8001');await ready();
+  const data=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=480;c.height=180;const x=c.getContext('2d');x.fillStyle='white';x.fillRect(0,0,480,180);x.fillStyle='black';x.font='24px Arial';x.fillText('L = 60 uH, C = 500 uF, R = 6 ohm',10,90);return c.toDataURL('image/png');});
+  const file={name:'circuit-test.png',mimeType:'image/png',buffer:Buffer.from(data.split(',')[1],'base64')};
+  await page.locator('#chat-image-file').setInputFiles(file);await ready();
+  assert.equal(await page.locator('#chat-image-list .chat-image-thumbnail').count(),1);
+  const owner=await page.evaluate(()=>activeConversation.id);
+  await page.reload();await ready();assert.equal(await page.locator('#chat-image-list .chat-image-thumbnail').count(),1,'Unsent image survives reload');
+  await page.locator('#send-chat').click();await page.waitForFunction(()=>activeConversation.messages.length===2&&!state.chatBusy);await ready();
+  assert.equal(requests[0].images.length,1);assert(requests[0].images[0].data_url.startsWith('data:image/png;base64,'));
+  assert.equal(await page.locator('#chat-image-list .chat-image-thumbnail').count(),0);
+  assert.match(await page.locator('.message.assistant').last().innerText(),/图片尚未识别/);
+  assert.equal(await page.locator('.message.user .chat-image-thumbnail').count(),1);
+  await page.locator('#chat-input').fill('解释一下这张图');await page.locator('#send-chat').click();await ready();
+  assert.equal(requests.at(-1).history[0].images.length,1,'Recent history carries images');
+  await page.evaluate(()=>synchronizeArchive());await ready();
+  const record=await page.evaluate(async()=> (await archiveRequest('/conversations/'+activeConversation.id)).record);
+  assert.equal(record.messages[0].images.length,1,'Backend archive preserves image bytes');
+  await page.reload();await ready();await page.locator('.message.user .chat-image-thumbnail').first().click();
+  assert(await page.locator('#chat-image-dialog').isVisible());await page.locator('#reuse-chat-image').click();
+  assert.equal(await page.locator('#chat-image-list .chat-image-thumbnail').count(),1);
+  await page.evaluate(()=>newConversation());await ready();assert.equal(await page.locator('#chat-image-list .chat-image-thumbnail').count(),0);
+  await page.evaluate(id=>openConversation(id),owner);await ready();assert.equal(await page.locator('#chat-image-list .chat-image-thumbnail').count(),1);
+  await page.locator('.chat-image-remove').click();
+  // Paste and drop use the same image checks and storage path.
+  await page.evaluate(async url=>{const blob=await (await fetch(url)).blob(),dt=new DataTransfer();dt.items.add(new File([blob],'pasted.png',{type:'image/png'}));document.getElementById('chat-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));},data);await ready();
+  await page.evaluate(async url=>{const blob=await (await fetch(url)).blob(),dt=new DataTransfer();dt.items.add(new File([blob],'dropped.png',{type:'image/png'}));document.getElementById('chat-form').dispatchEvent(new DragEvent('drop',{dataTransfer:dt,bubbles:true,cancelable:true}));},data);await ready();
+  assert.equal(await page.locator('#chat-image-list .chat-image-thumbnail').count(),2);
+  await page.locator('#chat-image-file').setInputFiles([file,file]);await ready();assert.equal(await page.evaluate(()=>chatImages().length),2,'Over-limit selection is rejected');
+  assert.equal(await page.locator('#chat-image-file').inputValue(),'','Rejected selection can be selected again');
+  await page.evaluate(()=>resetExperiment());assert.equal(await page.evaluate(()=>chatImages().length),2,'Resetting CSV/identification must preserve the chat image draft');
+  await page.evaluate(()=>{setChatImages([]);persistConversation();});
+  const before=await page.evaluate(()=>({vin:document.getElementById('vin').value,params:document.getElementById('controller-parameters').value}));
+  await page.locator('#chat-use-circuit').click();await ready();assert.equal(await page.evaluate(()=>chatImages()[0].name),'default-circuit.png');
+  assert.deepEqual(await page.evaluate(()=>({vin:document.getElementById('vin').value,params:document.getElementById('controller-parameters').value})),before);
+  await page.evaluate(url=>{setChatImages([]);document.getElementById('controller-image').value=url;window.BuckCircuit.render();persistConversation();},data);
+  await page.locator('#chat-use-circuit').click();await ready();assert.equal(await page.evaluate(()=>chatImages()[0].data_url),data,'Uploaded reference is attached, not the default drawing');
+  // Image questions must still work if the numerical form has an invalid draft.
+  await page.locator('#enter-identification').click();await page.locator('#vin').fill('');
+  await page.locator('#send-chat').click();await ready();assert.equal(requests.at(-1).images.length,1);assert.equal(requests.at(-1).identification_enabled,false);
+  await page.locator('#chat-use-circuit').click();await ready();
+  await page.locator('#language-toggle').click();
+  assert.equal(await page.locator('#attach-chat-image').innerText(),'Add images');
+  assert.equal(await page.locator('.chat-image-remove').getAttribute('aria-label'),'Remove image');
+  await page.locator('#send-chat').click();await ready();
+  assert.equal(requests.at(-1).language,'en');
+  assert.match(await page.locator('.message.assistant').last().locator('.message-content').innerText(),/^Images have not been analyzed/);
+  await page.locator('#chat-use-circuit').click();await ready();
+  await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  await page.locator('#chat-form').scrollIntoViewIfNeeded();await page.screenshot({path:'runtime/chat-images-mobile.png'});
+  assert.deepEqual(errors,[]);
+  console.log('PASS: upload, image-only message, multimodal history, fallback, archive, reload/drafts/isolation, preview/reuse/remove, paste/drop/limits, default/uploaded circuit, bilingual/mobile');
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

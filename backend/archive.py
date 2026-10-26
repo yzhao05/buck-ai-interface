@@ -20,6 +20,7 @@ from pydantic import Field
 
 from .data import MAX_BYTES
 from .schemas import StrictModel, SavedExperiment
+from .vision import ChatImage
 
 
 class SavedMessage(StrictModel):
@@ -29,6 +30,7 @@ class SavedMessage(StrictModel):
     content: str = Field(max_length=100000)
     mode: str = Field(default="", max_length=200)
     response: dict | None = None
+    images: list[ChatImage] = Field(default_factory=list, max_length=3)
 
 
 class SavedConversation(StrictModel):

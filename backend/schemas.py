@@ -2,6 +2,7 @@ from typing import Literal
 import json
 import math
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from .vision import ChatImage
 
 
 class StrictModel(BaseModel):
@@ -71,6 +72,13 @@ class FitRequest(AnalysisRequest):
 class ChatMessage(StrictModel):
     role: Literal["user", "assistant"]
     content: str = Field(max_length=8000)
+    images: list[ChatImage] = Field(default_factory=list, max_length=3)
+
+    @model_validator(mode="after")
+    def user_images_only(self):
+        if self.images and self.role != "user":
+            raise ValueError("Only user messages can include images")
+        return self
 
 
 class ChatGroundTruth(StrictModel):
@@ -156,15 +164,18 @@ class ConversationMessage(StrictModel):
 
 
 class ChatRequest(StrictModel):
+    language: Literal["zh", "en"] = "zh"
     identification_enabled: bool = False
     current_result_analysis: bool = False
     message: str = Field(min_length=1, max_length=4000)
+    images: list[ChatImage] = Field(default_factory=list, max_length=3)
     history: list[ChatMessage] = Field(default_factory=list, max_length=12)
     dataset_id: str | None = None
     mapping: Mapping | None = None
     options: FitOptions = Field(default_factory=FitOptions)
     result_id: str | None = None
     ground_truth: ChatGroundTruth | None = None
+    saved_result: SavedExperiment | None = None
     experiments: list[ChatExperiment] = Field(default_factory=list, max_length=200)
     # Legacy clients only. New clients send the searchable full conversation.
     analysis_history: list[HistoricalAnalysis] = Field(default_factory=list, max_length=4)
@@ -175,6 +186,12 @@ class ChatRequest(StrictModel):
 
     @model_validator(mode="after")
     def truth_matches_result(self):
+        if self.saved_result:
+            if self.identification_enabled or self.saved_result.id != self.result_id:
+                raise ValueError("Saved result analysis must be read-only and match the result ID.")
+            snapshot = self.saved_result.result
+            if snapshot.get("options") != self.options.model_dump() or snapshot.get("mapping") != (self.mapping.model_dump() if self.mapping else None):
+                raise ValueError("Saved result configuration and mapping must match the selected result.")
         if len({m.id for m in self.conversation_messages}) != len(self.conversation_messages):
             raise ValueError("Conversation message IDs must be unique.")
         if sum(len(m.content) for m in self.conversation_messages) > 8000000:

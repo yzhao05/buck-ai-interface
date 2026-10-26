@@ -53,7 +53,7 @@ function wireRecord(record) {
   return {id:record.id,updated:record.updated,meta_updated:record.meta_updated || record.updated,
     file_epoch:record.file_epoch || 0,draft:record.draft || "",fields:record.fields || {},attachment:record.attachment || null,
     experiments:mergeExperiments(record.experiments,storedExperiments(record.id)),
-    messages:record.messages.map(m=>({id:m.id,created:m.created,role:m.role,content:m.content,mode:m.mode || "",response:m.response || null}))};
+    messages:record.messages.map(m=>({id:m.id,created:m.created,role:m.role,content:m.content,mode:m.mode || "",response:m.response || null,images:m.images || []}))};
 }
 function saveMergedRecord(record) {
   const local=readConversation(record.id);

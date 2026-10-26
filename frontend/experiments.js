@@ -39,7 +39,7 @@ function captureExperiment({updateTruth=false}={}) {
   // Only explicit edits/calculation may update an existing run's comparison.
   if (old && !updateTruth) {activeConversation.experiments=runs;return;}
   const run={id:state.resultId,created:old?.created || Date.now(),updated:old?.updated || Date.now(),
-    dataset:{filename:state.dataset?.filename || "",sha256:state.dataset?.sha256 || ""},
+    dataset:state.savedRun?.dataset || {filename:state.dataset?.filename || "",sha256:state.dataset?.sha256 || ""},
     result:experimentSnapshot(state.result),
     ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : null};
   if (!old || JSON.stringify({...old,updated:0})!==JSON.stringify({...run,updated:0})) run.updated=Math.max(Date.now(),(old?.updated || 0)+1);
@@ -62,6 +62,7 @@ async function recoverExperiments() {
   }
 }
 function renderExperiments() {
+  renderResultLibrary();
   const list=$("experiment-runs");if (!list) return;
   list.replaceChildren();
   const runs=activeConversation?.experiments || [];
@@ -76,3 +77,68 @@ function renderExperiments() {
     row.append(name,detail);list.append(row);
   }
 }
+
+function experimentReportName(run) {
+  return reportFilename({...run.result,filename:run.result.filename || run.dataset.filename},new Date(run.created));
+}
+function closeResultLibrary() {
+  $("result-library-menu").hidden=true;$("toggle-result-library").setAttribute("aria-expanded","false");
+}
+function renderResultLibrary() {
+  const runs=mergeExperiments(activeConversation?.experiments,conversationCache.get(activeConversation?.id)?.experiments).sort((a,b)=>b.created-a.created || b.id.localeCompare(a.id));
+  const list=$("result-library-list");list.replaceChildren();
+  ui($("result-library-status"),runs.length ? "按完成时间从新到旧排列" : "本对话暂无已完成的辨识记录。");
+  const selected=runs.find(run=>run.id===state.resultId);
+  $("selected-result-name").hidden=!selected;
+  $("selected-result-name").textContent=selected ? experimentReportName(selected) : "";
+  for(const run of runs){
+    const button=document.createElement("button");button.type="button";button.className="result-library-item";
+    button.dataset.resultId=run.id;button.setAttribute("aria-current",String(run.id===state.resultId));button.disabled=historyLocked();
+    const name=document.createElement("strong");name.textContent=experimentReportName(run);
+    const detail=document.createElement("small"),opts=run.result.options || {};
+    detail.textContent=`${new Date(run.created).toLocaleString(window.BuckI18n.language==="en"?"en-GB":"zh-CN")} · ${opts.mode || "—"} · R ${fmt(run.result.parameters.R_ohm)} Ω (${tr(run.result.R_estimated?"估计":"固定已知")}) · ${run.id.slice(0,8)}`;
+    button.append(name,detail);button.onclick=()=>void selectExperiment(run.id);list.append(button);
+  }
+}
+async function selectExperiment(id,{fetchFull=true,persist=true}={}) {
+  if(historyLocked() || !activeConversation)return;
+  if(persist && !persistConversation()){notice("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");return;}
+  const run=readConversation(activeConversation.id)?.experiments?.find(item=>item.id===id);
+  if(!run)return;
+  closeResultLibrary();closeAnalysisMenu();
+  state.busy=true;controls();
+  try{
+    let result=structuredClone(run.result);
+    if(fetchFull && state.connected){
+      try{const job=await api(`/api/jobs/${id}`,{timeout:5000});
+        if(job.status==="complete" && job.result.file_sha256===run.dataset.sha256 && JSON.stringify(job.result.parameters)===JSON.stringify(run.result.parameters))result=job.result;
+      }catch{/* A durable snapshot remains viewable after the job cache expires. */}
+    }
+    state.savedRun=structuredClone(run);state.resultId=run.id;
+    state.result={...result,filename:result.filename || run.dataset.filename,file_sha256:result.file_sha256 || run.dataset.sha256};
+    state.truthDraft={l:"",c:""};state.truthComparison=null;state.truthError="";
+    if(run.ground_truth){
+      const truth=run.ground_truth;
+      state.truthDraft={l:String(truth.L_H*1e6),c:String(truth.C_F*1e6)};
+      state.truthComparison={result_id:run.id,parameters:{L_H:result.parameters.L_H,C_F:result.parameters.C_F},ground_truth:{L_H:truth.L_H,C_F:truth.C_F}};
+    }
+    $("selected-result").value=run.id;
+    setIdentificationOpen(true);displayResult();renderResultLibrary();
+  }catch(error){notice(error.message);}
+  finally{state.busy=false;if(persist)persistConversation();controls();}
+}
+function toggleResultLibrary(){
+  if(historyLocked())return;
+  if(!$("result-library-menu").hidden){closeResultLibrary();return;}
+  renderHistory();renderResultLibrary();$("result-library-menu").hidden=false;$("toggle-result-library").setAttribute("aria-expanded","true");
+  $("result-library-list").querySelector("button")?.focus();
+}
+document.addEventListener("click",event=>{if(!event.target.closest("#result-library-menu,#toggle-result-library"))closeResultLibrary();});
+document.addEventListener("keydown",event=>{
+  if($("result-library-menu").hidden)return;
+  if(event.key==="Escape"){event.preventDefault();closeResultLibrary();$("toggle-result-library").focus();}
+  if(["ArrowDown","ArrowUp"].includes(event.key)){
+    const buttons=[...$("result-library-list").querySelectorAll("button:not(:disabled)")];if(!buttons.length)return;
+    event.preventDefault();const index=buttons.indexOf(document.activeElement);buttons[(index+(event.key==="ArrowDown"?1:-1)+buttons.length)%buttons.length].focus();
+  }
+});

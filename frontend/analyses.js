@@ -6,7 +6,7 @@ const resultAnalysisPrompts=new Set([
   "让助手分析结果"
 ]);
 function analysisDescriptor() {
-  return {kind:"identification_analysis",filename:state.dataset?.filename || null,method:state.result?.method || state.result?.options?.method || null,
+  return {kind:"identification_analysis",filename:state.savedRun?.dataset.filename || state.dataset?.filename || null,method:state.result?.method || state.result?.options?.method || null,
     pwm_source:state.result?.options?.pwm_source || null,result_id:state.resultId || null};
 }
 function findHistoricalAnalyses(record) {
@@ -80,9 +80,22 @@ function conversationMessages(record) {
 function decorateConversationRetrieval(article, retrieval) {
   if (!retrieval?.searches?.length && !retrieval?.read_count) return;
   const box=document.createElement("div"); box.className="message-tools conversation-retrieval";
-  box.append(window.BuckI18n.node("本次检索会话消息："),document.createTextNode(String(retrieval.available_count)),
+  const heading=document.createElement("div");heading.className="retrieval-heading";
+  const label=document.createElement("span");
+  label.append(window.BuckI18n.node("本次检索会话消息："),document.createTextNode(String(retrieval.available_count)),
     window.BuckI18n.node("；已读取材料："),document.createTextNode(String(retrieval.read_count)));
   const sources=document.createElement("div"); sources.className="message-sources";
+  sources.id=`retrieval-sources-${crypto.randomUUID()}`;sources.hidden=true;
+  const toggle=document.createElement("button");toggle.type="button";toggle.className="section-toggle retrieval-toggle";
+  toggle.setAttribute("aria-controls",sources.id);
+  function updateToggle(){
+    toggle.textContent=sources.hidden?"⌄":"⌃";
+    toggle.setAttribute("aria-expanded",String(!sources.hidden));
+    const title=sources.hidden?"展开检索来源":"收起检索来源";
+    window.BuckI18n.attr(toggle,"aria-label",title);window.BuckI18n.attr(toggle,"title",title);
+  }
+  toggle.onclick=()=>{sources.hidden=!sources.hidden;updateToggle();};updateToggle();
+  heading.append(label,toggle);box.append(heading);
   for (const source of retrieval.sources || []) {
     const button=document.createElement("button"); button.type="button"; button.className="button ghost";
     button.append(window.BuckI18n.node("查看消息"),document.createTextNode(` #${source.ordinal} · `),
