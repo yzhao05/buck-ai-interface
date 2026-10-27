@@ -713,7 +713,8 @@ function decorateResponse(article, response) {
     if (response.route) {
       const task = document.createElement("div"); task.className = "message-tools message-task";
       task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
-      if (response.route.mode !== "agent") task.append(document.createTextNode(" · "), window.BuckI18n.node(
+      if(response.ui_action?.parser==='deepseek')task.append(document.createTextNode(" · "),window.BuckI18n.node("DeepSeek 计划解析"));
+      else if (response.route.mode !== "agent") task.append(document.createTextNode(" · "), window.BuckI18n.node(
         response.route.mode === "fallback" ? "分类服务暂不可用，使用本地规则" : "本地规则分类"));
       article.querySelector(".message-label").after(task);
     }
@@ -850,15 +851,15 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       response.ui_action_status=response.answer;
     }
     const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
-    const article = message("assistant", answer,
-      response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+    const replyMode=response.mode === "deepseek" ? "DeepSeek" : response.mode === "plan_error" ? "计划未执行" : "本地规则分析";
+    const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
     const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,
       request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
       repeatability:response.repeatability,
       control_checks:response.control_checks,
       ...(response.ui_action ? {ui_action:response.ui_action,ui_action_status:response.ui_action_status} : {}),
-      ...(analysisMeta && !response.job_id ? {analysis:{...analysisMeta,request_id:requestMessage.id}} : {})}, response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
+      ...(analysisMeta && !response.job_id ? {analysis:{...analysisMeta,request_id:requestMessage.id}} : {})}, replyMode);
     article.dataset.messageId=savedReply.id;
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
   } catch (error) { pending.remove(); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
@@ -937,6 +938,7 @@ const reportDownloadUrls = [];
 function clearReportDownloads() {
   reportExportAttempt++;
   reportExportBusy = false;
+  $("report-location-dialog").close();
   for (const url of reportDownloadUrls) URL.revokeObjectURL(url);
   reportDownloadUrls.length = 0;
   $("report-downloads").hidden = true;
@@ -957,9 +959,24 @@ function downloadReportPair() {
 }
 async function exportReports({filesOnly=false}={}) {
   if (!state.result || reportExportBusy) return;
+  if(!filesOnly){
+    const reason=reportFolderUnavailableReason();
+    if(reason){
+      ui($("report-location-reason"),reason);
+      $("report-location-dialog").showModal();
+      return;
+    }
+  }
   clearReportDownloads();
   const attempt = reportExportAttempt;
   reportExportBusy = true; $("download-report").disabled = true;$("download-report-files").disabled=true;
+  // Start the native picker before potentially expensive snapshot serialization.
+  // Keep the original click activation; consume the promise inside try below.
+  let picker;
+  if(!filesOnly){
+    try{picker=window.showDirectoryPicker({id:'buck-report-export',mode:'readwrite'});}
+    catch(error){picker=Promise.reject(error);}
+  }
   // Capture once: editing inputs or switching conversations must never mix runs.
   const exportedAt = new Date(), language = window.BuckI18n.language;
   const report = structuredClone({application:"Buck Lab 0.1.0",exported_at:exportedAt.toISOString(),summary:state.savedRun ? null : state.summary,
@@ -973,9 +990,9 @@ async function exportReports({filesOnly=false}={}) {
   let parent=null,pdfReady=false;
   try {
     // The picker must run in the original click gesture, before any network await.
-    if(!filesOnly && typeof window.showDirectoryPicker==='function' && window.isSecureContext){
+    if(!filesOnly){
       ui($("report-export-status"),"请选择保存位置，将在其中创建同名报告文件夹。");
-      parent=await window.showDirectoryPicker({id:'buck-report-export',mode:'readwrite'});
+      parent=await picker;
       if(attempt!==reportExportAttempt)return;
     }
     ui($("report-export-status"), "正在生成 PDF 和 JSON…");
@@ -992,7 +1009,7 @@ async function exportReports({filesOnly=false}={}) {
       const status=$("report-export-status");status.replaceChildren(window.BuckI18n.node("报告已保存到："),document.createTextNode(`${parent.name}/${savedName}/`));
     }else{
       downloadReportPair();
-      ui($("report-export-status"),"PDF 和 JSON 已生成。如浏览器拦截了连续下载，请点击下方链接分别保存。");
+      ui($("report-export-status"),"PDF 和 JSON 已生成，保存位置由浏览器下载设置决定。如需每次选择位置，请在浏览器下载设置中启用保存前询问；如下载被拦截，请点击下方链接分别保存。");
     }
   } catch (error) {
     if (attempt !== reportExportAttempt) return;
@@ -1034,6 +1051,9 @@ function downloadReport() {
   void exportReports();
 }
 $("download-report-files").onclick=()=>void exportReports({filesOnly:true});
+$("close-report-location").onclick=()=>$("report-location-dialog").close();
+$("confirm-report-files").onclick=()=>{$("report-location-dialog").close();void exportReports({filesOnly:true});};
+ui($("download-report"),reportFolderUnavailableReason() ? "↓ 导出报告（PDF + JSON）" : "↓ 导出报告文件夹");
 setupChatImages();
 $("csv-file").onchange = event => { if(event.target.files[0]) void importData(event.target.files[0]); };
 $("close-notice").onclick = () => notice();

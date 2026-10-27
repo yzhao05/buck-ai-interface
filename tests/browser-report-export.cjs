@@ -43,7 +43,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
    assert(report.result.review_reasons.some(r=>r.code.endsWith('nrmse')));
   }
   assert(!/[\u3400-\u9fff]/.test(await page.locator('#report-downloads').innerText()));
-  // Unsupported browsers download two ordinary files with matching names.
+  // Unsupported browsers explain save-location settings before any download.
   async function expectPair(action){
    const count=downloads.length;
    const jsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
@@ -57,8 +57,37 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
    assert.equal(fs.readFileSync('runtime/report-fallback.pdf').subarray(0,5).toString(),'%PDF-');
   }
   await page.evaluate(()=>window.showDirectoryPicker=undefined);
-  await expectPair(()=>page.locator('#download-report').click());
+  let fallbackRequests=0;
+  const countFallback=r=>{if(r.url().endsWith('/api/reports/pdf'))fallbackRequests++;};page.on('request',countFallback);
+  const beforeFallback=downloads.length;
+  await page.locator('#download-report').click();
+  assert(await page.locator('#report-location-dialog').isVisible());
+  assert.match(await page.locator('#report-location-reason').innerText(),/does not provide folder selection/);
+  assert.match(await page.locator('#report-location-dialog').innerText(),/Firefox: Settings/);
+  assert(!/[\u3400-\u9fff]/.test(await page.locator('#report-location-dialog').innerText()));
+  assert.equal(downloads.length,beforeFallback);assert.equal(fallbackRequests,0);
+  await page.keyboard.press('Escape');assert(await page.locator('#report-location-dialog').isHidden());
+  assert.equal(downloads.length,beforeFallback);
+  await page.locator('#language-toggle').click();await page.locator('#download-report').click();
+  assert.match(await page.locator('#report-location-title').innerText(),/报告保存位置/);
+  await page.locator('#close-report-location').click();await page.locator('#language-toggle').click();
+  await page.locator('#download-report').click();
+  await expectPair(()=>page.locator('#confirm-report-files').click());
+  page.off('request',countFallback);assert.equal(fallbackRequests,1);
   assert(!/[\u3400-\u9fff]/.test(await page.locator('#report-downloads').innerText()));
+  assert.match(await page.locator('#report-export-status').innerText(),/browser download settings/);
+  // Insecure pages get their own actionable explanation, even if an API exists.
+  await picker();await page.evaluate(()=>{
+   window.testSecureContextDescriptor=Object.getOwnPropertyDescriptor(window,'isSecureContext');
+   Object.defineProperty(window,'isSecureContext',{value:false,configurable:true});
+  });
+  await page.locator('#download-report').click();
+  assert.match(await page.locator('#report-location-reason').innerText(),/not in a secure context/);
+  await page.locator('#close-report-location').click();await page.evaluate(()=>{
+   if(window.testSecureContextDescriptor)Object.defineProperty(window,'isSecureContext',window.testSecureContextDescriptor);
+   else delete window.isSecureContext;
+   delete window.testSecureContextDescriptor;
+  });
   // User cancellation causes no PDF request, filesystem writes or download.
   let pdfRequests=0;const count=r=>{if(r.url().endsWith('/api/reports/pdf'))pdfRequests++;};page.on('request',count);
   await page.evaluate(()=>window.showDirectoryPicker=async()=>{throw new DOMException('Cancelled','AbortError');});
@@ -92,6 +121,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
   }),2,'Failed and stale exports must not create report folders');
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   assert.deepEqual(errors,[]);
-  console.log('PASS: chosen directory, real file writes, matching names, collision suffixes, bilingual UI, two-file fallback, cancellation, denied access, partial-write warning, PDF failure, stale isolation and mobile width.');
+  console.log('PASS: chosen directory, real file writes, matching names, collision suffixes, bilingual save-location guidance, no silent fallback, insecure context, two-file fallback, cancellation, denied access, partial-write warning, PDF failure, stale isolation and mobile width.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

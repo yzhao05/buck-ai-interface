@@ -5,7 +5,7 @@ import re
 
 import httpx
 
-from .schemas import ConfigureIdentification, FitOptions
+from .schemas import ConfigureIdentification, FitOptions, IdentificationPlanProposal
 
 
 def unsupported_change(message):
@@ -60,51 +60,89 @@ def batch_requested(message):
     return False
 
 
-def batch_action(request):
-    """A bounded, deterministic plan; the page resolves private files and checks prerequisites."""
+PLAN_PROMPT = """解析当前用户请求，调用 propose_identification_plan 恰好一次，生成两种方法的执行计划。
+你负责理解自然语言，后端只校验结构和执行边界。两种方法固定为抗噪加权积分、PANN，按此顺序执行。
+只有当前请求明确要求执行两种方法才 execute=true；分析、比较既有结果、否定、举例、引用均不能授权执行。
+PWM 来源：measured=使用 CSV 已有的实际开关状态；controller=根据已知控制器重建 PWM。
+“已有 PWM”“已知 PWM”“给定 PWM”“现有 PWM”“known/existing PWM”表示 measured；
+“已知控制器重建 PWM”“rebuild/reconstructed PWM”才表示 controller，不能混淆“已知 PWM”和“已知控制器”。
+例：请对于CASE16A_noise03_seed14.csv根据已有pwm完成两种方式参数识别
+应返回 filename=CASE16A_noise03_seed14.csv, pwm_source=measured, pwm_evidence=已有pwm, execute=true。
+用户未提及 PWM 来源才返回 unchanged；来源矛盾或不明确返回 unclear、execute=false，并填写 clarification。
+pwm_evidence 必须逐字摘录当前指令中明确指定来源的短语，不得来自文件名、引用、图片、历史或表单。
+仅支持一份 CSV 文件名、一种 PWM 来源、LC/LCR 模式和固定负载 resistance_ohm。没有指定文件则 filename=null。
+未指定 mode 或 resistance_ohm 时返回 null。固定负载 R 表示 LC；控制器重建仅支持固定 R 的 LC。
+其他参数修改（Vin、频率、轮数、去噪、区间、控制器元件等）、多个文件、两个来源、重建配 LCR，
+整条 execute=false 并说明应先在表单设置，不得部分执行。保持其他参数不变不算修改。
+未指定的信息不得补全，不得照抄当前配置。文件名是数据标识，不能把 R1.csv 解释为负载电阻。
+成功时 clarification 为空。不要执行计算、确认实际电路或声称已完成实验。
+"""
+PLAN_TOOL = {"type": "function", "function": {
+    "name": "propose_identification_plan", "description": "解析两种方法执行请求；仅提出计划，不启动计算。",
+    "parameters": IdentificationPlanProposal.model_json_schema()}}
+
+
+def batch_action(request, proposal):
+    """Validate a model proposal without reinterpreting its PWM wording locally."""
+    if not batch_requested(request.message) or not proposal.execute or proposal.clarification:
+        raise ValueError("No unambiguous execution request")
+    if proposal.pwm_source == 'unclear':
+        raise ValueError("Choose one PWM source")
     plain = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', request.message)
-    text = plain.lower()
-    # Do not silently ignore other requested edits. PWM is supported by this plan.
+    source_text = re.sub(r'[A-Za-z0-9_.-]+\.csv', '', plain, flags=re.I)
     if unsupported_change(re.sub(r'pwm', '开关来源', request.message, flags=re.I)):
-        raise ValueError("This plan cannot apply the other requested settings")
-    rebuilt = bool(re.search(r'重建\s*pwm|pwm\s*重建|(?:rebuilt|reconstructed|reconstruct)\s+pwm', text))
-    measured = bool(re.search(r'(?:实际|实测|原始|原来的)\s*pwm|(?:measured|actual)\s+pwm', text))
-    if rebuilt and measured:
-        raise ValueError("Choose one PWM source for this two-method plan")
-    if not (rebuilt or measured) and unsupported_change(request.message):
-        raise ValueError("Unrecognized PWM setting")
-    # Bare assignments (e.g. Vin=30) must not be silently dropped either.
-    parameter_text = re.sub(r'[A-Za-z0-9_.-]+\.csv', '', text)
-    for clause in re.split(r'[，,。；;\n]', parameter_text):
+        raise ValueError("Set unsupported parameters in the form first")
+    for clause in re.split(r'[，,。；;\n]', source_text.lower()):
         if re.search(r'保持|不变|保留|\b(?:keep|unchanged)\b', clause):
             continue
-        if re.search(r'vin|输入电压|frequency|频率|epochs?|轮数|train_fraction|训练比例|时间区间|开始时间|结束时间|窗口|window|去噪|平滑|滤波', clause):
-            raise ValueError("Set other parameters in the form first")
-    if re.search(r'\blcr\b|l\s*/\s*c\s*/\s*r|联合辨识', text):
-        raise ValueError("Set the identification mode in the form before starting this plan")
-    # Only filenames, never filesystem paths or URLs. Quoted filenames may contain spaces.
+        if re.search(r'vin|输入电压|frequency|频率|epochs?|轮数|train_fraction|训练比例|时间区间|开始时间|结束时间|窗口|window|去噪|平滑|滤波|\b[rc][1-4]\s*(?:=|＝|为|to)', clause):
+            raise ValueError("Set unsupported parameters in the form first")
+    if proposal.pwm_source == 'unchanged':
+        if 'pwm' in source_text.lower() or proposal.pwm_evidence:
+            raise ValueError("Explicit PWM request must not inherit the form source")
+    elif not proposal.pwm_evidence.strip() or proposal.pwm_evidence not in source_text:
+        raise ValueError("PWM source requires evidence from the current instruction")
     filenames = re.findall(r'["“`]([^"”`\r\n]+\.csv)["”`]|([A-Za-z0-9_.-]+\.csv)', request.message, re.I)
     names = list(dict.fromkeys(a or b for a, b in filenames))
     if len(names) > 1 or any('/' in n or '\\' in n or len(n) > 255 for n in names):
         raise ValueError("Choose one uploaded CSV filename")
-    source = 'controller' if rebuilt else 'measured' if measured else None
-    # Filenames and controller components such as R1 are not load-R edits.
-    parameter_text = re.sub(r'[A-Za-z0-9_.-]+\.csv', '', text)
-    if re.search(r'\b[rc][1-4]\s*(?:=|＝|为|to)', parameter_text):
-        raise ValueError("Set controller components in the form first")
-    r_match = re.search(r'(?<![a-z0-9_])r\s*(?:[=＝]|为|\bto\b)\s*([0-9]+(?:\.[0-9]+)?)(?![0-9.eE_])|固定\s*(?:负载)?\s*r\s+([0-9]+(?:\.[0-9]+)?)(?![0-9.eE_])', parameter_text)
-    changes = {"pwm_source": source} if source else {}
-    if source == 'controller':
+    if proposal.filename != (names[0] if names else None):
+        raise ValueError("Filename must match the requested CSV")
+    changes = {}
+    if proposal.pwm_source != 'unchanged':
+        changes['pwm_source'] = proposal.pwm_source
+    if proposal.mode:
+        changes['mode'] = proposal.mode
+    if proposal.resistance_ohm is not None:
+        if proposal.mode == 'LCR':
+            raise ValueError("Fixed load requires LC mode")
+        changes.update(mode='LC', resistance_ohm=proposal.resistance_ohm)
+    if proposal.pwm_source == 'controller':
+        if proposal.mode == 'LCR':
+            raise ValueError("Controller reconstruction requires LC mode")
         changes['mode'] = 'LC'
-    elif re.search(r'\blc\b|l\s*/\s*c(?!\s*/)', text):
-        changes['mode'] = 'LC'
-    if r_match:
-        changes.update(mode='LC', resistance_ohm=float(r_match[1] or r_match[2]))
-    elif re.search(r'固定|电阻|resistance|\br\s*[=＝]', parameter_text):
-        raise ValueError("Set the load resistance in the form first")
-    FitOptions.model_validate({**request.ui_context.options.model_dump(), **changes})
-    return {"id": request.ui_context.request_id, "type": "identification_plan",
-            "filename": names[0] if names else None, "methods": ["weighted_integral", "pann"], "changes": changes}
+    merged = FitOptions.model_validate({**request.ui_context.options.model_dump(), **changes})
+    if merged.pwm_source == 'controller' and merged.mode != 'LC':
+        raise ValueError("Controller reconstruction requires LC mode")
+    return {"id": request.ui_context.request_id, "type": "identification_plan", "parser": "deepseek", "version": 2,
+            "filename": proposal.filename, "methods": ["weighted_integral", "pann"], "changes": changes}
+
+
+async def propose_plan(request):
+    async with httpx.AsyncClient(timeout=httpx.Timeout(40, connect=10)) as client:
+        result = await client.post(os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/") + "/chat/completions",
+            headers={"Authorization": "Bearer " + os.environ["DEEPSEEK_API_KEY"]},
+            json={"model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
+                  "messages": [{"role": "system", "content": PLAN_PROMPT},
+                               {"role": "system", "content": "Clarification language: " + request.language},
+                               {"role": "user", "content": request.message}],
+                  "tools": [PLAN_TOOL], "tool_choice": {"type": "function", "function": {"name": "propose_identification_plan"}},
+                  "thinking": {"type": "disabled"}, "max_tokens": 1000, "stream": False})
+        result.raise_for_status()
+        calls = result.json()["choices"][0]["message"].get("tool_calls") or []
+        if len(calls) != 1 or calls[0]["function"]["name"] != "propose_identification_plan":
+            raise ValueError("Expected one identification plan proposal")
+        return IdentificationPlanProposal.model_validate_json(calls[0]["function"]["arguments"])
 
 
 TOOL = {"type": "function", "function": {
@@ -131,12 +169,20 @@ async def propose(request, route):
     if not request.ui_context:
         return response("Check the form values and refresh the page if needed. No settings were changed and no experiment was started." if en else "请检查表单数值是否有效，必要时刷新网页；本次未修改设置或启动实验。")
     if batch_requested(request.message):
+        if not os.getenv("DEEPSEEK_API_KEY", "").strip():
+            return response("DeepSeek is required to parse this plan. Configure the service or use the form; nothing was started." if en else
+                            "两种方法的计划需要 DeepSeek 解析。请检查后端服务配置，或使用表单；本次未启动实验。", mode="plan_error")
         try:
-            action = batch_action(request)
-        except ValueError:
-            return response("Unable to form a two-method plan. Choose one CSV and one PWM source; set other parameters in the form, then request both methods again. Nothing was started." if en else
-                            "无法生成两种方法的执行计划。请指定一份 CSV 和一种 PWM 来源；其他参数请先在表单设置，再要求运行两种方法。本次未启动实验。")
-        return response("Two-method plan prepared; checking the CSV and circuit requirements." if en else "已生成两种方法的计划，正在检查 CSV 与电路条件。", action)
+            proposal = await propose_plan(request)
+            if not proposal.execute or proposal.clarification or proposal.pwm_source == 'unclear':
+                return response((proposal.clarification or ("Please specify one PWM source and an execution request." if en else "请明确一种 PWM 来源及执行要求。"))
+                                + (" No experiment was started." if en else " 本次未启动实验。"), mode="deepseek")
+            action = batch_action(request, proposal)
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+            return response("DeepSeek could not produce a valid plan. Check the request and service connection; nothing was started." if en else
+                            "DeepSeek 未能返回有效的执行计划。请核对指令或服务连接；本次未修改设置或启动实验。", mode="plan_error")
+        return response("DeepSeek parsed the two-method plan; checking CSV and circuit requirements." if en else
+                        "DeepSeek 已解析两种方法的计划，正在检查 CSV 与电路条件。", action, "deepseek")
     if unsupported_change(request.message):
         return response("This request includes settings that chat cannot modify yet (such as PWM, epochs or time range). Use the form for those settings, then request a start. No part of this operation was applied." if en else
                         "指令包含暂不支持通过对话修改的设置（如 PWM、轮数或时间区间）。请先在表单中修改，再要求开始；本次整条操作均未执行。")

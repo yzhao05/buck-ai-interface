@@ -11,3 +11,5 @@
 .identification-plan ul { overflow-wrap: anywhere; margin: 6px 0; }
 .report-folder-hint { margin: 0; padding: 0 24px 16px; color: var(--muted); font-size: 12px; line-height: 1.7; }
 #report-export-status { overflow-wrap: anywhere; }
+#report-location-dialog { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#report-location-dialog p { line-height: 1.7; overflow-wrap: anywhere; }

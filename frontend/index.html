@@ -102,7 +102,7 @@
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
       <section id="identification-plan" class="identification-plan" hidden aria-live="polite">
-        <strong id="plan-progress"></strong><span id="plan-file"></span><p id="plan-note"></p><ul id="plan-runs"></ul>
+        <strong id="plan-progress"></strong><span id="plan-file"></span><p id="plan-source"></p><p id="plan-note"></p><ul id="plan-runs"></ul>
         <button type="button" id="plan-continue" class="button subtle small">继续计划</button>
         <button type="button" id="plan-cancel" class="button subtle small">取消后续任务</button>
       </section>
@@ -155,7 +155,7 @@
         <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>
         <details id="diagnostics" hidden><summary>查看计算条件与诊断</summary><pre id="diagnostic-text"></pre></details>
         <div class="result-actions"><div class="analysis-action"><button type="button" class="button subtle small" id="ask-error" aria-expanded="false" aria-controls="analysis-menu" disabled>让助手分析结果 ▾</button><div id="analysis-menu" class="analysis-menu" hidden><button type="button" id="analyze-here">在本对话中分析</button><button type="button" id="analyze-new">新对话分析</button></div></div><button class="button subtle small" id="download-report" disabled>↓ 导出报告文件夹</button></div>
-        <p class="report-folder-hint">导出时选择保存位置，生成同名文件夹、PDF 和 JSON；不支持文件夹选择时分别下载 PDF 和 JSON。</p>
+        <p class="report-folder-hint">支持时选择保存位置并生成同名文件夹、PDF 和 JSON；不支持时会先说明原因，可选择分别下载两份文件。</p>
         <div id="report-downloads" class="report-downloads" hidden aria-live="polite">
           <p id="report-export-status"></p>
           <button type="button" id="download-report-files" class="button subtle small">改为分别下载 PDF 和 JSON</button>
@@ -167,6 +167,14 @@
     </div>
   </div>
   <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。</p><label>同步恢复码<input id="sync-code" type="password" autocomplete="off" spellcheck="false" minlength="64" maxlength="64"></label><p class="field-note">自动生成并记住。请复制保管，换浏览器或清空本地后可用它恢复备份；不要分享给他人。</p><button type="button" id="copy-sync-code" class="button ghost full">复制同步恢复码</button><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p></form></dialog>
+  <dialog id="report-location-dialog" aria-labelledby="report-location-title">
+    <div class="dialog-heading"><h2 id="report-location-title">报告保存位置</h2><button type="button" id="close-report-location" class="icon-button" aria-label="关闭">×</button></div>
+    <p id="report-location-reason"></p>
+    <p>普通下载的位置由浏览器决定。若要每次选择保存位置，请先在浏览器的“设置 → 下载”中开启“下载前询问保存位置”（名称因浏览器而异），再下载。</p>
+    <p>Firefox：设置 → 常规 → 文件与应用程序 → 下载 → 总是询问您保存文件的位置。网页无法代你修改此设置。</p>
+    <p>也可以继续下载到浏览器的默认目录；将分别下载同名 JSON 和 PDF，不生成 ZIP。</p>
+    <button type="button" id="confirm-report-files" class="button primary full">分别下载 JSON 和 PDF</button>
+  </dialog>
   <dialog id="circuit-dialog" aria-labelledby="circuit-title">
     <form id="circuit-form">
       <div class="dialog-heading"><h2 id="circuit-title">电路图与参数</h2><button type="button" id="close-circuit" class="icon-button" aria-label="关闭">×</button></div>

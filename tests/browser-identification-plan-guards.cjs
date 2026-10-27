@@ -6,6 +6,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const page=await browser.newPage({viewport:{width:1550,height:1100}}),errors=[],fits=[];
  page.on('pageerror',e=>errors.push(e.message));
  page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits.push(r.postDataJSON());});
+ await require('./plan-chat-fixtures.cjs')(page);
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  const paused=()=>page.waitForFunction(()=>currentIdentificationPlan()?.status==='paused'&&!historyLocked());
  const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();};
@@ -24,7 +25,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.match(await page.locator('#plan-note').innerText(),/数据或参数已更改/);assert.equal(fits.length,2);
   await page.locator('#plan-cancel').click();
   const duplicate=await page.evaluate(async()=>{
-    const action={id:'replay-plan',type:'identification_plan',methods:['weighted_integral','pann'],filename:null,changes:{pwm_source:'measured'}};
+    const action={id:'replay-plan',type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{pwm_source:'measured'}};
     let ctx={request_id:action.id,fingerprint:configurationFingerprint()};
     await applyIdentificationAction(action,ctx);
     ctx.fingerprint=configurationFingerprint();return applyIdentificationAction(action,ctx);
@@ -32,7 +33,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#plan-cancel').click();
   const stale=await page.evaluate(async()=>{
     const ctx={request_id:'stale-plan',fingerprint:configurationFingerprint()};document.getElementById('vin').value='29';
-    return applyIdentificationAction({id:ctx.request_id,type:'identification_plan',methods:['weighted_integral','pann'],filename:null,changes:{pwm_source:'measured'}},ctx);
+    return applyIdentificationAction({id:ctx.request_id,type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{pwm_source:'measured'}},ctx);
   });assert.match(stale,/已变化/);assert.equal(fits.length,2);
   const csv=fs.readFileSync('examples/plecs_buck_case16a.csv','utf8');
   for(const data of [csv,csv+'\n']){
@@ -56,7 +57,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   }),null);
   await page.evaluate(async()=>{
     const ctx={request_id:'quota-plan',fingerprint:configurationFingerprint()};
-    await applyIdentificationAction({id:ctx.request_id,type:'identification_plan',methods:['weighted_integral','pann'],filename:null,changes:{}},ctx);
+    await applyIdentificationAction({id:ctx.request_id,type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{}},ctx);
     const original=Storage.prototype.setItem;
     Storage.prototype.setItem=function(key,value){
       if(key.startsWith('buck-plan:'))throw new DOMException('Quota exhausted','QuotaExceededError');

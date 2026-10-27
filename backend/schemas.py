@@ -87,6 +87,16 @@ class ConfigureIdentification(StrictModel):
     start_after_apply: bool = Field(strict=True)
 
 
+class IdentificationPlanProposal(StrictModel):
+    execute: bool = Field(strict=True)
+    clarification: str = Field(max_length=500)
+    filename: str | None = Field(max_length=255)
+    pwm_source: Literal['measured', 'controller', 'unchanged', 'unclear']
+    pwm_evidence: str = Field(max_length=500)
+    mode: Literal['LC', 'LCR'] | None
+    resistance_ohm: float | None = Field(strict=True, gt=0.01, le=100000)
+
+
 class IdentificationUIContext(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     # Separate from the displayed historical result's options.

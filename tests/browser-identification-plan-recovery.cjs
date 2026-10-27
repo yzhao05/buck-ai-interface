@@ -19,6 +19,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  await page.route('**/api/jobs/mock-pann',route=>route.fulfill({json:complete
   ? {status:'complete',result:{...original,method:'pann',options:pannOptions}}
   : {status:'running',stage:'pann_training'}}));
+ await require('./plan-chat-fixtures.cjs')(page);
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  try{
   await page.goto('http://127.0.0.1:8001');await ready();await page.locator('#load-demo').click();await ready();

@@ -1,6 +1,13 @@
 /* Explicit, bounded chat plans. Numerical jobs still use the normal validated API. */
 "use strict";
 const identificationPlans=new Map();
+function currentPlanParser(plan){return plan?.parser==='deepseek' && plan.version===2;}
+function identificationPlanSource(plan){
+  const source=plan.changes.pwm_source || plan.pwmSource;
+  if(!source && !currentPlanParser(plan))return tr("PWM 来源：请查看已保存的实验结果");
+  return tr(source==='measured' ? "PWM 来源：CSV 实际开关状态（已知 PWM）"
+    : source==='controller' ? "PWM 来源：已知控制器重建" : "PWM 来源：沿用当前设置");
+}
 function validStoredIdentificationPlan(plan){
   return plan && typeof plan==='object' && ['queued','running','paused','complete','cancelled'].includes(plan.status)
     && Array.isArray(plan.methods) && plan.methods.length===2 && new Set(plan.methods).size===2
@@ -17,7 +24,9 @@ function currentIdentificationPlan(){
     try{plan=JSON.parse(sessionStorage.getItem(key));}catch{}
     if(!validStoredIdentificationPlan(plan))plan=null;
     if(plan && !["complete","cancelled"].includes(plan.status)){
-      plan.status="paused";plan.note="页面已恢复，请检查当前设置后继续计划。";
+      if(!currentPlanParser(plan)){
+        plan.status="cancelled";plan.note="旧版计划已停止，请重新发送指令交由 DeepSeek 解析。已提交的计算仍会保存到实验历史。";
+      }else{plan.status="paused";plan.note="页面已恢复，请检查当前设置后继续计划。";}
     }
     identificationPlans.set(key,plan);
   }
@@ -35,6 +44,7 @@ function renderIdentificationPlan(){
   const plan=currentIdentificationPlan();box.hidden=!plan;if(!plan)return;
   $("plan-progress").textContent=`${tr("两种方法辨识计划")} · ${plan.done.length} / ${plan.methods.length}`;
   $("plan-file").textContent=plan.filename || state.dataset?.filename || tr("当前 CSV");
+  $("plan-source").textContent=identificationPlanSource(plan);
   $("plan-note").textContent=tr(plan.note || "正在检查 CSV 与实验条件…");
   $("plan-runs").replaceChildren();
   for(const item of plan.done){
@@ -47,6 +57,7 @@ function renderIdentificationPlan(){
   $("plan-cancel").hidden=["complete","cancelled"].includes(plan.status);
 }
 async function acceptIdentificationPlan(action,context){
+  if(!currentPlanParser(action))throw new Error("计划解析版本不兼容，请更新前后端并重新发送指令。");
   if(!Array.isArray(action.methods) || action.methods.length!==2 || new Set(action.methods).size!==2 || action.methods.some(m=>!["pann","weighted_integral"].includes(m))
       || !(action.filename===null || (typeof action.filename==='string' && action.filename.length<=255 && /\.csv$/i.test(action.filename) && !/[\\/]/.test(action.filename))))throw new Error("配置操作格式无效。");
   const c=action.changes;
@@ -64,7 +75,7 @@ async function acceptIdentificationPlan(action,context){
   saveIdentificationPlan({...action,status:'queued',done:[],jobId:null,note:"正在检查 CSV 与实验条件…"});
   sessionStorage.setItem(key,'processed');
   toggleSection("toggle-experiment","experiment-content","实验配置",true);setIdentificationOpen(true);
-  return tr("已建立两种方法的执行计划：先加权积分，再 PANN。正在查找 CSV；缺少条件会显示在计划卡片中，补齐后点击继续。完成的结果将分别保存在本会话。");
+  return tr("DeepSeek 已解析两种方法的执行计划：先加权积分，再 PANN。缺少条件会显示在计划卡片中，补齐后点击继续；结果分别保存在本会话。")+'\n\n'+identificationPlanSource(action);
 }
 function startQueuedIdentificationPlan(){
   if(currentIdentificationPlan()?.status==='queued' && !historyLocked())void continueIdentificationPlan();
@@ -76,6 +87,10 @@ function planInputs(){
 async function continueIdentificationPlan(){
   const plan=currentIdentificationPlan();
   if(!plan || !['queued','paused'].includes(plan.status) || historyLocked())return;
+  if(!currentPlanParser(plan)){
+    plan.status='cancelled';plan.note="旧版计划已停止，请重新发送指令交由 DeepSeek 解析。已提交的计算仍会保存到实验历史。";
+    saveIdentificationPlan(plan);renderIdentificationPlan();return;
+  }
   const owner=identificationPlanKey();
   state.planRunning=true;plan.status='running';plan.note="正在检查 CSV 与实验条件…";
   try{
@@ -107,9 +122,12 @@ async function continueIdentificationPlan(){
       }
       prepareControllerDefaults();controls();persistConversation();
     }
+    plan.pwmSource=pwmSource();
     if(!state.mapping){$('mapping-details').open=true;throw new Error("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
     if(pwmSource()==='controller' && $('controller-confirmed').value!=='yes')throw new Error("请核对并确认控制电路与当前参数一致；本次未启动实验。");
-    if(pwmSource()==='measured' && !state.mapping.pwm)throw new Error("请映射实际 PWM 列，或手动选择并确认控制器重建；本次未启动实验。");
+    if(pwmSource()==='measured' && !state.mapping.pwm)throw new Error(c.pwm_source==='measured'
+      ? "请映射实际 PWM 列后继续计划；如需改用重建 PWM，请取消本计划并重新发送指令。"
+      : "请映射实际 PWM 列，或手动选择并确认控制器重建；本次未启动实验。");
     if($('fit-method').querySelector('[value="pann"]').disabled)throw new Error("后端未安装 PyTorch，未切换方法或启动实验。");
     const previousMethod=$('fit-method').value;
     try{$('fit-method').value='pann';options();}finally{$('fit-method').value=previousMethod;}
@@ -142,7 +160,7 @@ async function continueIdentificationPlan(){
     if(plan.status!=='cancelled'){
       plan.status='complete';plan.note="两种方法均已完成。可从参数辨识下拉列表查看和导出各自结果。";
       const text=tr(plan.note)+'\n\n'+plan.done.map(r=>`- **${r.method==='pann'?'PANN':tr('抗噪加权积分')}**: L = ${fmt(r.parameters.L_H*1e6,6)} μH, C = ${fmt(r.parameters.C_F*1e6,6)} μF, R = ${fmt(r.parameters.R_ohm,6)} Ω`).join('\n');
-      message('assistant',text,'本地规则分析');rememberMessage('assistant',text,null,'本地规则分析');
+      message('assistant',text,'辨识任务');rememberMessage('assistant',text,null,'辨识任务');
     }
   }catch(error){if(plan.status!=='cancelled'){plan.status='paused';plan.note=error.message;}}
   finally{

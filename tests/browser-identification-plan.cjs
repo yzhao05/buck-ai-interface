@@ -6,6 +6,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const page=await browser.newPage({viewport:{width:1600,height:1100}}),errors=[],fits=[];
  page.on('pageerror',e=>errors.push(e.message));
  page.on('request',r=>{if(r.url().endsWith('/api/identify')){fits.push(r.postDataJSON());console.log('Submitted',fits.length,fits.at(-1).options.method);}});
+ await require('./plan-chat-fixtures.cjs')(page);
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();};
  const paused=()=>page.waitForFunction(()=>currentIdentificationPlan()?.status==='paused'&&!historyLocked());

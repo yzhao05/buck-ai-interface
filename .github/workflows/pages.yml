@@ -34,6 +34,8 @@ jobs:
           node --check frontend/i18n.js
           node --check frontend/attachments.js
           node --check frontend/sync.js
+          node --check frontend/identification-plan.js
+          node --check frontend/report-files.js
       - name: Set public backend address
         env:
           RENDER_API_URL: ${{ vars.RENDER_API_URL }}
