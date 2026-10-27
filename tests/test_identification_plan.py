@@ -105,7 +105,7 @@ def test_invalid_provider_tool_calls(monkeypatch,calls):
     assert asyncio.run(configuration.propose(request('运行两种方法'),{}))['ui_action'] is None
 
 
-@pytest.mark.parametrize('text', ['根据特殊PWM运行两种方法','使用实际PWM和重建PWM运行两种方法'])
+@pytest.mark.parametrize('text', ['根据特殊PWM运行两种方法','使用实际PWM或重建PWM运行两种方法'])
 def test_model_clarification_is_returned_without_execution(monkeypatch,text):
     provider(monkeypatch,proposal(execute=False,pwm_source='unclear',clarification='请选择一种 PWM 来源。'))
     result=asyncio.run(configuration.propose(request(text),{}))
@@ -159,3 +159,63 @@ def test_analysis_and_examples_never_execute(text):
 @pytest.mark.parametrize('text', ['请运行两种方法，然后比较结果', '完成两种方法的参数识别，并分析结果', 'Run both methods, then compare the results'])
 def test_execution_then_comparison_remains_authorized(text):
     assert configuration.batch_requested(text)
+
+
+FOUR_REQUEST='根据我的CASE16A_noise03_seed13.csv，完成rebuild pwm和实际pwm；pann和加权积分四个仿真'
+
+
+@pytest.mark.parametrize('text', [FOUR_REQUEST,
+    '根据CASE16A_noise03_seed13.csv完成实际pwm和重建pwm，pann和加权积分四组实验',
+    'Please run four experiments with actual and reconstructed PWM',
+    'Complete 4 simulations using actual and rebuilt PWM',
+    'Run four experiments, then compare results',
+    '请完成四组仿真', '请运行两种方法，然后比较结果'])
+def test_four_run_execution_is_dispatched_to_configuration(text):
+    assert configuration.batch_requested(text)
+    assert task_router.rule_selection(text).task=='configuration'
+
+
+def test_four_runs_parsed_by_deepseek_with_identification_panel_closed(monkeypatch):
+    calls=provider(monkeypatch,proposal(filename='CASE16A_noise03_seed13.csv',
+        pwm_source='both',pwm_evidence='rebuild pwm和实际pwm'))
+    req=request(FOUR_REQUEST)
+    assert req.identification_enabled is False
+    async def invoke(name): pytest.fail('Only propose a plan; do not start old-config jobs: '+name)
+    result=asyncio.run(chat.answer(req,invoke))
+    assert result['route']['task']=='configuration'
+    assert result['mode']=='deepseek' and result['job_id'] is None
+    action=result['ui_action']
+    assert action['version']==3 and action['changes']=={'mode':'LC'}
+    assert action['runs']==[{'method':method,'pwm_source':source}
+        for source in ('measured','controller') for method in ('weighted_integral','pann')]
+    assert len(calls)==1
+
+
+@pytest.mark.parametrize('source', ['both','measured'])
+def test_english_four_run_request_preserves_all_combinations(monkeypatch,source):
+    provider(monkeypatch,proposal(pwm_source=source,pwm_evidence='actual and reconstructed PWM'))
+    result=asyncio.run(configuration.propose(request('Please run four experiments with actual and reconstructed PWM'),{}))
+    if source=='both':
+        assert len(result['ui_action']['runs'])==4
+    else:
+        assert result['ui_action'] is None
+
+
+@pytest.mark.parametrize('updates', [
+    {'pwm_source':'measured'}, {'pwm_source':'unchanged','pwm_evidence':''}, {'mode':'LCR'},
+])
+def test_four_run_plan_never_silently_drops_combinations(monkeypatch,updates):
+    parsed=proposal(filename='CASE16A_noise03_seed13.csv',pwm_source='both',pwm_evidence='rebuild pwm和实际pwm')|updates
+    provider(monkeypatch,parsed)
+    result=asyncio.run(configuration.propose(request(FOUR_REQUEST),{}))
+    assert result['ui_action'] is None and result['job_id'] is None
+
+
+@pytest.mark.parametrize('text', [
+    '请比较四组仿真结果', '四组实验已经完成了，分析结果', '不要运行四组实验',
+    '如何完成四组仿真？', '例如“完成四组仿真”是什么意思', '我之前完成过四组实验',
+    'Compare four experiments', 'Do not run four experiments', 'How do I complete four simulations?',
+    'Four experiments are complete. Explain the results.',
+])
+def test_four_run_history_and_questions_never_authorize_execution(text):
+    assert not configuration.batch_requested(text)

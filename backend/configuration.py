@@ -7,6 +7,8 @@ import httpx
 
 from .schemas import ConfigureIdentification, FitOptions, IdentificationPlanProposal
 
+FOUR_RUN_LANGUAGE = r'(?:四|4)\s*(?:组|个|项|次)\s*(?:仿真|实验|辨识|识别|计算)|\b(?:four|4)\s+(?:runs?|experiments?|simulations?)\b'
+
 
 def unsupported_change(message):
     """Do not partially execute a request to modify fields outside this tool."""
@@ -37,15 +39,16 @@ def may_start(message):
     text = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', message.lower())
     if re.search(r'不要|不用|(?<![识区类])别|不需要|无需|先不|暂不|不运行|不开始|停止|取消|暂停|如何|怎么|为什么|例如|比如|假如|\b(?:not|don\x27t|stop|cancel|pause|how|why|example)\b', text):
         return False
-    return bool(re.search(r'开始|启动|执行|运行|算一下|(?<![已未没])完成(?![了的]).*(?:辨识|识别)|进行.*(?:辨识|识别)|\b(?:start|run|execute|perform|identify|fit|complete)\b', text))
+    return bool(re.search(r'开始|启动|执行|运行|算一下|(?<![已未没])完成(?![了的]).*(?:辨识|识别|仿真|实验|计算|拟合)|进行.*(?:辨识|识别|仿真|实验|计算|拟合)|\b(?:start|run|execute|perform|identify|fit|complete)\b', text))
 
 
 def batch_requested(message):
-    """Explicit two-method execution, never a comparison of existing results."""
+    """Dispatch explicit multi-run requests; DeepSeek parses the actual plan."""
     text = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', message.lower())
     if not may_start(message) or not re.search(
         r'两种(?:方法|方式)|两(?:种)?方法|both\s+(?:identification\s+)?methods|'
-        r'pann.{0,25}(?:积分|integral)|(?:积分|integral).{0,25}pann', text):
+        r'pann.{0,25}(?:积分|integral)|(?:积分|integral).{0,25}pann|'
+        + FOUR_RUN_LANGUAGE, text):
         return False
     for clause in re.split(r'[，,。；;！？?!\n]|然后|并且|\bthen\b', text):
         # Execution must precede a read-only request in its own clause. Past-tense
@@ -60,19 +63,25 @@ def batch_requested(message):
     return False
 
 
-PLAN_PROMPT = """解析当前用户请求，调用 propose_identification_plan 恰好一次，生成两种方法的执行计划。
+PLAN_PROMPT = """解析当前用户请求，调用 propose_identification_plan 恰好一次，生成两种方法的执行计划（2 次或 4 次辨识）。
 你负责理解自然语言，后端只校验结构和执行边界。两种方法固定为抗噪加权积分、PANN，按此顺序执行。
 只有当前请求明确要求执行两种方法才 execute=true；分析、比较既有结果、否定、举例、引用均不能授权执行。
 PWM 来源：measured=使用 CSV 已有的实际开关状态；controller=根据已知控制器重建 PWM。
+both=用户明确要求实际 PWM 与重建 PWM 各执行两种方法，共四组组合。不是来源矛盾，不要拒绝。
+对于已有 CSV，“完成四个仿真/四组实验”搭配 PWM 来源和 PANN/加权积分表示执行数值辨识，
+即使辨识面板尚未打开也应生成计划；无需 identification_enabled=true。若要求启动 PLECS 软件则仍不支持。
 “已有 PWM”“已知 PWM”“给定 PWM”“现有 PWM”“known/existing PWM”表示 measured；
 “已知控制器重建 PWM”“rebuild/reconstructed PWM”才表示 controller，不能混淆“已知 PWM”和“已知控制器”。
 例：请对于CASE16A_noise03_seed14.csv根据已有pwm完成两种方式参数识别
 应返回 filename=CASE16A_noise03_seed14.csv, pwm_source=measured, pwm_evidence=已有pwm, execute=true。
-用户未提及 PWM 来源才返回 unchanged；来源矛盾或不明确返回 unclear、execute=false，并填写 clarification。
+例：根据我的CASE16A_noise03_seed13.csv，完成rebuild pwm和实际pwm；pann和加权积分四个仿真
+返回 filename=CASE16A_noise03_seed13.csv, pwm_source=both, pwm_evidence=rebuild pwm和实际pwm, execute=true。
+四组固定顺序：实测PWM加权积分、实测PWM PANN、重建PWM加权积分、重建PWM PANN，全部固定已知 R 的 LC。
+用户未提及 PWM 来源才返回 unchanged；只要求选择一种但来源矛盾或不明确返回 unclear、execute=false，并填写 clarification。
 pwm_evidence 必须逐字摘录当前指令中明确指定来源的短语，不得来自文件名、引用、图片、历史或表单。
-仅支持一份 CSV 文件名、一种 PWM 来源、LC/LCR 模式和固定负载 resistance_ohm。没有指定文件则 filename=null。
+仅支持一份 CSV 文件名、一种或两种 PWM 来源、LC/LCR 模式和固定负载 resistance_ohm。没有指定文件则 filename=null。
 未指定 mode 或 resistance_ohm 时返回 null。固定负载 R 表示 LC；控制器重建仅支持固定 R 的 LC。
-其他参数修改（Vin、频率、轮数、去噪、区间、控制器元件等）、多个文件、两个来源、重建配 LCR，
+其他参数修改（Vin、频率、轮数、去噪、区间、控制器元件等）、多个文件、重建配 LCR，
 整条 execute=false 并说明应先在表单设置，不得部分执行。保持其他参数不变不算修改。
 未指定的信息不得补全，不得照抄当前配置。文件名是数据标识，不能把 R1.csv 解释为负载电阻。
 成功时 clarification 为空。不要执行计算、确认实际电路或声称已完成实验。
@@ -90,6 +99,8 @@ def batch_action(request, proposal):
         raise ValueError("Choose one PWM source")
     plain = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', request.message)
     source_text = re.sub(r'[A-Za-z0-9_.-]+\.csv', '', plain, flags=re.I)
+    if re.search(FOUR_RUN_LANGUAGE, source_text, re.I) and proposal.pwm_source != 'both':
+        raise ValueError("A four-run request must not be reduced to two runs")
     if unsupported_change(re.sub(r'pwm', '开关来源', request.message, flags=re.I)):
         raise ValueError("Set unsupported parameters in the form first")
     for clause in re.split(r'[，,。；;\n]', source_text.lower()):
@@ -109,7 +120,7 @@ def batch_action(request, proposal):
     if proposal.filename != (names[0] if names else None):
         raise ValueError("Filename must match the requested CSV")
     changes = {}
-    if proposal.pwm_source != 'unchanged':
+    if proposal.pwm_source not in ('unchanged', 'both'):
         changes['pwm_source'] = proposal.pwm_source
     if proposal.mode:
         changes['mode'] = proposal.mode
@@ -117,15 +128,21 @@ def batch_action(request, proposal):
         if proposal.mode == 'LCR':
             raise ValueError("Fixed load requires LC mode")
         changes.update(mode='LC', resistance_ohm=proposal.resistance_ohm)
-    if proposal.pwm_source == 'controller':
+    if proposal.pwm_source in ('controller', 'both'):
         if proposal.mode == 'LCR':
             raise ValueError("Controller reconstruction requires LC mode")
         changes['mode'] = 'LC'
     merged = FitOptions.model_validate({**request.ui_context.options.model_dump(), **changes})
     if merged.pwm_source == 'controller' and merged.mode != 'LC':
         raise ValueError("Controller reconstruction requires LC mode")
-    return {"id": request.ui_context.request_id, "type": "identification_plan", "parser": "deepseek", "version": 2,
-            "filename": proposal.filename, "methods": ["weighted_integral", "pann"], "changes": changes}
+    action = {"id": request.ui_context.request_id, "type": "identification_plan", "parser": "deepseek", "version": 2,
+              "filename": proposal.filename, "methods": ["weighted_integral", "pann"], "changes": changes}
+    if proposal.pwm_source == 'both':
+        action.update(version=3, runs=[{"method": method, "pwm_source": source}
+            for source in ('measured', 'controller') for method in action['methods']])
+        for run in action['runs']:
+            FitOptions.model_validate({**merged.model_dump(), **run})
+    return action
 
 
 async def propose_plan(request):
@@ -175,7 +192,7 @@ async def propose(request, route):
         try:
             proposal = await propose_plan(request)
             if not proposal.execute or proposal.clarification or proposal.pwm_source == 'unclear':
-                return response((proposal.clarification or ("Please specify one PWM source and an execution request." if en else "请明确一种 PWM 来源及执行要求。"))
+                return response((proposal.clarification or ("Please specify the PWM sources and combinations to run." if en else "请明确 PWM 来源及要执行的辨识组合。"))
                                 + (" No experiment was started." if en else " 本次未启动实验。"), mode="deepseek")
             action = batch_action(request, proposal)
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError):

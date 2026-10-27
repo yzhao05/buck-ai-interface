@@ -1,8 +1,18 @@
 /* Explicit, bounded chat plans. Numerical jobs still use the normal validated API. */
 "use strict";
 const identificationPlans=new Map();
-function currentPlanParser(plan){return plan?.parser==='deepseek' && plan.version===2;}
+function validFourRuns(plan){
+  const pairs=['measured:weighted_integral','measured:pann','controller:weighted_integral','controller:pann'];
+  return Array.isArray(plan?.runs) && plan.runs.length===4
+    && plan.runs.every((run,index)=>run && `${run.pwm_source}:${run.method}`===pairs[index]);
+}
+function currentPlanParser(plan){return plan?.parser==='deepseek' && (plan.version===2 || (plan.version===3 && validFourRuns(plan)));}
+function planRuns(plan){
+  return plan.version===3 ? plan.runs : plan.methods.map(method=>({method,pwm_source:plan.changes?.pwm_source || plan.pwmSource}));
+}
+function planRunLabel(run){return `${tr(run.pwm_source==='controller'?'重建 PWM':'实测 PWM')} · ${run.method==='pann'?'PANN':tr('抗噪加权积分')}`;}
 function identificationPlanSource(plan){
+  if(plan.version===3)return tr("PWM 来源：实际 PWM 与控制器重建，共四组辨识");
   const source=plan.changes.pwm_source || plan.pwmSource;
   if(!source && !currentPlanParser(plan))return tr("PWM 来源：请查看已保存的实验结果");
   return tr(source==='measured' ? "PWM 来源：CSV 实际开关状态（已知 PWM）"
@@ -12,7 +22,10 @@ function validStoredIdentificationPlan(plan){
   return plan && typeof plan==='object' && ['queued','running','paused','complete','cancelled'].includes(plan.status)
     && Array.isArray(plan.methods) && plan.methods.length===2 && new Set(plan.methods).size===2
     && plan.methods.every(m=>['weighted_integral','pann'].includes(m))
-    && Array.isArray(plan.done) && plan.done.length<=2 && plan.done.every(r=>r && plan.methods.includes(r.method) && typeof r.job_id==='string')
+    && (plan.version!==3 || validFourRuns(plan))
+    && Array.isArray(plan.done) && plan.done.length<=planRuns(plan).length
+    && plan.done.every((r,index)=>r && r.method===planRuns(plan)[index].method && typeof r.job_id==='string'
+      && (plan.version!==3 || r.pwm_source===plan.runs[index].pwm_source))
     && plan.changes && typeof plan.changes==='object' && !Array.isArray(plan.changes)
     && (plan.filename===null || typeof plan.filename==='string');
 }
@@ -42,14 +55,15 @@ function saveIdentificationPlan(plan){
 function renderIdentificationPlan(){
   const box=$("identification-plan");if(!box)return;
   const plan=currentIdentificationPlan();box.hidden=!plan;if(!plan)return;
-  $("plan-progress").textContent=`${tr("两种方法辨识计划")} · ${plan.done.length} / ${plan.methods.length}`;
+  $("plan-progress").textContent=`${tr(plan.version===3?"四组参数辨识计划":"两种方法辨识计划")} · ${plan.done.length} / ${planRuns(plan).length}`;
   $("plan-file").textContent=plan.filename || state.dataset?.filename || tr("当前 CSV");
   $("plan-source").textContent=identificationPlanSource(plan);
   $("plan-note").textContent=tr(plan.note || "正在检查 CSV 与实验条件…");
+  if(plan.version===3 && plan.status==='running' && plan.done.length<4)$("plan-note").append(' '+planRunLabel(plan.runs[plan.done.length]));
   $("plan-runs").replaceChildren();
   for(const item of plan.done){
     const row=document.createElement("li");
-    row.textContent=`${item.method==='pann'?'PANN':tr('抗噪加权积分')} · ${tr('已完成')}${item.report_name ? ' · '+item.report_name : ''}`;
+    row.textContent=`${plan.version===3?planRunLabel(item):item.method==='pann'?'PANN':tr('抗噪加权积分')} · ${tr('已完成')}${item.report_name ? ' · '+item.report_name : ''}`;
     $("plan-runs").append(row);
   }
   $("plan-continue").hidden=plan.status!=="paused";
@@ -64,6 +78,7 @@ async function acceptIdentificationPlan(action,context){
   if(!c || Object.keys(c).some(k=>!["mode","pwm_source","resistance_ohm"].includes(k)) || ('pwm_source' in c && !["measured","controller"].includes(c.pwm_source))
       || (c.mode && !["LC","LCR"].includes(c.mode)) || (c.pwm_source==='controller' && c.mode!=='LC')
       || ('resistance_ohm' in c && !(typeof c.resistance_ohm==='number' && Number.isFinite(c.resistance_ohm) && c.resistance_ohm>.01 && c.resistance_ohm<=100000)))throw new Error("配置操作格式无效。");
+  if(action.version===3 && (c.mode!=='LC' || 'pwm_source' in c))throw new Error("配置操作格式无效。");
   const key=`buck-ui-action:${sessionId}:${action.id}`;
   if(sessionStorage.getItem(key))return tr("此操作已处理，未重复应用或启动。");
   const previous=currentIdentificationPlan();
@@ -75,7 +90,9 @@ async function acceptIdentificationPlan(action,context){
   saveIdentificationPlan({...action,status:'queued',done:[],jobId:null,note:"正在检查 CSV 与实验条件…"});
   sessionStorage.setItem(key,'processed');
   toggleSection("toggle-experiment","experiment-content","实验配置",true);setIdentificationOpen(true);
-  return tr("DeepSeek 已解析两种方法的执行计划：先加权积分，再 PANN。缺少条件会显示在计划卡片中，补齐后点击继续；结果分别保存在本会话。")+'\n\n'+identificationPlanSource(action);
+  return tr(action.version===3
+    ? "DeepSeek 已解析四组辨识计划：实际 PWM 和重建 PWM 分别运行加权积分、PANN。开始前检查全部条件，四份结果分别保存。"
+    : "DeepSeek 已解析两种方法的执行计划：先加权积分，再 PANN。缺少条件会显示在计划卡片中，补齐后点击继续；结果分别保存在本会话。")+'\n\n'+identificationPlanSource(action);
 }
 function startQueuedIdentificationPlan(){
   if(currentIdentificationPlan()?.status==='queued' && !historyLocked())void continueIdentificationPlan();
@@ -113,33 +130,54 @@ async function continueIdentificationPlan(){
       if(range[0])$('start-ms').value=range[0];if(range[1])$('end-ms').value=range[1];
     }
     if(!state.dataset){toggleSection('toggle-import','import-content','导入波形',true);throw new Error("请先上传 CSV；本次未启动实验。");}
+    // Once a job has been submitted, reject edits before asking for new circuit
+    // confirmation or validating a different configuration.
+    if((plan.done.length || plan.jobId) && plan.inputs!==planInputs())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
     const c=plan.changes;
     if(!plan.done.length && !plan.jobId){
+      if(plan.version===3)$('pwm-source').value='controller';
       if(c.pwm_source)$('pwm-source').value=c.pwm_source;if(c.mode)$('fit-mode').value=c.mode;
       if('resistance_ohm' in c){
         if(Number($('fixed-r').value)!==c.resistance_ohm)$('controller-confirmed').value='no';
         $('fixed-r').value=String(c.resistance_ohm);
       }
       prepareControllerDefaults();controls();persistConversation();
+      if(plan.version===3)$('pwm-source').value=plan.runs[0].pwm_source;
     }
-    plan.pwmSource=pwmSource();
+    if(plan.version!==3)plan.pwmSource=pwmSource();
+    const runs=planRuns(plan);
     if(!state.mapping){$('mapping-details').open=true;throw new Error("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
+    if(plan.version===3 && !state.mapping.pwm)throw new Error("四组计划需要实际 PWM 列及已确认的控制器配置；请先补齐实际 PWM 列，本次未启动实验。");
+    if(plan.version===3 && $('controller-confirmed').value!=='yes'){
+      if(!plan.done.length && !plan.jobId)$('pwm-source').value='controller';
+      throw new Error("四组计划包含重建 PWM，请先核对并确认控制电路与当前参数一致；本次未启动实验。");
+    }
     if(pwmSource()==='controller' && $('controller-confirmed').value!=='yes')throw new Error("请核对并确认控制电路与当前参数一致；本次未启动实验。");
     if(pwmSource()==='measured' && !state.mapping.pwm)throw new Error(c.pwm_source==='measured'
       ? "请映射实际 PWM 列后继续计划；如需改用重建 PWM，请取消本计划并重新发送指令。"
       : "请映射实际 PWM 列，或手动选择并确认控制器重建；本次未启动实验。");
     if($('fit-method').querySelector('[value="pann"]').disabled)throw new Error("后端未安装 PyTorch，未切换方法或启动实验。");
-    const previousMethod=$('fit-method').value;
-    try{$('fit-method').value='pann';options();}finally{$('fit-method').value=previousMethod;}
-    if((plan.done.length || plan.jobId) && plan.inputs!==planInputs())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
+    const previousMethod=$('fit-method').value,previousSource=$('pwm-source').value;
+    try{
+      $('fit-method').value='pann';
+      for(const run of runs){
+        if(run.pwm_source)$('pwm-source').value=run.pwm_source;
+        const opts=options();
+        if(plan.version===3 && run.pwm_source==='controller' && (opts.start_s!==0 || opts.end_s===null || opts.end_s>=.001))
+          throw new Error("四组计划的重建区间需从 0 ms 开始并结束于 1 ms 前；请先调整区间。");
+      }
+    }finally{$('fit-method').value=previousMethod;$('pwm-source').value=previousSource;}
     const active=await api('/api/jobs/active',{timeout:10000});
     if(active.job && active.job.job_id!==plan.jobId)throw new Error("已有任务或同步正在进行，本次未修改配置或启动新实验。");
     if(plan.uncertain)throw new Error("上次提交状态未确认。请先查看实验历史与当前任务，取消此计划后再决定是否重试，避免重复计算。");
     plan.inputs=planInputs();saveIdentificationPlan(plan);
-    while(plan.done.length<plan.methods.length && plan.status!=='cancelled'){
+    while(plan.done.length<runs.length && plan.status!=='cancelled'){
       if(owner!==identificationPlanKey())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
-      const method=plan.methods[plan.done.length];$('fit-method').value=method;
-      plan.note=method==='pann'?"正在运行 PANN，完成后将分别保留两份结果。":"正在运行抗噪加权积分，完成后继续 PANN。";saveIdentificationPlan(plan);controls();
+      const runSpec=runs[plan.done.length],method=runSpec.method;$('fit-method').value=method;
+      if(runSpec.pwm_source)$('pwm-source').value=runSpec.pwm_source;
+      plan.inputs=planInputs();
+      plan.note=plan.version===3?"正在按计划执行四组辨识，完成的结果会分别保存。"
+        :method==='pann'?"正在运行 PANN，完成后将分别保留两份结果。":"正在运行抗噪加权积分，完成后继续 PANN。";saveIdentificationPlan(plan);controls();
       let outcome;
       if(plan.jobId){
         const job=await api(`/api/jobs/${plan.jobId}`);
@@ -154,12 +192,12 @@ async function continueIdentificationPlan(){
       // Save the completed snapshot before a later job replaces the result card.
       if(!persistConversation())throw new Error("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");
       const run=activeConversation.experiments?.find(r=>r.id===outcome.job_id);
-      plan.done.push({method,job_id:outcome.job_id,report_name:run?experimentReportName(run):null,parameters:{...state.result.parameters}});
+      plan.done.push({method,pwm_source:pwmSource(),job_id:outcome.job_id,report_name:run?experimentReportName(run):null,parameters:{...state.result.parameters}});
       plan.jobId=null;saveIdentificationPlan(plan);
     }
     if(plan.status!=='cancelled'){
-      plan.status='complete';plan.note="两种方法均已完成。可从参数辨识下拉列表查看和导出各自结果。";
-      const text=tr(plan.note)+'\n\n'+plan.done.map(r=>`- **${r.method==='pann'?'PANN':tr('抗噪加权积分')}**: L = ${fmt(r.parameters.L_H*1e6,6)} μH, C = ${fmt(r.parameters.C_F*1e6,6)} μF, R = ${fmt(r.parameters.R_ohm,6)} Ω`).join('\n');
+      plan.status='complete';plan.note=plan.version===3?"四组辨识均已完成。可从参数辨识下拉列表查看和导出各自结果。":"两种方法均已完成。可从参数辨识下拉列表查看和导出各自结果。";
+      const text=tr(plan.note)+'\n\n'+plan.done.map(r=>`- **${plan.version===3?planRunLabel(r):r.method==='pann'?'PANN':tr('抗噪加权积分')}**: L = ${fmt(r.parameters.L_H*1e6,6)} μH, C = ${fmt(r.parameters.C_F*1e6,6)} μF, R = ${fmt(r.parameters.R_ohm,6)} Ω`).join('\n');
       message('assistant',text,'辨识任务');rememberMessage('assistant',text,null,'辨识任务');
     }
   }catch(error){if(plan.status!=='cancelled'){plan.status='paused';plan.note=error.message;}}

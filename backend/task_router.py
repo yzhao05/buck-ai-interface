@@ -47,6 +47,7 @@ CLASSIFIER_SYSTEM = """你是 Buck Lab 的任务分类 Agent，参考 PE-GPT 的
 类别：guidance=界面/CSV/部署使用指导；knowledge=电路原理、公式推导；waveform=已有波形观测；
 identification=用户明确要求执行 L/C/R 辨识；diagnosis=辨识结果、误差原因、修改计划、多次实验对比；
 configuration=用户要求打开辨识面板或选择/修改方法、LC/LCR、负载R等设置，包括设置后开始的组合指令。此类优先于 identification，即使面板未打开。
+根据已有 CSV 完成“实际 PWM 和重建 PWM、PANN 和加权积分四个仿真/实验”属于 configuration 的四组辨识计划，不是 general，也不要求辨识面板已经打开。
 hardware=器件应力、损耗、选型、寿命；general=其他问答或尚未支持的自动仿真/设计任务。
 选一个主任务，最多两个次任务。若明确要求执行辨识并解释公式，主任务为 identification，次任务为 knowledge。
 只询问“如何辨识”“辨识原理”或明确不要执行时不能选择 identification。

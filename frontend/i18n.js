@@ -2,6 +2,14 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "四组参数辨识计划": "Four-run identification plan",
+    "PWM 来源：实际 PWM 与控制器重建，共四组辨识": "PWM sources: actual CSV PWM and controller reconstruction, four runs",
+    "DeepSeek 已解析四组辨识计划：实际 PWM 和重建 PWM 分别运行加权积分、PANN。开始前检查全部条件，四份结果分别保存。": "DeepSeek parsed four runs: weighted integral and PANN with actual and reconstructed PWM. All prerequisites are checked before starting, and four results are saved separately.",
+    "四组计划需要实际 PWM 列及已确认的控制器配置；请先补齐实际 PWM 列，本次未启动实验。": "Four runs require an actual PWM column and confirmed controller settings. Map the actual PWM column first; no experiment was started.",
+    "四组计划包含重建 PWM，请先核对并确认控制电路与当前参数一致；本次未启动实验。": "The four-run plan includes reconstructed PWM. Verify and confirm the controller circuit and current settings first; no experiment was started.",
+    "四组计划的重建区间需从 0 ms 开始并结束于 1 ms 前；请先调整区间。": "Reconstruction in the four-run plan requires an interval starting at 0 ms and ending before 1 ms. Adjust the interval first.",
+    "正在按计划执行四组辨识，完成的结果会分别保存。": "Running the four-run plan. Completed results are saved separately.",
+    "四组辨识均已完成。可从参数辨识下拉列表查看和导出各自结果。": "All four runs completed. View and export each result from the identification dropdown.",
     "PWM 来源：CSV 实际开关状态（已知 PWM）": "PWM source: actual CSV switching states (known PWM)",
     "PWM 来源：已知控制器重建": "PWM source: reconstruction from the known controller",
     "PWM 来源：沿用当前设置": "PWM source: keep the current setting",
