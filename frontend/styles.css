@@ -9,3 +9,5 @@
 .identification-plan #plan-file { display: block; overflow-wrap: anywhere; }
 .identification-plan p { margin: 8px 0; }
 .identification-plan ul { overflow-wrap: anywhere; margin: 6px 0; }
+.report-folder-hint { margin: 0; padding: 0 24px 16px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+#report-export-status { overflow-wrap: anywhere; }

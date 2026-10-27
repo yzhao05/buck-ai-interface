@@ -2,6 +2,16 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "↓ 导出报告文件夹": "↓ Export report folder",
+    "导出时选择保存位置，生成同名文件夹、PDF 和 JSON；不支持文件夹选择时分别下载 PDF 和 JSON。": "Choose a save location to create a folder, PDF and JSON with matching names; PDF and JSON download separately when folder selection is unavailable.",
+    "请选择保存位置，将在其中创建同名报告文件夹。": "Choose a save location. A report folder with a matching name will be created there.",
+    "正在生成 PDF 和 JSON…": "Generating PDF and JSON…",
+    "报告已保存到：": "Report saved to: ",
+    "改为分别下载 PDF 和 JSON": "Download PDF and JSON separately",
+    "已取消导出。": "Export cancelled.",
+    "文件夹保存未完成，目标位置可能已有部分文件。已改为下载 PDF 和 JSON；如下载被拦截，请点击下方链接分别保存。": "Folder saving was incomplete; some files may exist at the destination. PDF and JSON downloads were requested instead. If blocked, use the links below to save them separately.",
+    "无法访问所选位置。请重新选择，或改为分别下载 PDF 和 JSON。": "Cannot access the selected location. Choose again or download PDF and JSON separately.",
+    "无法创建新的报告文件夹。": "Unable to create a new report folder.",
     "无法保存计划进度。请检查浏览器存储；已提交的任务请在实验历史中核对后再继续。": "Unable to save plan progress. Check browser storage; review submitted tasks in experiment history before continuing.",
     "参数辨识面板已打开。": "Identification panel opened.",
     "两种方法辨识计划": "Two-method identification plan",

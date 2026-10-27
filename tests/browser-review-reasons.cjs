@@ -1,3 +1,4 @@
+const {downloadReportFiles}=require('./report-download-helper.cjs');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
 const assert=require('node:assert/strict'),fs=require('node:fs');
 (async()=>{
@@ -12,7 +13,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
   await page.locator('#identify').click();await page.locator('#identify-complete-hint').waitFor();await ready();
   assert.equal(await page.locator('#result-badge').textContent(),'需复核');
   assert.match(await page.locator('#review-reasons').innerText(),/归一化 RMSE: .+% > 5%/);
-  const downloadPromise=page.waitForEvent('download');await page.locator('#download-report').click();
+  const downloadPromise=page.waitForEvent('download');await downloadReportFiles(page);
   const download=await downloadPromise;await download.saveAs('runtime/review-reasons-report.json');
   const report=JSON.parse(fs.readFileSync('runtime/review-reasons-report.json','utf8'));
   assert(report.result.review_reasons.some(r=>r.code.endsWith('nrmse')));

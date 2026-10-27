@@ -1,3 +1,4 @@
+const {downloadReportFiles}=require('./report-download-helper.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
@@ -42,7 +43,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert(await page.evaluate(()=>JSON.stringify(state.chart)===JSON.stringify(state.summary.chart)));
   await page.reload();await ready();await page.waitForFunction(id=>state.savedRun?.id===id,first.id);
   assert.equal(await page.locator('#vin').inputValue(),'31');assert.deepEqual(await page.evaluate(()=>state.result.parameters),first.p);
-  const downloads=[];page.on('download',d=>downloads.push(d));await page.locator('#download-report').click();
+  const downloads=[];page.on('download',d=>downloads.push(d));await downloadReportFiles(page);
   await page.waitForFunction(()=>!reportExportBusy);await page.waitForTimeout(300);
   assert.equal(downloads.length,2);assert.deepEqual(downloads.map(d=>d.suggestedFilename()).sort(),[filename,filename.replace('.json','.pdf')].sort());
   const json=downloads.find(d=>d.suggestedFilename().endsWith('.json'));await json.saveAs('runtime/result-library-report.json');

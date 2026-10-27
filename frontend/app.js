@@ -940,6 +940,7 @@ function clearReportDownloads() {
   for (const url of reportDownloadUrls) URL.revokeObjectURL(url);
   reportDownloadUrls.length = 0;
   $("report-downloads").hidden = true;
+  $("download-report-files").hidden=false;
   for (const id of ["report-pdf-link", "report-json-link"]) {
     $(id).hidden = true; $(id).removeAttribute("href"); $(id).removeAttribute("download");
   }
@@ -950,11 +951,15 @@ function prepareReportDownload(blob, filename, id) {
   link.href = url; link.download = filename; link.hidden = false;
   return link;
 }
-async function exportReports() {
+function downloadReportPair() {
+  $("report-json-link").click();
+  $("report-pdf-link").click();
+}
+async function exportReports({filesOnly=false}={}) {
   if (!state.result || reportExportBusy) return;
   clearReportDownloads();
   const attempt = reportExportAttempt;
-  reportExportBusy = true; $("download-report").disabled = true;
+  reportExportBusy = true; $("download-report").disabled = true;$("download-report-files").disabled=true;
   // Capture once: editing inputs or switching conversations must never mix runs.
   const exportedAt = new Date(), language = window.BuckI18n.language;
   const report = structuredClone({application:"Buck Lab 0.1.0",exported_at:exportedAt.toISOString(),summary:state.savedRun ? null : state.summary,
@@ -964,21 +969,45 @@ async function exportReports() {
   const notes = (report.result.warnings || []).map(note=>tr(note));
   if(report.result.measurement_diagnostics)notes.push(...measurementLines(report.result),tr("训练段局部噪声估计不是传感器标定；残差线索不改变 5% 应用门槛。"));
   $("report-downloads").hidden = false;
-  ui($("report-export-status"), "JSON 已生成，正在生成 PDF…");
-  prepareReportDownload(new Blob([JSON.stringify(report,null,2)],{type:"application/json;charset=utf-8"}),filename,"report-json-link").click();
+  const stem=filename.replace(/\.json$/i,''),json=new Blob([JSON.stringify(report,null,2)],{type:"application/json;charset=utf-8"});
+  let parent=null,pdfReady=false;
   try {
+    // The picker must run in the original click gesture, before any network await.
+    if(!filesOnly && typeof window.showDirectoryPicker==='function' && window.isSecureContext){
+      ui($("report-export-status"),"请选择保存位置，将在其中创建同名报告文件夹。");
+      parent=await window.showDirectoryPicker({id:'buck-report-export',mode:'readwrite'});
+      if(attempt!==reportExportAttempt)return;
+    }
+    ui($("report-export-status"), "正在生成 PDF 和 JSON…");
+    prepareReportDownload(json,filename,"report-json-link");
     const pdf = await api("/api/reports/pdf", {method:"POST",asBlob:true,body:{language,exported_at:report.exported_at,result:report.result,notes}});
     if (attempt !== reportExportAttempt) return;
     if (pdf.type !== "application/pdf" || await pdf.slice(0,5).text() !== "%PDF-") throw new Error("后端未返回有效的 PDF，请更新后端后重试。");
-    prepareReportDownload(pdf,filename.replace(/\.json$/,".pdf"),"report-pdf-link").click();
-    ui($("report-export-status"), "PDF 和 JSON 已生成。如浏览器拦截了连续下载，请点击下方链接分别保存。");
+    if(attempt!==reportExportAttempt)return;
+    pdfReady=true;prepareReportDownload(pdf,filename.replace(/\.json$/,".pdf"),"report-pdf-link");
+    $("download-report-files").hidden=true;
+    if(parent){
+      const savedName=await saveReportFolder(parent,stem,json,pdf,()=>attempt===reportExportAttempt);
+      if(attempt!==reportExportAttempt)return;
+      const status=$("report-export-status");status.replaceChildren(window.BuckI18n.node("报告已保存到："),document.createTextNode(`${parent.name}/${savedName}/`));
+    }else{
+      downloadReportPair();
+      ui($("report-export-status"),"PDF 和 JSON 已生成。如浏览器拦截了连续下载，请点击下方链接分别保存。");
+    }
   } catch (error) {
     if (attempt !== reportExportAttempt) return;
-    ui($("report-export-status"), "PDF 生成失败，JSON 仍可下载。请检查后端连接与版本后重新导出。");
-    notice(error.message);
+    if(error.name==='AbortError' && !pdfReady && $('report-json-link').hidden)ui($("report-export-status"),"已取消导出。");
+    else if(pdfReady){
+      downloadReportPair();
+      ui($("report-export-status"),"文件夹保存未完成，目标位置可能已有部分文件。已改为下载 PDF 和 JSON；如下载被拦截，请点击下方链接分别保存。");
+    }else if($('report-json-link').hidden){
+      ui($("report-export-status"),"无法访问所选位置。请重新选择，或改为分别下载 PDF 和 JSON。");
+    }else{
+      ui($("report-export-status"), "PDF 生成失败，JSON 仍可下载。请检查后端连接与版本后重新导出。");notice(error.message);
+    }
   } finally {
     if (attempt === reportExportAttempt) {
-      reportExportBusy = false; $("download-report").disabled = !state.result;
+      reportExportBusy = false; $("download-report").disabled = !state.result;$("download-report-files").disabled=!state.result;
     }
   }
 }
@@ -1004,6 +1033,7 @@ function reportFilename(result, date = new Date()) {
 function downloadReport() {
   void exportReports();
 }
+$("download-report-files").onclick=()=>void exportReports({filesOnly:true});
 setupChatImages();
 $("csv-file").onchange = event => { if(event.target.files[0]) void importData(event.target.files[0]); };
 $("close-notice").onclick = () => notice();

@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./i18n.js?v=pwm-denoise-20261027" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./chat-images.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./identification-plan.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js?v=pwm-denoise-20261027" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./chat-images.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./identification-plan.js" defer></script><script src="./report-files.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -154,9 +154,11 @@
         <section id="review-reasons" class="review-reasons" hidden aria-label="需复核的触发原因"><h3>需复核的触发原因</h3><ul id="review-reason-list"></ul></section>
         <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>
         <details id="diagnostics" hidden><summary>查看计算条件与诊断</summary><pre id="diagnostic-text"></pre></details>
-        <div class="result-actions"><div class="analysis-action"><button type="button" class="button subtle small" id="ask-error" aria-expanded="false" aria-controls="analysis-menu" disabled>让助手分析结果 ▾</button><div id="analysis-menu" class="analysis-menu" hidden><button type="button" id="analyze-here">在本对话中分析</button><button type="button" id="analyze-new">新对话分析</button></div></div><button class="button subtle small" id="download-report" disabled>↓ 导出报告（PDF + JSON）</button></div>
+        <div class="result-actions"><div class="analysis-action"><button type="button" class="button subtle small" id="ask-error" aria-expanded="false" aria-controls="analysis-menu" disabled>让助手分析结果 ▾</button><div id="analysis-menu" class="analysis-menu" hidden><button type="button" id="analyze-here">在本对话中分析</button><button type="button" id="analyze-new">新对话分析</button></div></div><button class="button subtle small" id="download-report" disabled>↓ 导出报告文件夹</button></div>
+        <p class="report-folder-hint">导出时选择保存位置，生成同名文件夹、PDF 和 JSON；不支持文件夹选择时分别下载 PDF 和 JSON。</p>
         <div id="report-downloads" class="report-downloads" hidden aria-live="polite">
           <p id="report-export-status"></p>
+          <button type="button" id="download-report-files" class="button subtle small">改为分别下载 PDF 和 JSON</button>
           <a id="report-pdf-link" hidden>下载 PDF</a>
           <a id="report-json-link" hidden>下载 JSON</a>
         </div>

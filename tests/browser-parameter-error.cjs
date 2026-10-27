@@ -1,3 +1,4 @@
+const {downloadReportFiles}=require('./report-download-helper.cjs');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
 const assert=require('node:assert/strict'), fs=require('node:fs');
 (async()=>{
@@ -52,7 +53,7 @@ const assert=require('node:assert/strict'), fs=require('node:fs');
   assert(await page.locator('#parameter-error-values').isVisible());
   const jsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
   const pdfWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.pdf'));
-  await page.locator('#download-report').click();const [json,pdf]=await Promise.all([jsonWait,pdfWait]);
+  await downloadReportFiles(page);const [json,pdf]=await Promise.all([jsonWait,pdfWait]);
   await json.saveAs('runtime/parameter-error.json');await pdf.saveAs('runtime/parameter-error-en.pdf');
   const report=JSON.parse(fs.readFileSync('runtime/parameter-error.json','utf8'));
   assert.equal(report.result.assessment.parameter_accuracy.status,'compared');

@@ -1,3 +1,4 @@
+const {downloadReportFiles}=require('./report-download-helper.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
@@ -37,7 +38,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert(!/[\u3400-\u9fff]/.test(await page.locator('#controller-settings').innerText()));
   const pdfWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.pdf'));
   const jsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
-  await page.locator('#download-report').click();
+  await downloadReportFiles(page);
   const [pdf,json]=await Promise.all([pdfWait,jsonWait]);
   await pdf.saveAs('runtime/pwm-denoise-report.pdf');await json.saveAs('runtime/pwm-denoise-report.json');
   assert.equal(pdfRequests.at(-1).result.options.pwm_denoise,'modified_sinc');

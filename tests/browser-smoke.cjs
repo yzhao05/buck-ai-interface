@@ -1,3 +1,4 @@
+const {downloadReportFiles}=require('./report-download-helper.cjs');
 // Local QA: npm install --prefix .tmp/browser playwright-core
 const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
 const fs = require('fs');
@@ -11,8 +12,9 @@ const assert = require('node:assert/strict');
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await page.goto('http://127.0.0.1:5500', {waitUntil:'networkidle'});
+  await page.goto(process.env.FRONTEND_URL || 'http://127.0.0.1:8001', {waitUntil:'networkidle'});
   await page.getByText('后端已连接', {exact:true}).waitFor();
+  await page.waitForFunction(()=>activeConversation&&!historyLocked()&&!archiveRunning);
   assert(await page.locator('#analysis-panel').isHidden());
   assert(await page.locator('#identification-form').isHidden());
   assert(await page.locator('#enter-identification').isVisible());
@@ -32,7 +34,7 @@ const assert = require('node:assert/strict');
   assert(await page.locator('#identification-form').isHidden(), 'Import must not enable identification');
   await page.locator('#chat-input').fill('开始参数辨识');
   await page.locator('#send-chat').click();
-  await page.locator('.message.assistant').filter({hasText:'进入参数辨识'}).waitFor();
+  await page.locator('.message.assistant').filter({hasText:'对话配置需要 DeepSeek 服务'}).waitFor();
   assert(await page.locator('#identification-form').isHidden());
   // Keep this conversation's CSV for the identification flow. New chat intentionally isolates data.
   await page.locator('#enter-identification').click();
@@ -62,7 +64,7 @@ const assert = require('node:assert/strict');
   await page.waitForTimeout(200);
   await page.screenshot({path:'runtime/interface-desktop.png',fullPage:true});
   const downloadPromise = page.waitForEvent('download');
-  await page.locator('#download-report').click();
+  await downloadReportFiles(page);
   const download = await downloadPromise;
   assert.match(download.suggestedFilename(), /^\d{4}_A_noiseNA_seedNA_measured_WIntegral_NA\.json$/);
   await download.saveAs('runtime/browser-export.json');

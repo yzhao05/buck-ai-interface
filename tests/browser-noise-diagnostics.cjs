@@ -1,3 +1,4 @@
+const {downloadReportFiles}=require('./report-download-helper.cjs');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
@@ -30,7 +31,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert(!/[\u3400-\u9fff]/.test(await spread.innerText()));
   const jsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
   const pdfWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.pdf'));
-  await page.locator('#download-report').click();
+  await downloadReportFiles(page);
   const [json,pdf]=await Promise.all([jsonWait,pdfWait]);
   await json.saveAs('runtime/noise-report-en.json');await pdf.saveAs('runtime/noise-report-en.pdf');
   assert.deepEqual(JSON.parse(fs.readFileSync('runtime/noise-report-en.json')).result.measurement_diagnostics,diagnostics);

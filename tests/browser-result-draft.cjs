@@ -1,3 +1,4 @@
+const {downloadReportFiles}=require('./report-download-helper.cjs');
 const assert=require('node:assert/strict');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
 (async()=>{
@@ -61,7 +62,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#enter-identification').click();assert(!(await page.locator('#identify').isDisabled()));
   const jsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
   const pdfWait=page.waitForRequest(r=>r.url().endsWith('/api/reports/pdf'));
-  await page.locator('#download-report').click();const json=await jsonWait;
+  await downloadReportFiles(page);const json=await jsonWait;
   const stream=await json.createReadStream(),parts=[];for await(const part of stream)parts.push(part);
   const report=JSON.parse(Buffer.concat(parts));
   assert.deepEqual(report.result.options,original.result.options);
