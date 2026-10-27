@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
 from .knowledge import formula_question
-from .configuration import configuration_requested
+from .configuration import configuration_requested, batch_requested
 
 Task = Literal["guidance", "knowledge", "waveform", "identification", "configuration", "diagnosis", "hardware", "general"]
 READ = ("get_waveform_summary", "get_identification_result", "get_experiment_history", "search_knowledge")
@@ -73,6 +73,8 @@ def acknowledgement(message):
 
 def identification_intent(message):
     """Conservative execution guard shared by both local and model routes."""
+    if batch_requested(message):
+        return "execute"
     text = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', "", message.lower())
     if not text.strip() or acknowledgement(text):
         return "explain"
@@ -185,6 +187,8 @@ def route_prompt(route):
 async def classify(request):
     key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     fallback = rule_selection(request.message)
+    if batch_requested(request.message):
+        return make_route(fallback, request.message, "rules")
     if not key:
         return make_route(fallback, request.message, "rules")
     context = {"has_dataset": bool(request.dataset_id and request.mapping),

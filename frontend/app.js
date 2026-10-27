@@ -164,6 +164,7 @@ function controls() {
     ? "从加权积分初值继续优化窗口状态和参数；不保证比积分结果更准确。"
     : "直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。");
   for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction","pwm-source","controller-confirmed"]) $(id).disabled = waiting;
+  renderIdentificationPlan();
 }
 async function connect() {
   $("connection-status").className = "status";
@@ -268,8 +269,8 @@ function fillMappings(dataset) {
   }
   for (const id of ["time-unit","current-unit","voltage-unit"]) $(id).selectedIndex = 0;
 }
-async function importData(file = null, resolveFile = null) {
-  if (historyLocked()) return;
+async function importData(file = null, resolveFile = null, {fromPlan=false}={}) {
+  if (fromPlan ? state.busy || state.chatBusy || state.syncBusy || state.job : historyLocked()) return;
   // An explicit import belongs to the latest clear generation already received
   // locally. A later clear during this request must still invalidate this file.
   const uploadEpoch=Math.max(activeConversation.file_epoch || 0,readConversation(activeConversation.id)?.file_epoch || 0);
@@ -302,12 +303,14 @@ async function importData(file = null, resolveFile = null) {
     $("mapping-details").open = Boolean(file);
     if (!file) notice("已加载真实 PLECS Case16A 数据。已将辨识区间设为 0～0.8 ms，避开 1 ms 的负载突变。", true);
     else notice("CSV 已自动加载并显示波形，请核对信号列与单位。", true);
+    return {dataset:uploaded};
   } catch (error) {
     if (state.dataset && !state.mapping) {
       $("mapping-details").open=true;
       ui($("stat-points"), "数据读取或检查未完成");
     }
     notice(error.message); ui($("job-status"), "数据读取或检查未完成");
+    return {error:error.message};
   }
   finally { state.busy = false; $("csv-file").value = ""; persistConversation(); controls(); }
 }
@@ -335,7 +338,7 @@ function displaySummary() {
   $("wave-subtitle").textContent = state.dataset.filename;
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
 }
-async function startFit({fromChat=false}={}) {
+async function startFit({fromChat=false,waitForCompletion=false,onSubmitted=null}={}) {
   if (!state.identificationOpen || !state.mapping || (fromChat ? state.busy || state.syncBusy || state.job : historyLocked()) || resultMatchesCurrent(state.result)) return;
   let submitted=false;
   try {
@@ -345,18 +348,20 @@ async function startFit({fromChat=false}={}) {
     ui($("job-status"), "正在提交辨识任务…");
     submitted=true;
     const response = await api("/api/identify", {method:"POST", body:{dataset_id:state.dataset.dataset_id,mapping:state.mapping,options:fitOptions}});
+    if(onSubmitted)onSubmitted(response.job_id);
     if (response.resumed) notice("已找回正在运行的辨识任务，正在恢复进度。",true);
     state.busy = false;
+    if(waitForCompletion)return await watchJob(response.job_id);
     if (fromChat) { void watchJob(response.job_id); return {job_id:response.job_id}; }
     await watchJob(response.job_id);
   } catch (error) {
     // The POST may have reached the server even when its response was lost.
-    if (submitted && (!error.status || error.status===409 || error.status>=500)) {
+    if (!waitForCompletion && submitted && (!error.status || error.status===409 || error.status>=500)) {
       try { if (await resumeActiveJob()) return fromChat ? {job_id:state.job,resumed:true} : undefined; } catch { /* Keep the original error visible. */ }
     }
     notice(error.message);
     ui($("job-status"), submitted && (!error.status || error.status>=500) ? "提交状态暂未确认，请检查连接后重试。" : "辨识未完成");
-    if (fromChat) return {error:error.message};
+    if (fromChat) return {error:error.message,uncertain:submitted && (!error.status || error.status>=500 || error.status===409)};
   }
   finally { state.busy = false; controls(); }
 }
@@ -404,16 +409,16 @@ async function watchJob(id) {
           refreshExperiments=true;
           notice("原辨识任务已完成，结果将恢复到实验历史；当前配置已更改，可重新开始辨识。");
           ui($("job-status"),"原任务已完成，当前配置尚未辨识");
-          return;
+          return {error:tr("原任务已完成，当前配置尚未辨识")};
         }
         state.result = response.result; state.resultId = id; displayResult();
         ui($("job-status"), `辨识完成 · 用时 ${response.result.elapsed_s} 秒`);
-        return;
+        return {status:"complete",job_id:id};
       }
       if (response.status === "failed") {displayPWMQuality(response.pwm_reconstruction);throw new Error(response.error);}
       await pause(1200);
     }
-  } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); }
+  } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); return {error:error.message}; }
   finally {
     try { if (refreshExperiments) await recoverExperiments(); }
     finally { state.job = null; persistConversation(); controls(); }
@@ -735,6 +740,7 @@ function configurationFingerprint() {
 async function applyIdentificationAction(action, context) {
   const stale="会话、数据或设置已变化，本次操作未应用。请按当前界面重新发送指令。";
   if (!context || action.id!==context.request_id || configurationFingerprint()!==context.fingerprint) return tr(stale);
+  if(action.type==="identification_plan")return acceptIdentificationPlan(action,context);
   if (action.type!=="configure_identification" || typeof action.open_panel!=="boolean" || typeof action.start_after_apply!=="boolean") throw new Error("配置操作格式无效。");
   const changes=action.changes;
   if (!changes || Array.isArray(changes) || Object.keys(changes).some(k=>!["method","mode","resistance_ohm"].includes(k))
@@ -765,7 +771,7 @@ async function applyIdentificationAction(action, context) {
     $("fixed-r").value=String(changes.resistance_ohm);applied.push(`R = ${changes.resistance_ohm} Ω`);
   }
   controls();persistConversation();
-  const prefix=tr("辨识设置已应用。")+(applied.length ? ` ${applied.join(" · ")}。` : "");
+  const prefix=tr(applied.length ? "辨识设置已应用。" : "参数辨识面板已打开。")+(applied.length ? ` ${applied.join(" · ")}。` : "");
   if (!action.start_after_apply)return prefix+" "+tr("未启动实验，右侧保留已有结果。");
   if (!state.dataset) {toggleSection("toggle-import","import-content","导入波形",true);return prefix+" "+tr("请先上传 CSV；本次未启动实验。");}
   if (!state.mapping) {$("mapping-details").open=true;return prefix+" "+tr("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
@@ -782,7 +788,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   const text = value.trim() || (images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { notice("请先连接分析后端。"); return; }
   const currentOnly=analysisRequest || resultAnalysisPrompts.has(text);
-  const controlRequest=!currentOnly && !images.length && /进入|打开|展开|选择|选用|改用|切换|设为|改成|改为|设置|固定|调整|开始|启动|执行|运行|\b(?:open|enter|select|use|switch|set|fix|change|start|run|perform|identify)\b/i.test(text);
+  const controlRequest=!currentOnly && !images.length && /进入|打开|展开|选择|选用|改用|切换|设为|改成|改为|设置|固定|调整|完成|开始|启动|执行|运行|\b(?:open|enter|select|use|switch|set|fix|change|start|run|perform|identify)\b/i.test(text);
   const targetResultId=state.resultId;
   if(currentOnly && (!state.result || !targetResultId)){notice("当前结果已失效，请重新辨识后再分析。");return;}
   const corpus=currentOnly ? [] : conversationMessages(readConversation(activeConversation.id));
@@ -856,7 +862,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     article.dataset.messageId=savedReply.id;
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
   } catch (error) { pending.remove(); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
-  finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; }
+  finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; startQueuedIdentificationPlan(); }
 }
 function svgNode(name, attrs = {}, text = null) {
   const el = document.createElementNS("http://www.w3.org/2000/svg", name);

@@ -6,16 +6,8 @@ function closeCsvLibrary() {
   $("csv-library-menu").hidden = true;
   $("toggle-csv-library").setAttribute("aria-expanded", "false");
 }
-async function toggleCsvLibrary() {
-  if (!$("csv-library-menu").hidden) { closeCsvLibrary(); return; }
-  if (historyLocked() || !activeConversation) return;
-  const generation = ++csvLibraryGeneration, prefix = conversationPrefix;
-  $("csv-library-menu").hidden = false;
-  $("toggle-csv-library").setAttribute("aria-expanded", "true");
-  $("csv-library-list").replaceChildren();
-  ui($("csv-library-status"), "正在读取历史 CSV…");
-  state.busy = true; controls();
-  try {
+async function historicalCsvEntries() {
+    const prefix=conversationPrefix;
     renderHistory();
     const records = [...conversationCache.values()].filter(r=>!savedValue(prefix+"deleted:"+r.id)).sort((a,b)=>b.updated-a.updated);
     let incomplete = false;
@@ -40,8 +32,21 @@ async function toggleCsvLibrary() {
       return [...files.values()].map(file=>({conversationId:record.id, epoch, prefix,
         sha256:file.sha256, filename:file.filename, updated:record.updated}));
     }));
+    if(prefix!==conversationPrefix)throw new Error("会话、数据或设置已变化，本次操作未应用。请按当前界面重新发送指令。");
+    return {entries:groups.flat(), incomplete};
+}
+async function toggleCsvLibrary() {
+  if (!$("csv-library-menu").hidden) { closeCsvLibrary(); return; }
+  if (historyLocked() || !activeConversation) return;
+  const generation = ++csvLibraryGeneration, prefix = conversationPrefix;
+  $("csv-library-menu").hidden = false;
+  $("toggle-csv-library").setAttribute("aria-expanded", "true");
+  $("csv-library-list").replaceChildren();
+  ui($("csv-library-status"), "正在读取历史 CSV…");
+  state.busy = true; controls();
+  try {
+    const {entries,incomplete}=await historicalCsvEntries();
     if (generation!==csvLibraryGeneration || prefix!==conversationPrefix) return;
-    const entries = groups.flat();
     for (const entry of entries) {
       const button = document.createElement("button"); button.type="button";button.className="csv-library-item";
       button.dataset.sha256=entry.sha256;button.dataset.conversationId=entry.conversationId;

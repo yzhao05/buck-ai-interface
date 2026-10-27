@@ -25,9 +25,9 @@ def unsupported_change(message):
 
 def configuration_requested(message):
     text = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', message.lower())
-    if re.search(r'为什么|如何|怎么|假如|例如|比如|是否|能否|能不能|可不可以|不要|不用|别|不需要|\b(?:why|how|example|suppose|can you|could you|do not|don\x27t)\b', text):
+    if re.search(r'为什么|如何|怎么|假如|例如|比如|是否|能否|能不能|可不可以|不要|不用|(?<![识区类])别|不需要|\b(?:why|how|example|suppose|can you|could you|do not|don\x27t)\b', text):
         return False
-    return unsupported_change(message) or bool(re.search(
+    return batch_requested(message) or unsupported_change(message) or bool(re.search(
         r'(?:进入|打开|展开).{0,12}(?:辨识|识别)|(?:选择|选用|使用|改用|切换|设为|改成|改为|设置|固定|调整).{0,25}(?:pann|积分|lcr|lc|负载|电阻|\br\b)'
         r'|(?:pann|积分|lcr|lc|负载|电阻|\br\b).{0,15}(?:设为|改成|改为|设置|固定|调到)'
         r'|\b(?:open|enter|show|select|use|switch|set|fix|change)\b.{0,45}\b(?:identification|pann|integral|lc|lcr|resistance|load|r)\b', text))
@@ -35,9 +35,76 @@ def configuration_requested(message):
 
 def may_start(message):
     text = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', message.lower())
-    if re.search(r'不要|不用|别|不需要|无需|先不|暂不|不运行|不开始|停止|取消|暂停|如何|怎么|为什么|例如|比如|假如|\b(?:not|don\x27t|stop|cancel|pause|how|why|example)\b', text):
+    if re.search(r'不要|不用|(?<![识区类])别|不需要|无需|先不|暂不|不运行|不开始|停止|取消|暂停|如何|怎么|为什么|例如|比如|假如|\b(?:not|don\x27t|stop|cancel|pause|how|why|example)\b', text):
         return False
-    return bool(re.search(r'开始|启动|执行|运行|算一下|进行.*(?:辨识|识别)|\b(?:start|run|execute|perform|identify|fit)\b', text))
+    return bool(re.search(r'开始|启动|执行|运行|算一下|(?<![已未没])完成(?![了的]).*(?:辨识|识别)|进行.*(?:辨识|识别)|\b(?:start|run|execute|perform|identify|fit|complete)\b', text))
+
+
+def batch_requested(message):
+    """Explicit two-method execution, never a comparison of existing results."""
+    text = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', message.lower())
+    if not may_start(message) or not re.search(
+        r'两种(?:方法|方式)|两(?:种)?方法|both\s+(?:identification\s+)?methods|'
+        r'pann.{0,25}(?:积分|integral)|(?:积分|integral).{0,25}pann', text):
+        return False
+    for clause in re.split(r'[，,。；;！？?!\n]|然后|并且|\bthen\b', text):
+        # Execution must precede a read-only request in its own clause. Past-tense
+        # mentions are evidence for analysis, never permission to run again.
+        command = re.split(r'比较|对比|分析|解释|介绍|说明|总结|查看|\b(?:compare|analy[sz]e|explain|summari[sz]e|review)\b', clause)[0]
+        if re.search(r'(?:已经?|曾经|刚刚?|刚才|之前|上次)\s*(?:我|我们)?\s*(?:运行|执行|开始|启动|完成)|(?:运行|执行|完成)[了过的]|运行情况|运行记录|(?:是否|有没有|能否|能不能)|[吗么]', command):
+            continue
+        if re.search(r'^\s*(?:(?:请|帮我|麻烦|现在|立即|先|再|重新|并|使用|根据|用|固定|两种方法|两种方式).{0,180}?)?(?:运行|执行|开始|启动|算一下|进行|完成)', command):
+            return True
+        if re.search(r'^\s*(?:(?:please|now|first|also|and)\s+)*(?:run|execute|perform|start|complete)\b|^\s*use\b.{0,80}\bto\s+(?:run|execute|perform|start|complete)\b', command):
+            return True
+    return False
+
+
+def batch_action(request):
+    """A bounded, deterministic plan; the page resolves private files and checks prerequisites."""
+    plain = re.sub(r'“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`', '', request.message)
+    text = plain.lower()
+    # Do not silently ignore other requested edits. PWM is supported by this plan.
+    if unsupported_change(re.sub(r'pwm', '开关来源', request.message, flags=re.I)):
+        raise ValueError("This plan cannot apply the other requested settings")
+    rebuilt = bool(re.search(r'重建\s*pwm|pwm\s*重建|(?:rebuilt|reconstructed|reconstruct)\s+pwm', text))
+    measured = bool(re.search(r'(?:实际|实测|原始|原来的)\s*pwm|(?:measured|actual)\s+pwm', text))
+    if rebuilt and measured:
+        raise ValueError("Choose one PWM source for this two-method plan")
+    if not (rebuilt or measured) and unsupported_change(request.message):
+        raise ValueError("Unrecognized PWM setting")
+    # Bare assignments (e.g. Vin=30) must not be silently dropped either.
+    parameter_text = re.sub(r'[A-Za-z0-9_.-]+\.csv', '', text)
+    for clause in re.split(r'[，,。；;\n]', parameter_text):
+        if re.search(r'保持|不变|保留|\b(?:keep|unchanged)\b', clause):
+            continue
+        if re.search(r'vin|输入电压|frequency|频率|epochs?|轮数|train_fraction|训练比例|时间区间|开始时间|结束时间|窗口|window|去噪|平滑|滤波', clause):
+            raise ValueError("Set other parameters in the form first")
+    if re.search(r'\blcr\b|l\s*/\s*c\s*/\s*r|联合辨识', text):
+        raise ValueError("Set the identification mode in the form before starting this plan")
+    # Only filenames, never filesystem paths or URLs. Quoted filenames may contain spaces.
+    filenames = re.findall(r'["“`]([^"”`\r\n]+\.csv)["”`]|([A-Za-z0-9_.-]+\.csv)', request.message, re.I)
+    names = list(dict.fromkeys(a or b for a, b in filenames))
+    if len(names) > 1 or any('/' in n or '\\' in n or len(n) > 255 for n in names):
+        raise ValueError("Choose one uploaded CSV filename")
+    source = 'controller' if rebuilt else 'measured' if measured else None
+    # Filenames and controller components such as R1 are not load-R edits.
+    parameter_text = re.sub(r'[A-Za-z0-9_.-]+\.csv', '', text)
+    if re.search(r'\b[rc][1-4]\s*(?:=|＝|为|to)', parameter_text):
+        raise ValueError("Set controller components in the form first")
+    r_match = re.search(r'(?<![a-z0-9_])r\s*(?:[=＝]|为|\bto\b)\s*([0-9]+(?:\.[0-9]+)?)(?![0-9.eE_])|固定\s*(?:负载)?\s*r\s+([0-9]+(?:\.[0-9]+)?)(?![0-9.eE_])', parameter_text)
+    changes = {"pwm_source": source} if source else {}
+    if source == 'controller':
+        changes['mode'] = 'LC'
+    elif re.search(r'\blc\b|l\s*/\s*c(?!\s*/)', text):
+        changes['mode'] = 'LC'
+    if r_match:
+        changes.update(mode='LC', resistance_ohm=float(r_match[1] or r_match[2]))
+    elif re.search(r'固定|电阻|resistance|\br\s*[=＝]', parameter_text):
+        raise ValueError("Set the load resistance in the form first")
+    FitOptions.model_validate({**request.ui_context.options.model_dump(), **changes})
+    return {"id": request.ui_context.request_id, "type": "identification_plan",
+            "filename": names[0] if names else None, "methods": ["weighted_integral", "pann"], "changes": changes}
 
 
 TOOL = {"type": "function", "function": {
@@ -63,6 +130,13 @@ async def propose(request, route):
                 "sources": [], "tool_calls": [], "route": route}
     if not request.ui_context:
         return response("Check the form values and refresh the page if needed. No settings were changed and no experiment was started." if en else "请检查表单数值是否有效，必要时刷新网页；本次未修改设置或启动实验。")
+    if batch_requested(request.message):
+        try:
+            action = batch_action(request)
+        except ValueError:
+            return response("Unable to form a two-method plan. Choose one CSV and one PWM source; set other parameters in the form, then request both methods again. Nothing was started." if en else
+                            "无法生成两种方法的执行计划。请指定一份 CSV 和一种 PWM 来源；其他参数请先在表单设置，再要求运行两种方法。本次未启动实验。")
+        return response("Two-method plan prepared; checking the CSV and circuit requirements." if en else "已生成两种方法的计划，正在检查 CSV 与电路条件。", action)
     if unsupported_change(request.message):
         return response("This request includes settings that chat cannot modify yet (such as PWM, epochs or time range). Use the form for those settings, then request a start. No part of this operation was applied." if en else
                         "指令包含暂不支持通过对话修改的设置（如 PWM、轮数或时间区间）。请先在表单中修改，再要求开始；本次整条操作均未执行。")

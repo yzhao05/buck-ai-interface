@@ -62,6 +62,14 @@ function requestsIdentificationExecution(text) {
   // authoritative about execution permission and numerical configuration.
   const unquoted=text.toLowerCase().replace(/“[^”]*”|「[^」]*」|"[^"\n]*"|`[^`]*`/g,"");
   if (/(?:停止|取消|暂停|别再).{0,20}(?:辨识|识别|拟合)|(?:不要|不用|别|无需|不需要)\s*(?:(?:开始|执行|进行|启动|再)\s*)*(?:参数|l\/?c\/?r)?\s*(?:辨识|识别|拟合)|\b(?:do not|don't|stop|cancel|pause)\b.*\b(?:identify|fit|run|start|identification|fitting)\b/.test(unquoted)) return false;
+  if(!/为什么|如何|怎么|例如|比如|假如|不要|不用|(?<![识区类])别|不需要|无需|先不|暂不|不运行|不开始|停止|暂停|取消|\b(?:how|why|example|not|don't|stop|cancel|pause)\b/.test(unquoted)
+      && /两种(?:方法|方式)|两(?:种)?方法|both\s+(?:identification\s+)?methods|pann.{0,25}(?:积分|integral)|(?:积分|integral).{0,25}pann/.test(unquoted)
+      && unquoted.split(/[，,。；;！？?!\n]|然后|并且|\bthen\b/).some(clause=>{
+        const command=clause.split(/比较|对比|分析|解释|介绍|说明|总结|查看|\b(?:compare|analy[sz]e|explain|summari[sz]e|review)\b/)[0];
+        if(/(?:已经?|曾经|刚刚?|刚才|之前|上次)\s*(?:我|我们)?\s*(?:运行|执行|开始|启动|完成)|(?:运行|执行|完成)[了过的]|运行情况|运行记录|(?:是否|有没有|能否|能不能)|[吗么]/.test(command))return false;
+        return /^\s*(?:(?:请|帮我|麻烦|现在|立即|先|再|重新|并|使用|根据|用|固定|两种方法|两种方式).{0,180}?)?(?:运行|执行|开始|启动|算一下|进行|完成)/.test(command)
+          || /^\s*(?:(?:please|now|first|also|and)\s+)*(?:run|execute|perform|start|complete)\b|^\s*use\b.{0,80}\bto\s+(?:run|execute|perform|start|complete)\b/.test(command);
+      }))return true;
   return unquoted.split(/[，,。；;！？?!\n]|并且|然后|同时|并|\b(?:and|then)\b/).some(clause=>{
     if (/原理|如何|怎么|为什么|什么|方法|解释|误差|对比|比较|结果|报告|公式|\b(?:how|why|what|explain|compare|comparison|results?|errors?|formula)\b/.test(clause)) return false;
     return /^\s*(?:(?:请|帮我|麻烦|现在|立即|先|再|开始|执行|进行|启动|重新)\s*)*(?:参数|l\/?c\/?r)?\s*(?:辨识|识别|拟合)|^\s*(?:please\s+)?(?:first\s+)?(?:identify\b|fit\b|(?:start|run|perform)\s+(?:the\s+)?(?:parameter\s+)?(?:identification|fit|fitting)\b)/.test(clause);

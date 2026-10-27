@@ -10,7 +10,7 @@ experimentDefaults['pwm-denoise']='sg';experimentDefaults['pwm-filter-cycles']='
 function historyWarning(text = "") {
   ui($("history-status"), text); $("history-status").hidden = !text;
 }
-function historyLocked() { return state.busy || state.chatBusy || state.syncBusy || Boolean(state.job); }
+function historyLocked() { return state.busy || state.chatBusy || state.syncBusy || state.planRunning || Boolean(state.job); }
 function csvScope() { return conversationPrefix + activeConversation.id; }
 function csvWarning(text = "") {
   ui($("csv-storage-status"), text); $("csv-storage-status").hidden = !text;

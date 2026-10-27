@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./i18n.js?v=pwm-denoise-20261027" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./chat-images.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js?v=pwm-denoise-20261027" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./chat-images.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./identification-plan.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -101,6 +101,11 @@
         <div class="welcome"><span class="eyebrow">LET’S INVESTIGATE</span><h3>上传仿真波形，<br>识别电感、电容和电阻。</h3><p>选择 PANN 或加权积分方法计算 L、C、R，向 AI 提问，分析辨识误差并获取参数调整建议。</p></div>
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
+      <section id="identification-plan" class="identification-plan" hidden aria-live="polite">
+        <strong id="plan-progress"></strong><span id="plan-file"></span><p id="plan-note"></p><ul id="plan-runs"></ul>
+        <button type="button" id="plan-continue" class="button subtle small">继续计划</button>
+        <button type="button" id="plan-cancel" class="button subtle small">取消后续任务</button>
+      </section>
       <form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><input type="hidden" id="chat-images" value=""><input type="file" id="chat-image-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><div id="chat-image-list" class="message-images" hidden></div><div class="chat-image-tools"><button type="button" id="attach-chat-image" class="button subtle small">添加图片</button><button type="button" id="chat-use-circuit" class="button subtle small">添加电路图</button><span>支持选择、粘贴或拖入图片；每次最多 3 张，单张最大 8 MB。图片会压缩，GIF 仅发送首帧。</span></div><div class="compose-bottom"><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
       <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要、对话及随消息附加的图片将发送至已配置的 DeepSeek。<br>清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
     </main>

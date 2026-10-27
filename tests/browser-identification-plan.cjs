@@ -1,0 +1,54 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
+(async()=>{
+ const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+ const page=await browser.newPage({viewport:{width:1600,height:1100}}),errors=[],fits=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ page.on('request',r=>{if(r.url().endsWith('/api/identify')){fits.push(r.postDataJSON());console.log('Submitted',fits.length,fits.at(-1).options.method);}});
+ const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
+ const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();};
+ const paused=()=>page.waitForFunction(()=>currentIdentificationPlan()?.status==='paused'&&!historyLocked());
+ try{
+  await page.goto('http://127.0.0.1:8001');await ready();
+  await send('请根据我上传的CASE16A_noise03_seed14.csv完成重建pwm下两种方式的参数识别');await paused();
+  assert.match(await page.locator('#plan-note').innerText(),/没有找到指定 CSV/);assert.equal(fits.length,0);
+  await page.locator('#plan-cancel').click();
+  // Archive the input in one conversation; the plan must find it from a new one.
+  const csvPath=process.env.PLAN_CSV;
+  const buffer=csvPath?fs.readFileSync(csvPath):fs.readFileSync('examples/plecs_buck_case16a.csv');
+  await page.locator('#csv-file').setInputFiles({name:'CASE16A_noise03_seed14.csv',mimeType:'text/csv',buffer});await ready();
+  const uploaded=await page.evaluate(()=>state.dataset.sha256);
+  await page.locator('#new-chat').click();await ready();
+  assert.equal(await page.evaluate(()=>state.dataset),null);
+  await send('请根据我上传的CASE16A_noise03_seed14.csv完成重建pwm下两种方式的参数识别');await paused();
+  assert.equal(await page.evaluate(()=>state.dataset.sha256),uploaded);
+  assert.equal(await page.locator('#pwm-source').inputValue(),'controller');
+  assert.equal(await page.locator('#fit-mode').inputValue(),'LC');
+  assert.match(await page.locator('#plan-note').innerText(),/确认控制电路/);
+  assert.equal(fits.length,0,'A restored CSV must not imply circuit confirmation');
+  await page.reload();await ready();
+  assert.equal(fits.length,0,'Restoring a plan never automatically submits it');
+  await page.locator('#plan-continue').click();await paused();
+  await page.locator('#controller-confirmed').selectOption('yes');
+  assert.equal(await page.locator('#pann-epochs').inputValue(),'200');
+  await page.locator('#plan-continue').click();
+  await page.waitForFunction(()=>['complete','paused'].includes(currentIdentificationPlan()?.status)&&!historyLocked(),null,{timeout:900000});
+  const result=await page.evaluate(()=>({plan:currentIdentificationPlan(),runs:readConversation(activeConversation.id).experiments}));
+  fs.writeFileSync('runtime/identification-plan-evidence.json',JSON.stringify(result,null,2));
+  assert.equal(result.plan.status,'complete',result.plan.note);
+  assert.equal(fits.length,2);assert.deepEqual(fits.map(r=>r.options.method),['weighted_integral','pann']);
+  assert(fits.every(r=>r.options.pwm_source==='controller'&&r.options.mode==='LC'&&r.options.resistance_ohm===6));
+  assert.equal(fits[1].options.epochs,200);
+  assert.equal(result.runs.length,2);
+  assert.deepEqual(new Set(result.runs.map(r=>r.result.options.method)),new Set(['weighted_integral','pann']));
+  assert(result.runs.every(r=>r.dataset.sha256===uploaded));
+  await page.screenshot({path:'runtime/identification-plan-completed.png',fullPage:true});
+  await page.reload();await ready();assert.equal(fits.length,2);
+  assert.equal(await page.evaluate(()=>readConversation(activeConversation.id).experiments.length),2);
+  await page.locator('#language-toggle').click();
+  assert(!/[\u3400-\u9fff]/.test(await page.locator('#identification-plan').innerText()));
+  assert.deepEqual(errors,[]);
+  console.log('PASS: original request, missing CSV, historical CSV recovery, explicit circuit confirmation, refresh, two real methods at 200 epochs, separate saved results, English.');
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});
