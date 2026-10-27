@@ -1,0 +1,64 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
+(async()=>{
+ const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+ const page=await browser.newPage({viewport:{width:1550,height:1100}}),errors=[],pdfRequests=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ page.on('request',r=>{if(r.url().endsWith('/api/reports/pdf'))pdfRequests.push(r.postDataJSON());});
+ const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
+ try{
+  await page.goto('http://127.0.0.1:8001');await ready();
+  const csv=fs.readFileSync('examples/plecs_buck_case16a.csv','utf8').split(/\r?\n/).filter(Boolean).map(line=>line.split(',').slice(0,3).join(',')).join('\n');
+  await page.locator('#csv-file').setInputFiles({name:'three-signals.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});await ready();
+  await page.locator('#enter-identification').click();
+  assert.equal(await page.locator('#pwm-denoise').inputValue(),'sg');
+  assert.equal(await page.locator('#pwm-filter-cycles').inputValue(),'6');
+  await page.locator('#fit-method').selectOption('weighted_integral');
+  await page.locator('#controller-confirmed').selectOption('yes');
+  await page.locator('#identify').click();await page.waitForFunction(()=>state.result&&!state.job);await ready();
+  const before=await page.evaluate(()=>JSON.stringify(state.result));
+  await page.locator('#pwm-filter-cycles').fill('');
+  await page.locator('#pwm-denoise').selectOption('none');
+  assert(await page.locator('#pwm-filter-cycles').isDisabled());
+  assert.equal(await page.evaluate(()=>options().pwm_filter_cycles),1,'Unused blank window must not block no-smoothing control');
+  assert.equal((await page.evaluate(()=>state.result.diagnostics.pwm_reconstruction)).quality.status,'passed');
+  assert.equal(await page.locator('#pwm-quality-details').getAttribute('open'),null);
+  await page.locator('#pwm-denoise').selectOption('modified_sinc');
+  await page.locator('#pwm-filter-cycles').fill('6');await page.locator('#pwm-filter-cycles').blur();
+  assert.equal(await page.evaluate(()=>JSON.stringify(state.result)),before,'Draft filter changes preserve completed results');
+  await ready();await page.reload();await ready();
+  assert.equal(await page.locator('#pwm-denoise').inputValue(),'modified_sinc');
+  assert.equal(await page.evaluate(()=>state.result.options.pwm_denoise),'sg');
+  if(await page.locator('#enter-identification').isVisible())await page.locator('#enter-identification').click();
+  await page.locator('#identify').click();await page.waitForFunction(()=>state.result?.options.pwm_denoise==='modified_sinc'&&!state.job);await ready();
+  await page.locator('#language-toggle').click();
+  await page.locator('#pwm-quality-details summary').click();
+  assert(!/[\u3400-\u9fff]/.test(await page.locator('#controller-settings').innerText()));
+  const pdfWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.pdf'));
+  const jsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
+  await page.locator('#download-report').click();
+  const [pdf,json]=await Promise.all([pdfWait,jsonWait]);
+  await pdf.saveAs('runtime/pwm-denoise-report.pdf');await json.saveAs('runtime/pwm-denoise-report.json');
+  assert.equal(pdfRequests.at(-1).result.options.pwm_denoise,'modified_sinc');
+  // Build the fixture from tracked input; a fresh checkout has no runtime files.
+  let seed=12;
+  const random=()=>{seed=(Math.imul(1664525,seed)+1013904223)>>>0;return seed/4294967296;};
+  const noisy=csv.split('\n').map((line,index)=>{
+   if(!index)return line;
+   const cells=line.split(',');let noise=-6;for(let i=0;i<12;i++)noise+=random();
+   cells[2]=String(Number(cells[2])+.4*noise);return cells.join(',');
+  }).join('\n');
+  await page.locator('#csv-file').setInputFiles({name:'pwm-noisy-three.csv',mimeType:'text/csv',buffer:Buffer.from(noisy)});await ready();
+  await page.locator('#pwm-denoise').selectOption('none');
+  await page.locator('#controller-confirmed').selectOption('yes');
+  await page.locator('#identify').click();await page.waitForFunction(()=>!state.job&&!state.busy&&document.querySelector('#notice-text').textContent.includes('PWM reconstruction rejected'));await ready();
+  assert.equal(await page.evaluate(()=>state.result),null);
+  assert(await page.locator('#download-report').isDisabled());
+  assert.equal(await page.evaluate(()=>document.querySelector('#pwm-quality-details')._diagnostics.quality.status),'rejected');
+  assert(!/[\u3400-\u9fff]/.test(await page.locator('#notice-text').innerText()));
+  await page.screenshot({path:'runtime/pwm-quality-rejected-en.png',fullPage:true});
+  assert.deepEqual(errors,[]);
+  console.log('PASS: SG/MS real fits, draft/result isolation, persisted filter settings, English copy, PDF+JSON, quality rejection disables export.');
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

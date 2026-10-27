@@ -127,6 +127,15 @@ def test_reconstruction_precedes_pann_and_supplies_binary_drive(monkeypatch, cus
                          "stop_reason": "epoch_budget", "best_at_budget_end": False}
 
     monkeypatch.setattr("backend.pann_adapter.refine", fake_refine)
+    if custom:
+        # This deliberately mismatched controller produces a short pulse.
+        # New quality screening must stop before initialization/PANN.
+        from backend.pwm_reconstruction import PWMQualityError
+        with pytest.raises(PWMQualityError) as error:
+            identify(data, mapping, options, progress=stages.append)
+        assert error.value.diagnostics['quality']['extra_edges'] > 0
+        assert stages == ['checking', 'pwm_reconstruction']
+        return
     result = identify(data, mapping, options, progress=stages.append)
     assert stages[-1] == "validation"
     assert result["parameters"]["R_ohm"] == 6

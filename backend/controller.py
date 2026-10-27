@@ -67,13 +67,15 @@ def validate_profile(a, options):
         raise ValueError("当前控制器参数不适合此仿真步长，请核对 RC 数值与开关频率。")
 
 
-def reconstruct_training(train, profile=None):
+def reconstruct_training(train, profile=None, *, denoise='sg', window_cycles=6., return_diagnostics=False):
     """Known controller driven by uniformly interpolated TRAINING data only."""
     p = PROFILE if profile is None else profile
     dt = p["dt_s"]
     grid = np.arange(int(np.floor(train[-1, 0]/dt+1e-9))+1)*dt
     current = np.interp(grid, train[:, 0], train[:, 1])
     voltage = np.interp(grid, train[:, 0], train[:, 2])
+    from .pwm_reconstruction import filter_voltage, pwm_quality
+    controller_voltage, filtering = filter_voltage(voltage,denoise,window_cycles)
     origin = quantities(np.zeros(2), 0., p)[0]
     mat = np.zeros((5, 5))
     for j in range(2):
@@ -84,14 +86,22 @@ def reconstruct_training(train, profile=None):
     transition = expm(mat*dt)
     q = np.array(p["initial_C2_C3_V"], dtype=float)
     drive = np.empty((len(grid), 2))
-    for k, vo in enumerate(voltage):
+    for k, vo in enumerate(controller_voltage):
         _, duty, sense = quantities(q, vo, p)
+        # RC states use the denoised voltage; the physical sensing-current
+        # term and fitting targets retain the unsmoothed measurements.
+        sense = quantities(q, voltage[k], p)[2]
         drive[k] = [float(((k % 500)/500+p["carrier_phase_at_t0"]) % 1 < duty), sense]
         if k+1 < len(grid):
-            q = (transition @ np.array([*q, vo, (voltage[k+1]-vo)/dt, 1.]))[:2]
+            q = (transition @ np.array([*q, vo, (controller_voltage[k+1]-vo)/dt, 1.]))[:2]
     if not np.isfinite(drive).all():
         raise ValueError("控制器重建出现非有限值，请核对波形和电路配置。")
-    return np.column_stack((grid, current, voltage, drive))
+    reconstructed=np.column_stack((grid, current, voltage, drive))
+    diagnostics={'filter':filtering,'quality':pwm_quality(drive[:,0],p),
+        'training_end_s':float(train[-1,0]),'raw_fit_channels_preserved':True,
+        'grid_dt_s':dt,'sense_voltage':'raw_interpolated_training_voltage',
+        'actual_pwm_used_for_reconstruction':False,'reference_used':False}
+    return (reconstructed,diagnostics) if return_diagnostics else reconstructed
 
 
 def closed_loop_rollout(times, parameters, vin, initial_state, profile=None):

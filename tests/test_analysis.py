@@ -45,6 +45,8 @@ def test_holdout_and_filename_cannot_leak_into_fit(case):
     data.frame.loc[mask, mapping.voltage] += 3
     changed = identify(data, mapping, options)
     assert changed["parameters"] == original["parameters"]
+    assert changed["measurement_diagnostics"]["noise_estimation"] == original["measurement_diagnostics"]["noise_estimation"]
+    assert changed["measurement_diagnostics"]["channels"]["voltage"]["residual_mean"] > 2
     assert changed["metrics"]["voltage_rmse_V"] > 2
 
 

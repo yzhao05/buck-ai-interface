@@ -32,6 +32,14 @@ def test_invalid_ground_truth_is_rejected(snapshot, truth):
         ReportRequest.model_validate(snapshot)
 
 
+@pytest.mark.parametrize('language,expected', [('zh','不适用'),('en','Not applicable')])
+def test_no_smoothing_report_has_no_active_filter_window(snapshot, language, expected):
+    snapshot['language']=language
+    snapshot['result']['options'].update(pwm_denoise='none',pwm_filter_cycles=1)
+    text=' '.join(p.extract_text() for p in PdfReader(BytesIO(build_pdf(ReportRequest.model_validate(snapshot)))).pages)
+    assert expected in text
+
+
 @pytest.fixture
 def snapshot():
     return {"language": "zh", "exported_at": "2026-10-23T08:00:00Z", "result": {

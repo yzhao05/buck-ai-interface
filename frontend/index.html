@@ -7,7 +7,7 @@
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
   <link rel="stylesheet" href="./workspace.css">
-  <script src="./config.js" defer></script><script src="./i18n.js?v=02ab0ecfc3c8" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./chat-images.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./app.js" defer></script>
+  <script src="./config.js" defer></script><script src="./i18n.js?v=pwm-denoise-20261027" defer></script><script src="./vendor/markdown-it-15.0.3.min.js" defer></script><script src="./markdown.js" defer></script><script src="./attachments.js" defer></script><script src="./circuit.js" defer></script><script src="./experiments.js" defer></script><script src="./analyses.js" defer></script><script src="./chat-images.js" defer></script><script src="./history.js" defer></script><script src="./sync.js" defer></script><script src="./csv-library.js" defer></script><script src="./app.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -48,7 +48,7 @@
         <div class="form-heading"><span>基本信息</span><button type="button" id="leave-identification" class="text-button">退出辨识</button></div>
         <label>PWM 来源<select id="pwm-source"><option value="auto">自动：有 PWM 列则使用，否则重建</option><option value="measured">CSV 实际开关状态</option><option value="controller">三列 CSV · 已知控制器重建</option></select></label>
         <div id="controller-settings" hidden>
-          <p class="field-note">计算流程：重建 PWM 开关信息 → 固定 R 识别 L、C → 自主闭环验证。</p>
+          <p class="field-note">计算流程：训练段电压去噪 → RC 控制器重建 PWM → 质量检查 → 固定 R 识别 L、C → 自主闭环验证。</p>
           <section class="circuit-card" aria-label="参考电路">
             <div class="circuit-card-heading"><strong>参考电路</strong><button type="button" id="edit-circuit" class="text-button">放大 / 编辑</button></div>
             <button type="button" id="circuit-preview" class="circuit-preview" aria-label="放大并编辑电路图"></button>
@@ -58,11 +58,15 @@
           </section>
           <p class="field-note">仅适用于与默认图接线相同的非同步 Buck 和 RC 控制器。默认参数来自 Case09/10，可在图中点击参数修改；计算使用当前设置。上传图片后可交给助手分析，识图建议不会自动写入参数或改变接线模型。</p>
           <label>确认电路配置<select id="controller-confirmed"><option value="no">尚未确认</option><option value="yes">接线与默认图一致，参数与当前设置一致</option></select></label>
+          <label>重建电压去噪<select id="pwm-denoise"><option value="sg">SG 平滑 · 基线</option><option value="modified_sinc">Modified-sinc FIR · 候选</option><option value="none">不去噪 · 对照</option></select></label>
+          <label>去噪窗口（开关周期）<input id="pwm-filter-cycles" type="number" min="0.1" max="8" step="0.1" value="6"></label>
+          <p class="field-note">离线 CSV：仅对训练段的重建电压去噪，原始电流、电压仍用于辨识。质量检查不通过将停止计算；不改变真实控制器或增加锁存。</p>
+          <details id="pwm-quality-details" hidden><summary>PWM 重建质量检查</summary><p id="pwm-quality-summary" class="field-note"></p><pre id="pwm-quality-json"></pre></details>
           <p class="field-note">CSV 必须从 t=0 开始。固定已知负载 R，仅识别 L、C；区间内负载须恒定，结束时间小于 1 ms，建议 0～0.8 ms。训练段重建 PWM，留出段自主闭环验证。</p>
         </div>
         <div class="two-fields"><label>输入电压<div class="unit-input"><input type="number" id="vin" value="28" min="0.1" max="2000" step="any"><span>V</span></div></label><label>开关频率<div class="unit-input"><input type="number" id="frequency" value="100" min="0.1" max="2000" step="any"><span>kHz</span></div></label></div>
         <label>辨识目标<select id="fit-mode"><option value="LCR">L / C / R · 联合辨识</option><option value="LC">L / C · 固定负载 R</option></select></label>
-        <label id="fixed-r-label" hidden>已知负载电阻<div class="unit-input"><input id="fixed-r" type="number" value="6" min="0.011" step="any"><span>Ω</span></div></label>
+        <label id="fixed-r-label" hidden>已知负载电阻<div class="unit-input"><input id="fixed-r" type="number" value="6" min="0.01" max="100000" step="any"><span>Ω</span></div></label>
         <label>计算方法<select id="fit-method"><option value="pann" selected disabled>PANN · 需后端 PyTorch</option><option value="weighted_integral">抗噪加权积分 · 直接辨识</option></select></label>
         <p id="method-hint" class="field-note">直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。</p>
         <div id="pann-settings" hidden>
@@ -134,6 +138,13 @@
         <section id="result-assessment" class="result-assessment" hidden aria-label="结果分项判断">
           <dl><dt>波形拟合</dt><dd id="waveform-assessment"></dd><dt>训练稳定性</dt><dd id="training-assessment"></dd><dt>参数准确性</dt><dd id="accuracy-assessment"></dd></dl>
           <details id="training-evidence" hidden><summary>查看训练稳定性依据</summary><ul id="training-evidence-list"></ul></details>
+          <details id="measurement-evidence"><summary>噪声与残差诊断</summary><p class="field-note">训练段局部噪声估计不是传感器标定；残差线索不改变 5% 应用门槛。</p><ul id="measurement-evidence-list"></ul></details>
+          <details><summary>诊断对照与可选参考</summary><p class="field-note">让助手分析时自动尝试参数与初值交换，不重新训练。需要同 CSV、区间和模型的已完成 PANN 结果及原始 CSV。</p>
+            <button type="button" class="button subtle small" id="choose-diagnostic-reference">上传干净参考 CSV（可选）</button><input id="diagnostic-reference-file" type="file" accept=".csv,text/csv" hidden>
+            <p class="field-note">参考须与原数据使用相同列名、单位和时间网格；仅作评价，不参与训练。参考仅保留于当前后端缓存，刷新或过期后需重新选择。</p>
+            <label class="diagnostic-reference-confirm"><input type="checkbox" id="diagnostic-reference-confirm"><span>我确认参考来自同一实验、同一工况，仅去除了测量噪声。</span></label>
+            <p id="diagnostic-reference-status" class="field-note" aria-live="polite"></p>
+          </details>
         </section>
         <section id="review-reasons" class="review-reasons" hidden aria-label="需复核的触发原因"><h3>需复核的触发原因</h3><ul id="review-reason-list"></ul></section>
         <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>

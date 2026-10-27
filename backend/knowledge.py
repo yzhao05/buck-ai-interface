@@ -6,6 +6,18 @@ from collections import Counter
 from .knowledge_base.buck import FORMULA_DOCUMENTS
 
 DOCUMENTS = [
+    {"id": "offline-pwm-denoising", "title": "离线抗噪 PWM 重建与质量检查（本项目）", "url": None,
+     "tags": "PWM 重建 去噪 SG modified sinc FIR 短脉冲 边沿 controller reconstruction denoise",
+     "content": "先分训练/留出，仅对训练电压重建支路去噪，原始电流、电压用于拟合。二阶SG是基线（默认6周期），MS n=2、alpha=4是候选；都为离线非因果滤波，不能直接当实时算法。RC参数和锯齿比较器按真实配置，禁止人工锁存或修边。完整载波周期检查额外/缺少边沿、短脉冲及占空比；首尾残缺周期仍检查已观察到的额外边沿，失败停止初始化与训练。通过只是结构可信性筛查，非时刻准确保证；剧烈瞬态真实多次交叉也可能被保守拒绝，需核对波形。旧结果无filter/quality字段时没有此检查。Case16A/B、1%/3%噪声、种子12/13/14首轮154组开发对照见tests/evidence/pwm_reconstruction_case16.json，默认只经此范围初验，非普遍最优。真实PWM与参数真值只用于开发评估，最终运行不依赖。MS核参考Schmid等(2022), doi:10.1021/acsmeasuresciau.1c00054，边界线性外推为本项目选择。"},
+    {"id": "measurement-noise-residuals", "title": "无干净参考时：噪声、残差与重复实验", "url": "https://www.mathworks.com/help/ident/ug/what-is-residual-analysis.html",
+     "tags": "噪声 残差 偏置 漂移 置信区间 不确定性 重复采集 noise residual uncertainty repeatability",
+     "content": (
+         "实际部署不要求干净CSV。优先用传感器标定或同步重复采集估计噪声和偏置，不能把开关纹波全部当噪声。"
+         "本项目noise-residual-v1只从原始训练段的密集采样、非开关边沿三点局部线性残差估计MAD噪声代理量；假设局部线性、噪声独立且方差相近。曲率、相关噪声、采样及训练/留出噪声差异会影响估计，零或不足显示未知。"
+         "留出残差=测量减连续预测。程序记录均值、规则采样的相邻相关、分块均值跨度，存在实测留出PWM时还记录边沿与非边沿RMSE比。偏置、慢变、相关或边沿集中只是诊断线索，不是因果结论或正式白噪声检验。"
+         "RMSE与噪声比0.5至1.5称同量级，其他形状阈值也为待校准启发式。保留5% NRMSE应用门槛，噪声大不自动通过；噪声高于要求应改善测量。"
+         "重复实验按完整配置、映射和区间分组、按CSV校验值去除重复拟合，显示观察范围、样本标准差和变异系数。需用户确认同一电路且独立采集；文件不同不证明独立。观察范围不是95%置信区间，同一参数对新记录前向预测才是新记录预测验证，分别重新辨识不能替代。"
+         "无独立真值不报告参数真实误差。没有重复采集或统计假设时应明确不确定性尚未量化，不编造区间。")},
     {"id": "pann-noisy-window-states", "title": "含噪 PLECS 窗口初值：Case14–16 的结论与当前适配", "url": None,
      "tags": "pann 噪声 初值 窗口 电容 偏差 联合估计 noise window initial states",
      "content": (

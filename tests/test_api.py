@@ -39,7 +39,9 @@ def test_upload_fit_chat_and_isolation(client):
     response=client.post("/api/chat",json={**body,"result_id":job_id,"message":"分析结果误差并给出修改计划"})
     assert response.status_code==200
     assert "当前估计" in response.json()["answer"] and "结论" in response.json()["answer"]
-    assert "RMSE" not in response.json()["answer"]
+    assert "估计噪声标准差" in response.json()["answer"]
+    assert "5% 复核门槛" in response.json()["answer"]
+    assert status['result']['measurement_diagnostics']['scope'] == 'same_record_holdout_not_new_record_prediction'
     assert response.json()["mode"]=="local"
     changed=client.post("/api/chat",json={**body,"options":{"end_s":.0007,"method":"weighted_integral"},"result_id":job_id,"message":"分析结果误差"})
     assert "当前估计" not in changed.json()["answer"]  # stale config cannot reuse fit

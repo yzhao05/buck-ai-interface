@@ -235,11 +235,16 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     split = int(np.searchsorted(a[:, 0], split_time))
     train = a[:split + 1]
     valid = a[split:]
+    raw_train = train.copy()
     if min(len(train), len(valid)) < 20:
         raise ValueError("训练或留出段采样不足，请调整区间。")
     if reconstructed:
         stage("pwm_reconstruction")
-        train = reconstruct_training(train, controller_profile)
+        train, reconstruction = reconstruct_training(train, controller_profile, denoise=options.pwm_denoise,
+            window_cycles=options.pwm_filter_cycles, return_diagnostics=True)
+        from .pwm_reconstruction import PWMQualityError
+        if reconstruction['quality']['status'] != 'passed':
+            raise PWMQualityError(reconstruction)
     stage("initialization")
     negative_tolerance = max(0.02 * np.ptp(train[:, 1]), 1e-5)
     if options.method in ("weighted_integral", "pann"):
@@ -283,6 +288,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         diagnostics["controller_reconstruction_end_s"] = float(train[-1, 0])
         diagnostics["sampling_branch_included"] = True
         diagnostics["pwm_reconstruction"] = {
+            **reconstruction,
             "status": "complete", "source": "training_voltage_and_known_controller",
             "start_s": float(train[0, 0]), "end_s": float(train[-1, 0]),
             "dt_s": controller_profile["dt_s"], "samples": len(train),
@@ -294,6 +300,11 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         predicted = rollout(a, params, options.vin, initial_state)
         diagnostics["drive_source"] = "measured PWM"
     metrics = metric(valid[:, 0], valid[:, 1:3], predicted[split:])
+    from .measurement_diagnostics import assess_measurements
+    training_gate = (train[np.clip(np.searchsorted(train[:, 0], raw_train[:, 0], side="right")-1, 0, len(train)-1), 3]
+                     if reconstructed else raw_train[:, 3])
+    measurement_diagnostics = assess_measurements(raw_train, valid, predicted[split:], options.frequency_hz,
+        training_gate=training_gate, validation_gate=None if reconstructed else valid[:, 3])
     train_metrics = metric(a[:split+1, 0], a[:split+1, 1:3], predicted[:split+1])
     if diagnostics["parameter_at_bound"]:
         notes.append("辨识或初始化触及参数边界：模型或数据可能不匹配，不应直接采用参数。")
@@ -319,6 +330,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
             "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality, "review_reasons": reasons,
             "assessment": assess_result(metrics, diagnostics, options.method),
             "metrics": metrics, "training_metrics": train_metrics, "diagnostics": diagnostics,
+            "measurement_diagnostics": measurement_diagnostics,
             "options": options.model_dump(), "mapping": mapping.model_dump(),
             "train_start_s": float(a[0, 0]), "train_end_s": float(a[split, 0]), "validation_end_s": float(a[-1, 0]),
             "validation_kind": "同一记录后段留出；已知控制器自主闭环预测，不使用留出电压或实测 PWM 驱动，不是独立工况验证。" if reconstructed else "同一记录后段留出；从区间起点连续仿真，后段无测量状态重置，输入使用实测 PWM。不是自主闭环或独立工况验证。",

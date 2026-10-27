@@ -28,6 +28,7 @@ const state = { dataset: null, csvFile: null, mapping: null, summary: null, resu
   identificationOpen: false, waveformOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
 const tools = {search_conversation:"检索会话记录", read_conversation_message:"读取历史消息", get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", get_analysis_history:"读取历史分析", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
+tools.run_diagnostic_controls="运行参数与初值对照";
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
   const button = $(buttonId), content = $(contentId);
@@ -119,6 +120,10 @@ function prepareControllerDefaults() {
 }
 function controls() {
   const waiting = historyLocked();
+  $("diagnostic-reference-file").disabled=waiting || !state.result;
+  $("choose-diagnostic-reference").disabled=waiting || !state.result;
+  $("diagnostic-reference-confirm").disabled=waiting || !selectedDiagnosticReference();
+  $("pwm-denoise").disabled=waiting;$("pwm-filter-cycles").disabled=waiting || $("pwm-denoise").value==='none';
   for(const id of ["attach-chat-image","chat-use-circuit","attach-circuit-image","chat-image-file","reuse-chat-image"]) $(id).disabled=waiting;
   $("toggle-result-library").disabled=waiting || !activeConversation;
   if(waiting)closeResultLibrary();
@@ -199,17 +204,25 @@ function readyStatus() {
     ? ($("controller-confirmed").value === "yes" ? "三列数据就绪 · 固定 R 辨识 L/C" : "请确认已知控制电路配置后开始辨识")
     : state.mapping?.pwm ? "数据就绪 · 可开始辨识" : "无 PWM 列：请在基本信息选择已知控制器重建并确认配置，或补充实际 PWM。");
 }
+function validNumericInput(el) {
+  // Disabled controls are excluded from browser constraint validation. Chat
+  // temporarily disables the form, but its draft still needs the same checks.
+  const probe=el.cloneNode();probe.disabled=false;probe.value=el.value;
+  return Boolean(el.value.trim()) && !el.validity.badInput && Number.isFinite(Number(el.value)) && probe.checkValidity();
+}
 function options() {
   const numeric = (id) => {
     const el = $(id);
-    if (!el.value.trim() || !el.checkValidity()) throw new Error("请检查工况输入范围：" + el.closest("label")?.textContent.trim());
+    if (!validNumericInput(el) || (id==="fixed-r" && Number(el.value)<=0.01)) throw new Error("请检查工况输入范围：" + el.closest("label")?.textContent.trim());
     return Number(el.value);
   };
   return {vin:numeric("vin"), frequency_hz:numeric("frequency")*1000,
     pwm_source:pwmSource(), controller_confirmed:$("controller-confirmed").value === "yes",
     controller:pwmSource() === "controller" ? window.BuckCircuit.read() : null,
-    start_s:$("start-ms").value === "" ? null : Number($("start-ms").value)/1000,
-    end_s:$("end-ms").value === "" ? null : Number($("end-ms").value)/1000,
+    pwm_denoise:pwmSource()==='controller' ? $("pwm-denoise").value : 'sg',
+    pwm_filter_cycles:pwmSource()==='controller' ? ($("pwm-denoise").value==='none' ? 1 : numeric('pwm-filter-cycles')) : 6,
+    start_s:$("start-ms").value === "" && !$("start-ms").validity.badInput ? null : numeric("start-ms")/1000,
+    end_s:$("end-ms").value === "" && !$("end-ms").validity.badInput ? null : numeric("end-ms")/1000,
     train_fraction:Number($("train-fraction").value)/100, mode:$("fit-mode").value,
     resistance_ohm:numeric("fixed-r"), method:$("fit-method").value,
     epochs:$("fit-method").value === "pann" ? numeric("pann-epochs") : 100,
@@ -230,6 +243,7 @@ function resultMatchesCurrent(result) {
   } catch { return false; }
 }
 function invalidateResult() {
+  displayPWMQuality(null);
   closeResultLibrary();state.savedRun=null;$("selected-result").value="";
   $("selected-result-name").hidden=true;$("result-archive-note").hidden=true;
   closeAnalysisMenu();
@@ -321,8 +335,8 @@ function displaySummary() {
   $("wave-subtitle").textContent = state.dataset.filename;
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
 }
-async function startFit() {
-  if (!state.identificationOpen || !state.mapping || historyLocked() || resultMatchesCurrent(state.result)) return;
+async function startFit({fromChat=false}={}) {
+  if (!state.identificationOpen || !state.mapping || (fromChat ? state.busy || state.syncBusy || state.job : historyLocked()) || resultMatchesCurrent(state.result)) return;
   let submitted=false;
   try {
     const fitOptions = options();
@@ -333,14 +347,16 @@ async function startFit() {
     const response = await api("/api/identify", {method:"POST", body:{dataset_id:state.dataset.dataset_id,mapping:state.mapping,options:fitOptions}});
     if (response.resumed) notice("已找回正在运行的辨识任务，正在恢复进度。",true);
     state.busy = false;
+    if (fromChat) { void watchJob(response.job_id); return {job_id:response.job_id}; }
     await watchJob(response.job_id);
   } catch (error) {
     // The POST may have reached the server even when its response was lost.
     if (submitted && (!error.status || error.status===409 || error.status>=500)) {
-      try { if (await resumeActiveJob()) return; } catch { /* Keep the original error visible. */ }
+      try { if (await resumeActiveJob()) return fromChat ? {job_id:state.job,resumed:true} : undefined; } catch { /* Keep the original error visible. */ }
     }
     notice(error.message);
     ui($("job-status"), submitted && (!error.status || error.status>=500) ? "提交状态暂未确认，请检查连接后重试。" : "辨识未完成");
+    if (fromChat) return {error:error.message};
   }
   finally { state.busy = false; controls(); }
 }
@@ -378,7 +394,7 @@ async function watchJob(id) {
       }
       if (retries) notice();
       retries=0;
-      const stages = {checking:"正在检查数据与电路配置…", pwm_reconstruction:"正在重建 PWM，获取训练段开关信息…",
+      const stages = {checking:"正在检查数据与电路配置…", pwm_reconstruction:"正在对训练电压去噪、重建 PWM 并检查脉冲质量…",
         initialization:"正在计算参数初值…", pann_training:"正在使用开关信息训练 PANN…", validation:"正在验证预测波形…"};
       ui($("job-status"), response.status === "queued" ? "任务已排队…" : stages[response.stage] || `正在拟合与验证 · ${Math.round((Date.now()-started)/1000)} 秒`);
       if (response.status === "complete") {
@@ -394,7 +410,7 @@ async function watchJob(id) {
         ui($("job-status"), `辨识完成 · 用时 ${response.result.elapsed_s} 秒`);
         return;
       }
-      if (response.status === "failed") throw new Error(response.error);
+      if (response.status === "failed") {displayPWMQuality(response.pwm_reconstruction);throw new Error(response.error);}
       await pause(1200);
     }
   } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); }
@@ -479,7 +495,11 @@ function resultAssessment(r) {
     parameter_accuracy:parameterComparison(r) ? {status:"compared",...parameterComparison(r)} : {status:"unverified",reason:"no_ground_truth_comparison"}};
 }
 function displayAssessment() {
+  refreshDiagnosticReference();
   const r=state.result;$("result-assessment").hidden=!r;if(!r)return;
+  displayPWMQuality(r.diagnostics?.pwm_reconstruction);
+  $("measurement-evidence-list").replaceChildren();
+  for(const text of measurementLines(r)){const li=document.createElement("li");li.textContent=text;$("measurement-evidence-list").append(li);}
   const a=resultAssessment(r), c=a.training;
   ui($("waveform-assessment"),a.waveform.status==="passed" ? "达标：电流、电压留出 NRMSE 均不超过 5%" : "未达标或缺少有效留出误差");
   const labels={stable:"末段稳定（经验判据，非收敛证明）",not_stable:"尚未达到末段稳定判据",insufficient_history:"证据不足：轮数过少或历史未记录逐轮数据",not_applicable:"不适用：积分方法无迭代训练"};
@@ -594,8 +614,97 @@ function message(role, content, mode = "", images = []) {
   $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
   return article;
 }
+function measurementLines(result) {
+  const report=result?.measurement_diagnostics;
+  if(!report)return [tr("此历史结果未记录噪声与残差诊断，重新辨识后可获得。")];
+  const flags={bias:"残差均值偏置",slow_variation:"残差缓慢变化",correlated_residual:"相邻残差相关",edge_concentration:"残差在开关边沿集中"};
+  const comparisons={same_order:"与估计噪声同量级",above_noise:"高于估计噪声",below_noise:"低于估计噪声，需核对估计假设",unavailable:"噪声量级证据不足"};
+  const lines=[];
+  const pwm=result?.diagnostics?.pwm_reconstruction;
+  if(pwm?.quality)lines.push(`${tr('PWM 重建质量检查')}: ${tr(pwm.quality.status==='passed'?'结构检查通过，不代表开关时刻已验证。':'重建不可信，已停止辨识。')} ${pwm.filter.method}, ${pwm.filter.window_cycles} ${tr('开关周期')}`);
+  for(const [key,label] of [["current","电流"],["voltage","电压"]]){
+    const c=report.channels[key];
+    let text=`${tr(label)}: ${tr(comparisons[c.noise_comparison] || comparisons.unavailable)}`;
+    if(Number.isFinite(c.noise_sigma))text+=` · ${tr("估计噪声标准差")} ${fmt(c.noise_sigma,5)} ${c.unit} · RMSE / σ = ${fmt(c.rmse_to_noise_ratio,4)}`;
+    text+=` · ${tr("残差均值")} ${fmt(c.residual_mean,5)} ${c.unit}`;
+    if(c.flags.length)text+=" · "+c.flags.map(flag=>tr(flags[flag] || flag)).join(" / ");
+    else text+=" · "+tr("未触发形状筛查，不代表已通过白噪声检验");
+    if(c.noise_above_application_threshold)text+=" · "+tr("估计噪声高于 5% 门槛，优先改善测量条件");
+    lines.push(text);
+  }
+  if(report.edge_source!=="measured_heldout_PWM")lines.push(tr("没有实测留出 PWM，未评价开关边沿残差。"));
+  lines.push(tr("当前仅评价同记录后段；参数区间与新记录预测尚未验证。"));
+  return lines;
+}
+function displayPWMQuality(info){
+  const valid=Boolean(info?.quality);$("pwm-quality-details").hidden=!valid;
+  $("pwm-quality-details")._diagnostics=info;
+  if(!valid)return;
+  ui($("pwm-quality-summary"),info.quality.status==='passed'?'结构检查通过，不代表开关时刻已验证。':'重建不可信，已停止辨识。');
+  $("pwm-quality-json").textContent=JSON.stringify(info,null,2);
+}
+let diagnosticReference=null, diagnosticReferenceUpload=0;
+function selectedDiagnosticReference(){
+  return diagnosticReference?.owner===sessionId && diagnosticReference.resultId===state.resultId && diagnosticReference.base===base ? diagnosticReference : null;
+}
+function refreshDiagnosticReference(){
+  const ref=selectedDiagnosticReference();
+  $("diagnostic-reference-file").disabled=!state.result;
+  $("choose-diagnostic-reference").disabled=!state.result;
+  $("diagnostic-reference-confirm").disabled=!ref;
+  if(!ref)$("diagnostic-reference-confirm").checked=false;
+  $("diagnostic-reference-status").textContent=ref ? tr("已选择参考：")+ref.filename : tr("未选择参考，仍可运行参数与初值交换对照。");
+}
+$("choose-diagnostic-reference").onclick=()=>$("diagnostic-reference-file").click();
+$("diagnostic-reference-file").addEventListener('change',async event=>{
+  const file=event.target.files[0];event.target.value='';
+  if(!file || !state.result || state.chatBusy)return;
+  const attempt=++diagnosticReferenceUpload;
+  const context={owner:sessionId,resultId:state.resultId,base};
+  diagnosticReference=null;refreshDiagnosticReference();
+  try{
+    const form=new FormData();form.append('file',file);
+    const uploaded=await api('/api/datasets?reference=true',{method:'POST',body:form});
+    if(attempt!==diagnosticReferenceUpload || context.owner!==sessionId || context.resultId!==state.resultId || context.base!==base)return;
+    diagnosticReference={...context,dataset_id:uploaded.dataset_id,filename:uploaded.filename};
+    refreshDiagnosticReference();
+  }catch(error){notice(error.message);}
+});
 function decorateResponse(article, response) {
+    if(response.control_checks){
+      const box=document.createElement('details');box.className='message-tools diagnostic-controls-evidence';
+      const summary=document.createElement('summary');ui(summary,'诊断对照执行记录');box.append(summary);
+      const report=response.control_checks;
+      const p=document.createElement('p');
+      ui(p,report.status==='completed'?'已完成四组前向对照，未重新训练；数值效应不等于硬件原因已证实。':'对照未完成，不能据此声称原因已验证。');box.append(p);
+      if(report.error){const error=document.createElement('p');ui(error,report.error);box.append(error);}
+      const labels={integral_measured:'积分参数 + 测量初值',integral_pann_state:'积分参数 + PANN 初值',pann_measured:'PANN 参数 + 测量初值',pann_pann_state:'PANN 参数 + PANN 初值'};
+      for(const [name,row] of Object.entries(report.cases || {})){
+        const item=document.createElement('p');item.append(window.BuckI18n.node(labels[name] || name),document.createTextNode(`: RMSE ${fmt(row.heldout_measured.current_rmse_A,5)} A / ${fmt(row.heldout_measured.voltage_rmse_V,5)} V`));box.append(item);
+      }
+      if(report.reference){const ref=document.createElement('p');ref.append(window.BuckI18n.node(report.reference.status==='evaluated_user_declared_reference'?'已与用户声明的干净参考比较。':'干净参考对照未执行。'));if(report.reference.reason)ref.append(document.createTextNode(' '),window.BuckI18n.node(report.reference.reason));box.append(ref);}
+      article.append(box);
+    }
     decorateConversationRetrieval(article,response.conversation_retrieval);
+    if(response.repeatability && (response.repeatability.groups?.length || response.repeatability.excluded_missing_context)){
+      const box=document.createElement("details");box.className="message-tools repeatability-evidence";
+      const title=document.createElement("summary");ui(title,"多次实验一致性依据");box.append(title);
+      const list=document.createElement("ul");box.append(list);
+      const add=(...parts)=>{const li=document.createElement("li");li.append(...parts.map(text=>window.BuckI18n.node(text)));list.append(li);};
+      const groups=response.repeatability.groups || [];
+      if(!groups.length)add("缺少可比较的完整实验配置，暂不计算离散程度。");
+      for(const group of groups){
+        add(`${group.method} / ${group.pwm_source} / ${group.mode}: `,"不同 CSV 数",`: ${group.distinct_files}; `,"排除同文件重复运行",`: ${group.same_file_reruns_excluded}`);
+        if(group.distinct_files<2)add("至少需要两份不同 CSV 才能计算观察到的离散程度。");
+        for(const [key,p] of Object.entries(group.parameters)){
+          const factor=key==='R_ohm'?1:1e6,unit=key==='L_H'?'μH':key==='C_F'?'μF':'Ω';
+          add(`${key[0]}: `,"观察范围",` ${fmt(p.min*factor,6)}–${fmt(p.max*factor,6)} ${unit}; CV = ${fmt(p.cv_pct,4)}%`);
+        }
+      }
+      add("需确认同一电路与独立采集；观察范围不是置信区间，也不是新工况预测验证。");
+      if(response.repeatability.omitted_groups)add("未展示分组数",`: ${response.repeatability.omitted_groups}`);
+      article.append(box);
+    }
     if (response.route) {
       const task = document.createElement("div"); task.className = "message-tools message-task";
       task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
@@ -617,11 +726,63 @@ function decorateResponse(article, response) {
       }); article.append(sources);
     }
 }
+function configurationFingerprint() {
+  return JSON.stringify({conversation:activeConversation?.id,session:sessionId,base,
+    dataset:state.dataset?.dataset_id,sha256:state.dataset?.sha256,mapping:state.mapping,
+    fields:experimentFields.filter(id=>id!=="chat-images").map(id=>[$(id).id,$(id).value]),
+    mappingFields:["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"].map(id=>$(id).value)});
+}
+async function applyIdentificationAction(action, context) {
+  const stale="会话、数据或设置已变化，本次操作未应用。请按当前界面重新发送指令。";
+  if (!context || action.id!==context.request_id || configurationFingerprint()!==context.fingerprint) return tr(stale);
+  if (action.type!=="configure_identification" || typeof action.open_panel!=="boolean" || typeof action.start_after_apply!=="boolean") throw new Error("配置操作格式无效。");
+  const changes=action.changes;
+  if (!changes || Array.isArray(changes) || Object.keys(changes).some(k=>!["method","mode","resistance_ohm"].includes(k))
+      || ("method" in changes && !["pann","weighted_integral"].includes(changes.method))
+      || ("mode" in changes && !["LC","LCR"].includes(changes.mode))
+      || ("resistance_ohm" in changes && !(typeof changes.resistance_ohm==="number" && Number.isFinite(changes.resistance_ohm) && changes.resistance_ohm>.01 && changes.resistance_ohm<=100000))) throw new Error("配置操作格式无效。");
+  const key=`buck-ui-action:${sessionId}:${action.id}`;
+  if (sessionStorage.getItem(key))return tr("此操作已处理，未重复应用或启动。");
+  if (state.job || state.busy || state.syncBusy)return tr("已有任务或同步正在进行，本次未修改配置或启动新实验。");
+  // Check the backend too: a submission from a previous page may still be running.
+  const active=await api("/api/jobs/active",{timeout:10000});
+  if (configurationFingerprint()!==context.fingerprint)return tr(stale);
+  if(active.job?.job_id){void watchJob(active.job.job_id);return tr("已有任务或同步正在进行，本次未修改配置或启动新实验。");}
+  if (state.busy || state.syncBusy || state.job)return tr("已有任务或同步正在进行，本次未修改配置或启动新实验。");
+  if (pwmSource()==="controller" && (changes.mode || $("fit-mode").value)!=="LC")return tr("重建 PWM 只支持固定 R 的 LC 模式，本次未修改设置。");
+  if (changes.method==="pann" && $("fit-method").querySelector('[value="pann"]').disabled)return tr("后端未安装 PyTorch，未切换方法或启动实验。");
+  // Mark before applying; replaying stored replies/retrying the same response cannot run twice.
+  sessionStorage.setItem(key,"processed");
+  const applied=[];
+  if (action.open_panel || Object.keys(changes).length || action.start_after_apply) {
+    toggleSection("toggle-experiment","experiment-content","实验配置",true);
+    setIdentificationOpen(true);
+  }
+  if (changes.method) {$("fit-method").value=changes.method;applied.push(changes.method==="pann"?"PANN":tr("抗噪加权积分"));}
+  if (changes.mode) {$("fit-mode").value=changes.mode;applied.push(changes.mode);}
+  if ("resistance_ohm" in changes) {
+    if (Number($("fixed-r").value)!==changes.resistance_ohm && pwmSource()==="controller")$("controller-confirmed").value="no";
+    $("fixed-r").value=String(changes.resistance_ohm);applied.push(`R = ${changes.resistance_ohm} Ω`);
+  }
+  controls();persistConversation();
+  const prefix=tr("辨识设置已应用。")+(applied.length ? ` ${applied.join(" · ")}。` : "");
+  if (!action.start_after_apply)return prefix+" "+tr("未启动实验，右侧保留已有结果。");
+  if (!state.dataset) {toggleSection("toggle-import","import-content","导入波形",true);return prefix+" "+tr("请先上传 CSV；本次未启动实验。");}
+  if (!state.mapping) {$("mapping-details").open=true;return prefix+" "+tr("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
+  if (pwmSource()==="controller" && $("controller-confirmed").value!=="yes") {
+    $("controller-settings").hidden=false;return prefix+" "+tr("请核对并确认控制电路与当前参数一致；本次未启动实验。");
+  }
+  if (pwmSource()==="measured" && !state.mapping.pwm)return prefix+" "+tr("请映射实际 PWM 列，或手动选择并确认控制器重建；本次未启动实验。");
+  if (resultMatchesCurrent(state.result))return prefix+" "+tr("当前配置已有完成结果，未重复启动实验。");
+  const started=await startFit({fromChat:true});
+  return prefix+" "+(started?.job_id ? tr("辨识任务已提交，进度与结果将在右侧显示。") : tr("未能启动实验：")+tr(started?.error || "请检查当前任务和输入设置。"));
+}
 async function sendMessage(value, {analysisRequest=false}={}) {
   const images=chatImages();
   const text = value.trim() || (images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { notice("请先连接分析后端。"); return; }
   const currentOnly=analysisRequest || resultAnalysisPrompts.has(text);
+  const controlRequest=!currentOnly && !images.length && /进入|打开|展开|选择|选用|改用|切换|设为|改成|改为|设置|固定|调整|开始|启动|执行|运行|\b(?:open|enter|select|use|switch|set|fix|change|start|run|perform|identify)\b/i.test(text);
   const targetResultId=state.resultId;
   if(currentOnly && (!state.result || !targetResultId)){notice("当前结果已失效，请重新辨识后再分析。");return;}
   const corpus=currentOnly ? [] : conversationMessages(readConversation(activeConversation.id));
@@ -649,27 +810,48 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   userArticle.dataset.messageId=requestMessage.id;
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
-    if (state.mapping && !compareSaved && !imageQuestion && !(analyzeResult && state.savedRun)) await ensureDatasetAvailable();
+    if (state.mapping && !controlRequest && !compareSaved && !imageQuestion && !(analyzeResult && state.savedRun)) await ensureDatasetAvailable();
     if(currentOnly && (!state.result || state.resultId!==targetResultId))throw new Error("当前结果已失效，请重新辨识后再分析。");
     const comparison=fitOptions && !compareSaved ? parameterComparison() : null;
     const imageResult=imageQuestion && analyzeResult ? readConversation(activeConversation.id)?.experiments?.find(run=>run.id===state.resultId) : null;
     const savedResult=analyzeResult ? state.savedRun || imageResult : null;
+    let actionContext=null;
+    if (!currentOnly && !imageQuestion) {
+      try {
+        const draftOptions=options(), epochInput=$("pann-epochs");
+        // Integral mode does not use the hidden epoch field. An unfinished
+        // epoch edit must not make every unrelated chat request fail with 422.
+        if (validNumericInput(epochInput)) draftOptions.epochs=Number(epochInput.value);
+        actionContext={request_id:requestMessage.id,options:draftOptions,fingerprint:configurationFingerprint()};
+      } catch { /* Invalid drafts remain a form validation error. */ }
+    }
     const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,
+      ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options} : undefined,
       dataset_id:savedResult || imageQuestion ? null : state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
       saved_result:savedResult ? {...savedResult,result:experimentSnapshot(state.result)} : undefined,
       options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
+      enable_diagnostic_controls:Boolean(analyzeResult && !imageQuestion),
+      diagnostic_reference:analyzeResult && !imageQuestion && selectedDiagnosticReference() && $("diagnostic-reference-confirm").checked ? {dataset_id:diagnosticReference.dataset_id,result_id:state.resultId,confirmed_same_experiment:true} : undefined,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
       conversation_messages:corpus,conversation_retrieval_requested:useConversation,
       // Keep execution context for explicit mixed requests (run, then compare).
       // The backend classifier enforces read-only tools for comparison alone.
-      experiments:currentOnly ? [] : chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult && !imageQuestion}});
+      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult && !imageQuestion}});
     pending.remove();
+    if (response.ui_action) {
+      try {response.answer=await applyIdentificationAction(response.ui_action,actionContext);}
+      catch(error){response.answer=tr("未能应用配置操作：")+tr(error.message);}
+      response.ui_action_status=response.answer;
+    }
     const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
     const article = message("assistant", answer,
       response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
     decorateResponse(article, response);
     const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,
       request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
+      repeatability:response.repeatability,
+      control_checks:response.control_checks,
+      ...(response.ui_action ? {ui_action:response.ui_action,ui_action_status:response.ui_action_status} : {}),
       ...(analysisMeta && !response.job_id ? {analysis:{...analysisMeta,request_id:requestMessage.id}} : {})}, response.mode === "deepseek" ? "DeepSeek" : "本地规则分析");
     article.dataset.messageId=savedReply.id;
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
@@ -774,6 +956,7 @@ async function exportReports() {
   const run=activeConversation?.experiments?.find(item=>item.id===state.resultId);
   const filename = run ? experimentReportName(run) : reportFilename(report.result, exportedAt);
   const notes = (report.result.warnings || []).map(note=>tr(note));
+  if(report.result.measurement_diagnostics)notes.push(...measurementLines(report.result),tr("训练段局部噪声估计不是传感器标定；残差线索不改变 5% 应用门槛。"));
   $("report-downloads").hidden = false;
   ui($("report-export-status"), "JSON 已生成，正在生成 PDF…");
   prepareReportDownload(new Blob([JSON.stringify(report,null,2)],{type:"application/json;charset=utf-8"}),filename,"report-json-link").click();
@@ -838,6 +1021,7 @@ $("pwm-source").onchange=()=>{
   controls(); if (state.mapping) readyStatus(); persistConversation();
 };
 $("controller-confirmed").onchange=()=>{controls();if(state.mapping)readyStatus();persistConversation();};
+for(const id of ['pwm-denoise','pwm-filter-cycles'])$(id).addEventListener('change',()=>{controls();persistConversation();});
 document.addEventListener("buck-circuit-change",()=>{
   $("controller-confirmed").value="no";controls();
   if(state.mapping)readyStatus();persistConversation();

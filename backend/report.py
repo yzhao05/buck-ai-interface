@@ -42,6 +42,8 @@ class Metrics(Snapshot):
 
 
 class ReportOptions(Snapshot):
+    pwm_denoise: Literal["sg", "modified_sinc", "none"] | None = None
+    pwm_filter_cycles: Number | None = None
     vin: Number | None = None
     frequency_hz: Number | None = None
     pwm_source: Literal["measured", "controller"] | None = None
@@ -252,6 +254,10 @@ def build_pdf(request: ReportRequest) -> bytes:
                      "Plots use saved display samples. RMSE comes from the full computation data, not these plotted samples."), small))
     story.append(p(t("这是同一记录后段的留出验证，不是独立工况验证。", "This is a holdout from the same recording, not an independent operating-condition test.")))
     if r.options.pwm_source == "controller":
+        table([(t("重建电压去噪", "Reconstruction voltage smoothing"),
+                r.options.pwm_denoise or t("未记录（旧结果）", "Not recorded (legacy result)")),
+               (t("去噪窗口 / 开关周期", "Smoothing window / switching cycles"),
+                t("不适用", "Not applicable") if r.options.pwm_denoise == 'none' else n(r.options.pwm_filter_cycles))])
         story.append(p(t("重建只使用训练段电压与已知控制器；留出段采用自主闭环预测，不使用留出实测电压或 PWM 驱动。",
                          "Reconstruction uses training voltage and the known controller. Holdout prediction runs in closed loop without held-out voltage or measured PWM as input.")))
     story.append(PageBreak())

@@ -4,8 +4,9 @@ let activeConversation = null;
 let conversationPrefix = "";
 let pendingAttachment = null;
 const conversationCache = new Map();
-const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "controller-confirmed", "controller-parameters", "controller-image", "selected-result", "chat-images"];
+const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "pwm-denoise", "pwm-filter-cycles", "controller-confirmed", "controller-parameters", "controller-image", "selected-result", "chat-images"];
 const experimentDefaults = {vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"200", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
+experimentDefaults['pwm-denoise']='sg';experimentDefaults['pwm-filter-cycles']='6';
 function historyWarning(text = "") {
   ui($("history-status"), text); $("history-status").hidden = !text;
 }
@@ -347,6 +348,7 @@ async function analyzeInNewConversation() {
     const now=Date.now(),opts=result.options,fields={...source.fields,"chat-images":"","selected-result":state.savedRun ? copied.job_id : "",
       vin:String(opts.vin),frequency:String(opts.frequency_hz/1000),"fit-mode":opts.mode,"fixed-r":String(opts.resistance_ohm),
       "fit-method":opts.method,"pwm-source":opts.pwm_source,"controller-confirmed":opts.controller_confirmed?"yes":"no",
+      "pwm-denoise":opts.pwm_denoise || 'none',"pwm-filter-cycles":String(opts.pwm_filter_cycles ?? 1),
       "controller-parameters":opts.controller?JSON.stringify(opts.controller):"",
       "start-ms":opts.start_s===null?"":String(opts.start_s*1000),"end-ms":opts.end_s===null?"":String(opts.end_s*1000),
       "train-fraction":String(opts.train_fraction*100),"pann-epochs":String(opts.epochs),

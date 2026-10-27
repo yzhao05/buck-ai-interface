@@ -9,6 +9,10 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
+def legacy_pwm_options(options):
+    return {'pwm_denoise': 'none', 'pwm_filter_cycles': 1., **options}
+
+
 class Mapping(StrictModel):
     time: str
     current: str
@@ -61,12 +65,32 @@ class FitOptions(StrictModel):
     pann_initial_state: Literal["joint", "measured"] = "joint"
     pann_window_cycles: int = Field(default=0, ge=0, le=3, description="0: training-noise heuristic; 1/2/3: explicit cycles")
     pwm_source: Literal["measured", "controller"] = "measured"
+    pwm_denoise: Literal["sg", "modified_sinc", "none"] = "sg"
+    pwm_filter_cycles: float = Field(default=6., ge=.1, le=8)
     controller_confirmed: bool = False
     controller: ControllerParameters | None = None
 
 
 class FitRequest(AnalysisRequest):
     options: FitOptions = Field(default_factory=FitOptions)
+
+
+class IdentificationChanges(StrictModel):
+    method: Literal["pann", "weighted_integral"] | None = None
+    mode: Literal["LC", "LCR"] | None = None
+    resistance_ohm: float | None = Field(default=None, strict=True, gt=0.01, le=100000)
+
+
+class ConfigureIdentification(StrictModel):
+    open_panel: bool = Field(strict=True)
+    changes: IdentificationChanges
+    start_after_apply: bool = Field(strict=True)
+
+
+class IdentificationUIContext(StrictModel):
+    request_id: str = Field(min_length=1, max_length=128)
+    # Separate from the displayed historical result's options.
+    options: FitOptions
 
 
 class ChatMessage(StrictModel):
@@ -102,6 +126,9 @@ class SavedExperiment(StrictModel):
 
     @model_validator(mode="after")
     def validate_snapshot(self):
+        # Reports created before voltage denoising used unfiltered voltage.
+        if isinstance(self.result.get('options'), dict):
+            self.result = {**self.result, 'options': legacy_pwm_options(self.result['options'])}
         if len(json.dumps(self.result, allow_nan=False).encode()) > 128*1024:
             raise ValueError("Experiment snapshot exceeds 128 KB")
         parameters = self.result.get("parameters", {})
@@ -122,7 +149,28 @@ class ExperimentParameters(StrictModel):
     R_ohm: float = Field(gt=0, le=1e30)
 
 
+class ExperimentComparisonContext(StrictModel):
+    options: FitOptions
+    mapping: Mapping
+    start_s: float
+    end_s: float
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_options(cls, value):
+        if isinstance(value, dict) and isinstance(value.get('options'), dict):
+            return {**value, 'options': legacy_pwm_options(value['options'])}
+        return value
+
+    @model_validator(mode="after")
+    def ordered_interval(self):
+        if self.end_s <= self.start_s:
+            raise ValueError("Comparison interval must have positive duration")
+        return self
+
+
 class ChatExperiment(StrictModel):
+    comparison_context: ExperimentComparisonContext | None = None
     id: str = Field(min_length=1, max_length=128)
     dataset: ExperimentDataset
     method: Literal["pann", "weighted_integral", "integral"] | None = None
@@ -163,7 +211,16 @@ class ConversationMessage(StrictModel):
     analysis: AnalysisMetadata | None = None
 
 
+class DiagnosticReference(StrictModel):
+    dataset_id: str = Field(min_length=1, max_length=128)
+    result_id: str = Field(min_length=1, max_length=128)
+    confirmed_same_experiment: Literal[True]
+
+
 class ChatRequest(StrictModel):
+    enable_diagnostic_controls: bool = False
+    diagnostic_reference: DiagnosticReference | None = None
+    ui_context: IdentificationUIContext | None = None
     language: Literal["zh", "en"] = "zh"
     identification_enabled: bool = False
     current_result_analysis: bool = False
@@ -184,8 +241,17 @@ class ChatRequest(StrictModel):
     conversation_messages: list[ConversationMessage] = Field(default_factory=list, max_length=10000)
     conversation_retrieval_requested: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_saved_options(cls, value):
+        if isinstance(value, dict) and value.get('saved_result') and isinstance(value.get('options'), dict):
+            return {**value, 'options': legacy_pwm_options(value['options'])}
+        return value
+
     @model_validator(mode="after")
     def truth_matches_result(self):
+        if self.diagnostic_reference and (not self.enable_diagnostic_controls or self.diagnostic_reference.result_id != self.result_id):
+            raise ValueError('Reference must belong to the selected diagnostic result.')
         if self.saved_result:
             if self.identification_enabled or self.saved_result.id != self.result_id:
                 raise ValueError("Saved result analysis must be read-only and match the result ID.")

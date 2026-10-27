@@ -2,14 +2,15 @@ const assert=require('node:assert/strict');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
 (async()=>{
  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
- const page=await browser.newPage(),errors=[];
+ const page=await browser.newPage(),errors=[];let analysisResponse;
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/health',async route=>{const r=await route.fetch(),json=await r.json();json.archive_enabled=false;await route.fulfill({json});});
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked());
  const analyze=async()=>{
   const request=page.waitForRequest(r=>r.url().endsWith('/api/chat'));
+  const response=page.waitForResponse(r=>r.url().endsWith('/api/chat'));
   await page.locator('#ask-error').click();await page.locator('#analyze-here').click();
-  const body=(await request).postDataJSON();await ready();return body;
+  const body=(await request).postDataJSON();analysisResponse=await (await response).json();await ready();return body;
  };
  try{
   await page.goto('http://127.0.0.1:8001');await ready();
@@ -34,7 +35,13 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    assert.equal(body.current_result_analysis,true);
    assert.equal(body.result_id,current.id);assert.equal(body.options.mode,'LC');assert.equal(body.options.resistance_ohm,6);
    assert.deepEqual(body.options,current.result.options);assert.deepEqual(body.ground_truth,{result_id:current.id,...current.truth.ground_truth});
-   assert.deepEqual(body.history,[]);assert.deepEqual(body.experiments,[]);assert.deepEqual(body.conversation_messages,[]);
+   assert.deepEqual(body.history,[]);assert.deepEqual(body.conversation_messages,[]);
+   // Complete summaries reach the backend for grouping; only the current
+   // configuration's aggregate may enter the current-result model context.
+   assert.equal(body.experiments.length,2);
+   assert.equal(analysisResponse.repeatability.groups.length,1);
+   assert.equal(analysisResponse.repeatability.groups[0].mode,'LC');
+   assert.deepEqual(analysisResponse.repeatability.groups[0].representative_ids,[current.id]);
    assert.equal(body.identification_enabled,false);
    assert.match(await page.locator('.message.assistant').last().innerText(),/R = 6 Ω（固定已知）/);
   }

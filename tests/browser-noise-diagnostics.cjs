@@ -1,0 +1,45 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
+(async()=>{
+ const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+ const page=await browser.newPage({viewport:{width:1650,height:1100}}),errors=[],chats=[],reports=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ page.on('request',r=>{if(r.url().endsWith('/api/chat'))chats.push(r.postDataJSON());if(r.url().endsWith('/api/reports/pdf'))reports.push(r.postDataJSON());});
+ const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
+ try{
+  await page.goto('http://127.0.0.1:8001');await ready();
+  await page.locator('#load-demo').click();await ready();await page.locator('#enter-identification').click();
+  await page.locator('#fit-method').selectOption('weighted_integral');
+  await page.locator('#identify').click();await page.waitForFunction(()=>state.result&&!state.job);await ready();
+  const diagnostics=await page.evaluate(()=>state.result.measurement_diagnostics);
+  assert.equal(diagnostics.version,'noise-residual-v1');
+  assert.equal(await page.locator('#measurement-evidence').getAttribute('open'),null);
+  await page.locator('#measurement-evidence summary').click();
+  assert.match(await page.locator('#measurement-evidence-list').innerText(),/残差均值/);
+  await page.locator('#ask-error').click();await page.locator('#analyze-here').click();
+  await page.waitForFunction(()=>!state.chatBusy&&activeConversation.messages.length>=2);await ready();
+  assert(chats.at(-1).experiments[0].comparison_context);
+  assert.equal(chats.at(-1).result_id,await page.evaluate(()=>state.resultId));
+  assert.match(await page.locator('.message.assistant').last().innerText(),/噪声|残差/);
+  const spread=page.locator('.message.assistant .repeatability-evidence').last();
+  await spread.locator('summary').click();
+  assert.match(await spread.innerText(),/至少需要两份不同 CSV/);
+  await page.locator('#language-toggle').click();
+  assert(!/[\u3400-\u9fff]/.test(await page.locator('#measurement-evidence').innerText()));
+  assert(!/[\u3400-\u9fff]/.test(await spread.innerText()));
+  const jsonWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.json'));
+  const pdfWait=page.waitForEvent('download',d=>d.suggestedFilename().endsWith('.pdf'));
+  await page.locator('#download-report').click();
+  const [json,pdf]=await Promise.all([jsonWait,pdfWait]);
+  await json.saveAs('runtime/noise-report-en.json');await pdf.saveAs('runtime/noise-report-en.pdf');
+  assert.deepEqual(JSON.parse(fs.readFileSync('runtime/noise-report-en.json')).result.measurement_diagnostics,diagnostics);
+  assert(reports.at(-1).notes.some(n=>n.includes('Residual mean')));
+  assert(reports.at(-1).notes.some(n=>n.includes('5% application threshold')));
+  await page.screenshot({path:'runtime/noise-diagnostics-en.png',fullPage:true});
+  await page.evaluate(()=>{delete state.result.measurement_diagnostics;displayAssessment();});
+  assert.match(await page.locator('#measurement-evidence-list').innerText(),/historical result/);
+  assert.deepEqual(errors,[]);
+  console.log('PASS: real-fit diagnostics, current-result context, same-file insufficiency, live bilingual copy, PDF+JSON, legacy fallback');
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

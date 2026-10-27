@@ -12,10 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
 from .knowledge import formula_question
+from .configuration import configuration_requested
 
-Task = Literal["guidance", "knowledge", "waveform", "identification", "diagnosis", "hardware", "general"]
+Task = Literal["guidance", "knowledge", "waveform", "identification", "configuration", "diagnosis", "hardware", "general"]
 READ = ("get_waveform_summary", "get_identification_result", "get_experiment_history", "search_knowledge")
 TASKS = {
+    "configuration": {"label": "辨识配置", "tools": (),
+                      "prompt": "用户要求打开面板或修改辨识设置，走结构化配置流程；不能按旧配置启动。"},
     "guidance": {"label": "使用指导", "tools": ("search_knowledge",),
                  "prompt": "你负责使用指导。给出 CSV 导出、列映射、连接或辨识入口的具体步骤。"},
     "knowledge": {"label": "公式知识", "tools": ("search_knowledge",),
@@ -43,6 +46,7 @@ CLASSIFIER_SYSTEM = """你是 Buck Lab 的任务分类 Agent，参考 PE-GPT 的
 你只分类，不回答专业问题、不执行计算、不修改参数。调用 route_task 恰好一次。
 类别：guidance=界面/CSV/部署使用指导；knowledge=电路原理、公式推导；waveform=已有波形观测；
 identification=用户明确要求执行 L/C/R 辨识；diagnosis=辨识结果、误差原因、修改计划、多次实验对比；
+configuration=用户要求打开辨识面板或选择/修改方法、LC/LCR、负载R等设置，包括设置后开始的组合指令。此类优先于 identification，即使面板未打开。
 hardware=器件应力、损耗、选型、寿命；general=其他问答或尚未支持的自动仿真/设计任务。
 选一个主任务，最多两个次任务。若明确要求执行辨识并解释公式，主任务为 identification，次任务为 knowledge。
 只询问“如何辨识”“辨识原理”或明确不要执行时不能选择 identification。
@@ -96,13 +100,15 @@ def identification_intent(message):
 
 def rule_selection(message):
     text = message.lower()
+    if configuration_requested(text):
+        return TaskSelection(task="configuration")
     if identification_intent(text) == "execute":
         return TaskSelection(task="identification", secondary_tasks=["knowledge"] if formula_question(text) else [])
     if re.search(r"寿命|老化|器件|硬件|mosfet|igbt|esr|损耗|温升|选型|\b(?:life|lifetime|aging|thermal|hardware)\b", text):
         return TaskSelection(task="hardware", secondary_tasks=["knowledge"] if formula_question(text) else [])
     if formula_question(text) or re.search(r"原理|\bprinciple|how.*identif|辨识方法|如何辨识|怎么辨识", text):
         return TaskSelection(task="knowledge")
-    if re.search(r"对比|比较|横向|纵向|误差|修改|计划|结果|偏差|(?:辨识|识别|拟合).*完成|\b(?:compare|comparison|error|errors|result|results|diagnos|plan|rmse)", text):
+    if re.search(r"对比|比较|横向|纵向|误差|修改|计划|结果|偏差|噪声|残差|不确定性|一致性|重复采集|(?:辨识|识别|拟合).*完成|\b(?:compare|comparison|error|errors|result|results|diagnos|plan|rmse|noise|residual|uncertainty|repeatability)", text):
         return TaskSelection(task="diagnosis")
     if re.search(r"上传|导入|列映射|连接|界面|按钮|入口|使用|怎么用|\b(?:upload|import|mapping|connect|setup)\b", text):
         return TaskSelection(task="guidance")
@@ -121,7 +127,7 @@ def result_followup_history(request):
         return None
     if re.search(r"检索|搜索|找出|对比|比较|横向|纵向|\b(?:search|find|compare|comparison|versus)\b", text, re.I):
         return None
-    if rule_selection(text).task in {"guidance", "knowledge", "hardware", "waveform"}:
+    if rule_selection(text).task in {"guidance", "knowledge", "hardware", "waveform", "configuration"}:
         return None
     if not re.match(r"^(?:请|那|那么|please\s+)?(?:为什么|为何|还有.*(?:可能|原因|解释)|复查|再检查|重新检查|重新分析|详细解释|展开|继续解释|why\b|any other\b|what else\b|recheck\b|double.check\b|explain (?:more|further)\b)", text, re.I):
         return None
@@ -145,7 +151,9 @@ def result_followup_history(request):
 
 def make_route(selection, message, mode, notice=None):
     intent = identification_intent(message)
-    if intent == "execute":
+    if configuration_requested(message):
+        selection = TaskSelection(task="configuration")
+    elif intent == "execute" and selection.task != "configuration":
         extra = [selection.task, *selection.secondary_tasks]
         selection = TaskSelection(task="identification", secondary_tasks=list(dict.fromkeys(
             t for t in extra if t != "identification"))[:2])

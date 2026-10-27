@@ -360,3 +360,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .markdown-copy { flex-shrink: 0; margin-left: auto; border: 1px solid #cbdcd8; border-radius: 5px; background: white; color: #107e71; padding: 3px 9px; font-size: 11px; }
 .markdown-body pre { max-width: 100%; margin: 0; padding: 12px; overflow-x: auto; white-space: pre; overflow-wrap: normal; line-height: 1.65; }
 .markdown-body pre code { font-size: 12px; white-space: pre; overflow-wrap: normal; }
+.diagnostic-reference-confirm { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; }
+.diagnostic-reference-confirm input { flex: 0 0 16px; width: 16px; height: 16px; margin: 3px 0 0; padding: 0; }
+.diagnostic-reference-confirm span { min-width: 0; }
+#pwm-quality-json { max-height: 240px; overflow: auto; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }

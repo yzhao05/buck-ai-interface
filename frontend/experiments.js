@@ -27,7 +27,9 @@ function chatExperiments() {
     method:run.result.method || run.result.options?.method || null,
     pwm_source:run.result.options?.pwm_source || null,
     parameters:{L_H:run.result.parameters.L_H,C_F:run.result.parameters.C_F,R_ohm:run.result.parameters.R_ohm},
-    ground_truth:run.ground_truth || null
+    ground_truth:run.ground_truth || null,
+    comparison_context:run.result.options && run.result.mapping && Number.isFinite(run.result.train_start_s) && Number.isFinite(run.result.validation_end_s)
+      ? {options:run.result.options,mapping:run.result.mapping,start_s:run.result.train_start_s,end_s:run.result.validation_end_s} : null
   }));
 }
 function comparingExperiments(text) {return /对比|比较|横向|纵向|\b(?:compare|comparison|versus)\b/i.test(text);}

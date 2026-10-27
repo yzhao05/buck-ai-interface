@@ -13,6 +13,8 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Uplo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+from .diagnostic_controls import compatible, run_controls
 
 from . import chat
 from .data import MAX_BYTES, analyze, read_csv, suggest_mapping
@@ -36,6 +38,7 @@ datasets = OrderedDict()
 jobs = OrderedDict()
 rate = defaultdict(deque)
 pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="buck-fit")
+diagnostic_slot = threading.Lock()
 TTL = 3600
 
 
@@ -98,20 +101,21 @@ def get_dataset(identifier, owner):
         return item["data"]
 
 
-def add_dataset(raw, name, owner):
+def add_dataset(raw, name, owner, *, reference=False):
     try:
         data = read_csv(raw, name)
     except (ValueError, UnicodeError) as exc:
         raise HTTPException(422, str(exc))
     identifier = uuid.uuid4().hex
     with lock:
-        if sum(item["owner"] == owner for item in datasets.values()) >= 2:
-            previous = next(k for k, v in datasets.items() if v["owner"] == owner)
-            del datasets[previous]
+        candidates = [k for k,v in datasets.items() if v['owner']==owner and bool(v.get('reference'))==reference]
+        previous = candidates[0] if len(candidates) >= (1 if reference else 2) else None
         size = int(data.frame.memory_usage(deep=True).sum()) + len(raw)
-        if sum(v["size"] for v in datasets.values()) + size > 96 * 1024 * 1024 or len(datasets) >= 12:
+        if sum(v["size"] for k,v in datasets.items() if k != previous) + size > 96 * 1024 * 1024 or len(datasets)-bool(previous) >= 12:
             raise HTTPException(503, "服务器数据容量已满，请删除不用的数据或稍后重试。")
-        datasets[identifier] = {"owner": owner, "data": data, "raw": raw, "created": time.time(), "size": size}
+        if previous:
+            del datasets[previous]
+        datasets[identifier] = {"owner": owner, "data": data, "raw": raw, "created": time.time(), "size": size, "reference": reference}
     return {"dataset_id": identifier, "filename": data.name, "columns": list(data.frame.columns),
             "rows": len(data.frame), "sha256": data.sha256, "suggested_mapping": suggest_mapping(data)}
 
@@ -130,7 +134,7 @@ def health():
 
 
 @app.post("/api/datasets")
-async def upload(file: UploadFile = File(...), owner: str = Depends(session)):
+async def upload(file: UploadFile = File(...), owner: str = Depends(session), reference: bool = False):
     throttle(owner, "upload", 8)
     try:
         if not (file.filename or "").lower().endswith(".csv"):
@@ -138,7 +142,7 @@ async def upload(file: UploadFile = File(...), owner: str = Depends(session)):
         raw = await file.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
             raise HTTPException(413, "CSV 超过 32 MB。")
-        return add_dataset(raw, Path(file.filename).name, owner)
+        return add_dataset(raw, Path(file.filename).name, owner, reference=reference)
     finally:
         await file.close()
 
@@ -237,7 +241,8 @@ def start_fit(body: FitRequest, owner):
             if not isinstance(exc, ValueError):
                 import logging
                 logging.exception("Identification failure")
-            finish(status="failed", error=error)
+            from .pwm_reconstruction import PWMQualityError
+            finish(status="failed", error=error, **({'pwm_reconstruction':exc.diagnostics} if isinstance(exc,PWMQualityError) else {}))
     try:
         pool.submit(execute)
     except RuntimeError:
@@ -271,7 +276,8 @@ def get_job(identifier: str, owner: str = Depends(session)):
         if not job or job["owner"] != owner:
             raise HTTPException(404, "任务不存在或已过期。")
         return {"job_id": identifier, "status": job["status"], "stage": job.get("stage"),
-                "result": job["result"], "error": job["error"]}
+                "result": job["result"], "error": job["error"],
+                "pwm_reconstruction": job.get("pwm_reconstruction")}
 
 
 @app.get("/api/experiments")
@@ -301,8 +307,51 @@ def completed_experiments(owner: str = Depends(session)):
 @app.post("/api/chat")
 async def chat_route(body: ChatRequest, owner: str = Depends(session)):
     throttle(owner, "chat", 10)
+    control_cache = None
     async def invoke(name):
+        nonlocal control_cache
         try:
+            if name == 'run_diagnostic_controls':
+                if control_cache is not None:
+                    return control_cache
+                if not body.enable_diagnostic_controls or body.images:
+                    return {'status':'unavailable','error':'本次未启用数值诊断对照。'}
+                current = await invoke('get_identification_result')
+                if not current or current.get('error'):
+                    return {'status':'unavailable','error':'当前结果无效，未运行对照。'}
+                source, source_id = current, body.result_id
+                with lock:
+                    if current.get('method') != 'pann':
+                        match = next(((key,job) for key,job in reversed(list(jobs.items())) if job['owner']==owner
+                            and job['status']=='complete' and compatible(current,job['result'])),None)
+                        if not match:
+                            return {'status':'unavailable','error':'没有同 CSV、区间和模型配置的已完成 PANN 结果。请先完成 PANN 辨识；本次未重新训练。'}
+                        source_id, source_job = match
+                        source = source_job['result']
+                    stored = next((item for item in datasets.values() if item['owner']==owner and
+                                   item['data'].sha256==source.get('file_sha256')),None)
+                    if not stored:
+                        return {'status':'unavailable','error':'原始 CSV 不在当前后端缓存中；请恢复或重新上传原文件后再分析。'}
+                    data = stored['data']
+                    if any(j['status'] in ('queued','running') for j in jobs.values()):
+                        return {'status':'unavailable','error':'后端有辨识任务正在运行，请完成后再运行诊断对照。'}
+                reference_data, reference_error = None, None
+                if body.diagnostic_reference:
+                    try:
+                        reference_data = get_dataset(body.diagnostic_reference.dataset_id,owner)
+                    except HTTPException:
+                        reference_error = '已选参考 CSV 不可用或已过期，请重新上传并确认。'
+                if not diagnostic_slot.acquire(blocking=False):
+                    return {'status':'unavailable','error':'另一个诊断对照正在运行，请稍后重试。'}
+                try:
+                    throttle(owner,'diagnostic-controls',6)
+                    control_cache = await run_in_threadpool(run_controls,data,source,result_id=body.result_id,
+                        source_id=source_id,reference=reference_data)
+                    if reference_error:
+                        control_cache['reference']={'status':'rejected','reason':reference_error}
+                finally:
+                    diagnostic_slot.release()
+                return control_cache
             if name == "get_waveform_summary":
                 if not body.dataset_id or not body.mapping:
                     return None
@@ -327,6 +376,10 @@ async def chat_route(body: ChatRequest, owner: str = Depends(session)):
                     return {"error": "请先上传并确认 CSV 列映射。"}
                 throttle(owner, "fit", 6)
                 return start_fit(FitRequest(dataset_id=body.dataset_id, mapping=body.mapping, options=body.options), owner)
+        except (KeyError, TypeError, IndexError) as exc:
+            if name == 'run_diagnostic_controls':
+                return {'status':'unavailable','error':'历史诊断字段不完整，未完成对照。请重新辨识后再分析。'}
+            raise
         except (HTTPException, ValueError) as exc:
             if name == "start_identification" and isinstance(exc, HTTPException) and exc.status_code == 409:
                 existing = active_job(owner)["job"]

@@ -65,3 +65,10 @@ $env:PANN_PYTHON = 'D:\开学作业\ST4001\PANN-main\.venv\Scripts\python.exe'
 ```
 
 去掉 `--indices` 会运行全部七组；去掉 `--states joint` 会进行固定/联合状态的成对测试；`--seed-only` 只检查初始化。前端可选 LCR，但此处固定 R 的噪声对照不能充当 LCR 含噪验证。
+
+## 离线 PWM 去噪与质量检查
+
+- [pwm_reconstruction_case16.json](pwm_reconstruction_case16.json)：Case16A/B，干净、1%/3% 噪声种子 12–14，11 种滤波设置，共 154 组。已按 `pwm-plausibility-v2` 重测，包括首尾残缺周期的额外边沿筛查。保留全部拒绝结果、实际 PWM 的事后比较和积分初始化误差；并非 154 次 PANN 训练。
+- [pwm_pann_smoke.json](pwm_pann_smoke.json)：SG 6 周期、两个 3% 噪声 seed12 样本、200 轮 PANN 衔接检查。保留当次 v1 判据及源码哈希，不追改为 v2。v2 只增加首尾残缺周期筛查，不修改滤波、PWM 或训练计算；这两个完整训练区间也已包含在上述 v2 重建重测中。
+
+复跑脚本为 `tests/benchmark_pwm_reconstruction.py` 和 `tests/benchmark_pwm_pann.py`。需要另备本地 PLECS 的 `case16a/training_inputs.npz`、`case16b/training_inputs.npz` 档案，原始档案未随仓库发布；可用第一个脚本的 `--archives` 指定目录、`--output` 保存新的比较结果。它们是开发评测脚本，网页运行和常规 pytest 不依赖这些外部档案。
