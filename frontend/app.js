@@ -56,7 +56,7 @@ function setComposerCollapsed(collapsed) {
   const button = $("toggle-chat-compose");
   button.setAttribute("aria-expanded", String(!collapsed));
   for (const attribute of ["aria-label", "title"]) window.BuckI18n.attr(button, attribute, collapsed ? "展开输入框" : "收起输入框");
-  button.textContent = collapsed ? "⌄" : "⌃";
+  button.textContent = collapsed ? "▶" : "▼";
   $("chat-input").rows = collapsed ? 1 : 3;
   $("chat-input").wrap = collapsed ? "off" : "soft";
   try { localStorage.setItem("buck-compose-collapsed", String(collapsed)); } catch { /* Keep the current view without storage. */ }
@@ -147,10 +147,11 @@ function controls() {
   $("diagnostic-reference-confirm").disabled=waiting || !selectedDiagnosticReference();
   $("pwm-denoise").disabled=waiting;$("pwm-filter-cycles").disabled=waiting || $("pwm-denoise").value==='none';
   for(const id of ["attach-chat-image","chat-use-circuit","attach-circuit-image","chat-image-file","reuse-chat-image"]) $(id).disabled=waiting;
-  $("toggle-result-library").disabled=waiting || !activeConversation;
-  if(waiting)closeResultLibrary();
-  $("ask-error").disabled = waiting || !state.result;
-  if (waiting || !state.result) closeAnalysisMenu();
+  $("toggle-result-library").disabled=!activeConversation || (waiting && $("result-library-menu").hidden);
+  document.querySelectorAll(".result-library-item").forEach(button=>button.disabled=waiting);
+  $("ask-error").disabled = !state.result || (waiting && $("analysis-menu").hidden);
+  for(const id of ["analyze-here","analyze-new"]) $(id).disabled=waiting || !state.result;
+  if (!state.result) closeAnalysisMenu();
   renderAnalysisHistory();
   for (const id of ["truth-l","truth-c","calculate-parameter-error"]) $(id).disabled=waiting || !state.result;
   window.BuckCircuit.setBusy(waiting); window.BuckCircuit.render();
@@ -159,7 +160,7 @@ function controls() {
   $("sync-now").disabled = waiting || !state.connected || archiveRunning;
   $("apply-mapping").disabled = !state.dataset || waiting;
   $("load-demo").disabled = waiting;
-  $("toggle-csv-library").disabled = waiting || !activeConversation;
+  $("toggle-csv-library").disabled = !activeConversation || (waiting && $("csv-library-menu").hidden);
   document.querySelectorAll(".csv-library-item").forEach(button=>button.disabled=waiting);
   $("empty-demo").disabled = waiting;
   $("csv-file").disabled = waiting;
@@ -712,14 +713,6 @@ function decorateResponse(article, response) {
       const heading=document.createElement('summary');heading.textContent='仿真重新辨识与误差比较';box.append(heading);
       const pre=document.createElement('pre');pre.textContent=JSON.stringify(response.simulation_evaluations,null,2);box.append(pre);article.append(box);
     }
-    if(response.agent_budget){
-      const note=document.createElement('div');note.className='message-tools';
-      note.append(window.BuckI18n.node(response.agent_budget.thinking?'思考模式':'快速模式'),
-        document.createTextNode(` · ${response.agent_budget.model_calls} `),window.BuckI18n.node('次模型请求'),
-        document.createTextNode(' · '),window.BuckI18n.node('本轮本地费用估算（含预留，非账单）'),
-        document.createTextNode(` USD $${response.agent_budget.reserved_cost_usd} / $${response.agent_budget.cost_limit_usd}`));
-      article.append(note);
-    }
     if(response.plecs_experiments?.length){
       const box=document.createElement('details');box.className='message-tools';
       const title=document.createElement('summary');title.textContent='PLECS 对比实验记录';box.append(title);
@@ -768,15 +761,6 @@ function decorateResponse(article, response) {
     if (response.tool_calls?.length) {
       const log = document.createElement("div"); log.className = "message-tools";
       ui(log, response.tool_calls.map(t => `${tools[t.name] || t.name} · ${t.status}${t.query ? ` · ${t.query} (${t.count})` : ""}`).join("\n")); article.append(log);
-    }
-    if (response.sources?.length) {
-      const sources = document.createElement("div"); sources.className = "message-sources";
-      response.sources.forEach(source => {
-        const valid = source.url && /^https:\/\//.test(source.url);
-        const link = document.createElement(valid ? "a" : "span"); link.textContent = source.title;
-        if (valid) { link.href = source.url; link.target = "_blank"; link.rel = "noopener noreferrer"; }
-        sources.append(link);
-      }); article.append(sources);
     }
 }
 function configurationFingerprint() {
@@ -1154,7 +1138,7 @@ $("csv-file").onchange = event => { if(event.target.files[0]) void importData(ev
 $("close-notice").onclick = () => notice();
 $("load-demo").onclick = $("empty-demo").onclick = () => void importData();
 $("toggle-result-library").onclick=toggleResultLibrary;
-document.addEventListener("buck-language-change",()=>{closeResultLibrary();renderResultLibrary();});
+document.addEventListener("buck-language-change",renderResultLibrary);
 $("toggle-csv-library").onclick = () => void toggleCsvLibrary();
 $("dropzone").ondragover = event => {event.preventDefault();$("dropzone").classList.add("dragover");};
 $("dropzone").ondragleave = () => $("dropzone").classList.remove("dragover");
@@ -1205,24 +1189,23 @@ $("chat-input").onkeydown=event=>{
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));
 function closeAnalysisMenu() {
   $("analysis-menu").hidden=true;$("ask-error").setAttribute("aria-expanded","false");
+  $("ask-error").disabled=historyLocked() || !state.result;
 }
 $("ask-error").onclick=()=>{
+  if(!$("analysis-menu").hidden){closeAnalysisMenu();return;}
   if (historyLocked() || !state.result) return;
-  const open=$("analysis-menu").hidden;
-  $("analysis-menu").hidden=!open;$("ask-error").setAttribute("aria-expanded",String(open));
-  if(open)$("analyze-here").focus();
+  $("analysis-menu").hidden=false;$("ask-error").setAttribute("aria-expanded","true");
+  $("analyze-here").focus();
 };
 $("analyze-here").onclick=()=>{closeAnalysisMenu();void sendMessage(tr("请分析当前辨识结果的误差，并给出有依据的修改计划。"),{analysisRequest:true});};
 $("analyze-new").onclick=()=>{closeAnalysisMenu();void analyzeInNewConversation();};
-document.addEventListener("click",event=>{if(!event.target.closest(".analysis-action"))closeAnalysisMenu();});
 document.addEventListener("keydown",event=>{
-  if($("analysis-menu").hidden)return;
+  if($("analysis-menu").hidden || !event.target.closest(".analysis-action"))return;
   if(event.key==="Escape"){event.preventDefault();closeAnalysisMenu();$("ask-error").focus();}
   if(["ArrowDown","ArrowUp"].includes(event.key)){
     event.preventDefault();(document.activeElement===$("analyze-here")?$("analyze-new"):$("analyze-here")).focus();
   }
 });
-document.addEventListener("buck-language-change",closeAnalysisMenu);
 $("compare-analyses").onclick=()=>{
   const input=$("chat-input");
   if (!input.value.trim()) {

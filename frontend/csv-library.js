@@ -5,6 +5,7 @@ function closeCsvLibrary() {
   csvLibraryGeneration++;
   $("csv-library-menu").hidden = true;
   $("toggle-csv-library").setAttribute("aria-expanded", "false");
+  $("toggle-csv-library").disabled=historyLocked() || !activeConversation;
 }
 async function historicalCsvEntries() {
     const prefix=conversationPrefix;
@@ -95,6 +96,9 @@ async function historicalCsvFile(entry) {
   if (!blob) throw new Error("暂时无法从浏览器或后端恢复 CSV。请检查连接并重试同步；若两端均无有效副本，请重新上传原文件。");
   return new File([blob],entry.filename,{type:"text/csv"});
 }
-document.addEventListener("click",event=>{if(!event.target.closest(".csv-library"))closeCsvLibrary();});
-document.addEventListener("keydown",event=>{if(event.key==="Escape" && !$("csv-library-menu").hidden){closeCsvLibrary();$("toggle-csv-library").focus();}});
-document.addEventListener("buck-language-change",closeCsvLibrary);
+// This is an inline disclosure, not a dismiss-on-outside-click popup.
+document.addEventListener("keydown",event=>{
+  if(event.key==="Escape" && !$("csv-library-menu").hidden && event.target.closest(".csv-library")){
+    event.preventDefault();closeCsvLibrary();$("toggle-csv-library").focus();
+  }
+});

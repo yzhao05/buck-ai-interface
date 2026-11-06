@@ -84,6 +84,7 @@ function experimentReportName(run) {
 }
 function closeResultLibrary() {
   $("result-library-menu").hidden=true;$("toggle-result-library").setAttribute("aria-expanded","false");
+  $("toggle-result-library").disabled=historyLocked() || !activeConversation;
 }
 function renderResultLibrary() {
   const runs=mergeExperiments(activeConversation?.experiments,conversationCache.get(activeConversation?.id)?.experiments).sort((a,b)=>b.created-a.created || b.id.localeCompare(a.id));
@@ -129,14 +130,13 @@ async function selectExperiment(id,{fetchFull=true,persist=true,fromChat=false}=
   finally{state.busy=false;if(persist)persistConversation();controls();}
 }
 function toggleResultLibrary(){
-  if(historyLocked())return;
   if(!$("result-library-menu").hidden){closeResultLibrary();return;}
+  if(historyLocked())return;
   renderHistory();renderResultLibrary();$("result-library-menu").hidden=false;$("toggle-result-library").setAttribute("aria-expanded","true");
   $("result-library-list").querySelector("button")?.focus();
 }
-document.addEventListener("click",event=>{if(!event.target.closest("#result-library-menu,#toggle-result-library"))closeResultLibrary();});
 document.addEventListener("keydown",event=>{
-  if($("result-library-menu").hidden)return;
+  if($("result-library-menu").hidden || !event.target.closest("#result-library-menu,#toggle-result-library"))return;
   if(event.key==="Escape"){event.preventDefault();closeResultLibrary();$("toggle-result-library").focus();}
   if(["ArrowDown","ArrowUp"].includes(event.key)){
     const buttons=[...$("result-library-list").querySelectorAll("button:not(:disabled)")];if(!buttons.length)return;

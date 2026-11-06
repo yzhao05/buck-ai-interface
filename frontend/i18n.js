@@ -2,8 +2,6 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
-    "次模型请求": "model requests",
-    "本轮本地费用估算（含预留，非账单）": "Local estimate for this answer (including reservations, not a bill)",
     "收起输入框": "Collapse input box",
     "展开输入框": "Expand input box",
     "展开查看已添加图片": "Expand to view attached images",
@@ -178,7 +176,6 @@ window.BuckI18n = (() => {
     "添加图片": "Add images",
     "添加电路图": "Add circuit diagram",
     "交给助手分析": "Analyze with AI",
-    "支持选择、粘贴或拖入图片；每次最多 3 张，单张最大 8 MB。图片会压缩，GIF 仅发送首帧。": "Choose, paste or drop images: up to 3 per message, 8 MB each. Images are compressed; only the first GIF frame is sent.",
     "查看图片": "View image",
     "移除图片": "Remove image",
     "关闭图片": "Close image",
@@ -522,7 +519,6 @@ window.BuckI18n = (() => {
     "新建会话，保留当前历史":"New conversation, keep current history",
     "收起实验配置":"Collapse experiment settings", "展开实验配置":"Expand experiment settings",
     "收起历史会话":"Collapse chat history", "展开历史会话":"Expand chat history",
-    "对话、实验记录和 CSV 支持浏览器与后端双端保存，打开时自动核对补齐。备份是否完成请查看同步状态；删除会话会同步删除两端副本。":"Conversations, experiment records and CSV files support browser and backend backups, checked and repaired on opening. Check sync status to confirm backup completion. Conversation deletion syncs to both copies.",
     "清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。":"Before clearing browser data, keep your sync recovery code and confirm the backend backup is complete and its storage is persistent. Use the code to restore that copy later.",
     "立即同步":"Sync now", "等待同步":"Waiting to sync", "同步恢复码":"Sync recovery code",
     "正在核对并同步对话、实验记录和 CSV…":"Checking and syncing conversations, experiment records and CSV files…",

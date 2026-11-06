@@ -32,7 +32,7 @@ entry('csv-upload', '导入波形：拖入或选择 PLECS CSV', 'csv-file dropzo
       '点击上传区或拖入 CSV，最大 32 MB。上传到分析后端后读取列、建议映射并检查数据，不会仅因上传就开始参数辨识。需要时间、电感电流、输出电压；实际 PWM 列可选。接着核对信号与单位映射。')
 entry('csv-library', '已有实验示例与历史 CSV', 'load-demo empty-demo toggle-csv-library csv-library-list csv-library-menu',
       '示例 历史CSV 下拉 文件列表 demo historical CSV library',
-      '加载已有实验示例（空波形区的加载实验示例也是同一入口）加载项目示例数据，不生成一次新的实测实验。旁边下拉箭头打开历史 CSV 列表，点击文件加载到当前会话；这不等于切换到文件原来的会话。加载失败时先检查备份状态或重新上传原文件。', 'frontend/csv-library.js')
+      '加载已有实验示例（空波形区的加载实验示例也是同一入口）加载项目示例数据，不生成一次新的实测实验。旁边下拉箭头展开/收起历史 CSV 列表，点击聊天区不会自动收起；列表内按Esc可收起。点击文件后收起列表并加载到当前会话；这不等于切换到文件原来的会话。加载失败时先检查备份状态或重新上传原文件。', 'frontend/csv-library.js')
 entry('csv-clear', '清除当前数据 ×', 'clear-data file-info',
       '清除 数据 删除CSV clear current data',
       '文件名旁 × 清除当前后端数据集和当前会话保存的 CSV 附件，重置当前实验显示；不是删除整个历史会话。正在处理任务时不可操作。需要再次计算时重新加载/上传 CSV。')
@@ -114,16 +114,16 @@ entry('conversation-search', '会话检索 / 填写检索问题 / 查看消息�
       '会话检索面板显示可检索消息，填写检索问题只在空输入框放入带省略号模板，不自动发送；替换主题后发送。Agent可检索本会话记录、分片读取长文并引用原文。回答旁来源箭头展开/收起来源，查看消息定位原消息，片段不代表全文已读。此功能与数值实验记录不同。', 'frontend/analyses.js')
 entry('chat', 'AI 实验助手：输入、发送与快捷提问', 'chat-input send-chat chat-form chat-context chat-mode',
       '提问 发送 快捷 理解我的仿真波形 分析误差 规划下一步 电容寿命 chat send prompt',
-      '输入最多4000字符；发送箭头或Enter提交，Shift+Enter换行。欢迎区三个快捷问题会直接发送相应问题，不只是填入输入框。上下文标签表示关联数据，服务模式标签反映当前服务。解释用途应只读检索；执行辨识、改参数、仿真须依据明确请求。')
+      '输入最多4000字符；发送箭头或Enter提交，Shift+Enter换行。欢迎区三个快捷问题会直接发送相应问题，不只是填入输入框。上下文标签表示关联数据，服务模式标签反映当前服务。工具由Agent按问题与已有证据选择，不强制检索；执行辨识、改参数、仿真须依据明确请求。')
 entry('reasoning', '回答模式：自动 / 快速 / 思考', 'reasoning-mode',
       '自动模式 快速模式 思考模式 reasoning thinking fast auto',
-      '自动当前默认启用thinking；快速关闭thinking；思考启用thinking。都可使用同一工具目录，按预算限制模型调用，快速最多7次、思考最多14次。不是计算方法，也不会切换PANN/积分。模式随会话保存。回答旁费用数字是本轮本地USD估算（含未完成请求的预留），不是DeepSeek账户账单或每日花费，不能与平台显示的人民币金额直接比较。完整响应按usage结算并释放未使用额度；默认采用DeepSeek对应模型高峰价格，缓存输入单独计价。')
+      '自动当前默认启用thinking；快速关闭thinking；思考启用thinking。都可使用同一工具目录，按预算限制模型调用，快速最多7次、思考最多14次。不是计算方法，也不会切换PANN/积分。模式随会话保存。费用元数据保留在会话记录中，不在回答下方展示；它是本轮本地USD估算（含未完成请求的预留），不是DeepSeek账户账单或每日花费，不能与平台显示的人民币金额直接比较。完整响应按usage结算并释放未使用额度；默认采用DeepSeek对应模型高峰价格，缓存输入单独计价。')
 entry('chat-collapse', '聊天输入框：收起 / 展开', 'toggle-chat-compose compact-chat-images',
       '输入框 回复框 收起 缩小 展开 箭头 单行 草稿 collapse expand composer compact',
       '左上角箭头把聊天输入区域收成一行，保留文字输入和发送按钮，再点可展开。只改变显示，不清空草稿、图片或回答模式，不停止Agent。收起时图片工具、回答模式和上下文标签隐藏；若已添加图片，图片数量按钮仍可见，点击展开检查附件。Enter发送；Shift+Enter展开并换行。浏览器记住收起状态。')
 entry('chat-images', '添加图片 / 添加电路图 / 图片预览复用', 'attach-chat-image chat-use-circuit chat-image-file chat-image-list chat-image-dialog close-chat-image reuse-chat-image chat-image-preview',
       '添加图片 添加电路图 粘贴 拖入 移除 附加到当前提问 image attachment preview reuse',
-      '选择、粘贴或拖入PNG/JPEG/GIF/WebP，每次最多3张、单张最大8MB；压缩后发送，GIF只取首帧。添加电路图优先使用已保存参考图，没有上传图时把当前默认图及参数标注转成图片；输入框为空时填入分析提示，仍需发送。待发缩略图的移除按钮只移除本次附件；点击图片可放大，关闭只关闭预览，附加到当前提问复用预览图。历史提到图片不等于本轮重新附带原图。', 'frontend/chat-images.js')
+      '添加图片、添加电路图按钮与回答模式同一行，位于模式选择左侧；窄聊天区仍保留该顺序，服务信息另行显示。选择、粘贴或拖入PNG/JPEG/GIF/WebP，每次最多3张、单张最大8MB；压缩后发送，GIF只取首帧。添加电路图优先使用已保存参考图，没有上传图时把当前默认图及参数标注转成图片；输入框为空时填入分析提示，仍需发送。待发缩略图的移除按钮只移除本次附件；点击图片可放大，关闭只关闭预览，附加到当前提问复用预览图。历史提到图片不等于本轮重新附带原图。', 'frontend/chat-images.js')
 entry('agent-progress', 'Agent 任务进度与恢复面板', 'agent-progress agent-status agent-preview',
       '任务进度 状态 流式 回答 Harness agent progress',
       '显示Agent工具执行状态和逐步到达的回答文本，不显示内部推理。任务完成、失败、中断、停止含义不同；连接断开时后台可能继续运行。折叠面板不停止任务。', 'frontend/agent-harness.js')
@@ -144,7 +144,7 @@ entry('waveform', '波形观测：全段 / 末10周期 / 框选缩放', 'view-fu
       '全段清除缩放；末10周期按当前波形终点和使用的开关频率显示末段。拖动框选放大、双击还原，悬停显示读数。青色为测量、橙色虚线为预测，横轴ms，电流A、电压V。显示波形会抽样，辨识使用完整所选数据；缩放不修改训练区间或重新计算。')
 entry('result-library', '参数辨识结果卡片与历史结果下拉', 'results-card toggle-result-library result-library-menu result-library-list result-archive-note',
       '历史结果 下拉 已保存结果 snapshot result library',
-      '标题旁下拉列出本会话辨识记录；点击切换右侧查看的结果及其真值对照，不启动新计算，不把该结果配置自动覆盖到左侧。若后端完整结果过期，仍可显示持久摘要；缺少完整波形/诊断时应说明。', 'frontend/experiments.js')
+      '标题旁下拉箭头展开/收起本会话辨识记录，点击其他区域保持展开；列表内按Esc可收起。点击记录后收起列表并切换右侧查看的结果及其真值对照，不启动新计算，不把该结果配置自动覆盖到左侧。若后端完整结果过期，仍可显示持久摘要；缺少完整波形/诊断时应说明。', 'frontend/experiments.js')
 entry('result-parameters', '预测电感、电容与负载电阻', 'result-l result-c result-r r-label result-badge result-notes',
       '预测电感 预测电容 负载 结果 标签 L C R parameters result badge',
       'L显示μH，C显示μF，R显示Ω。LC模式R是已知固定输入，不是预测；LCR才估计R。结果标签是应用规则判断，不是参数准确性的证明。需要真值对照、拟合/稳定性细项分别判断，不能仅凭绿色标签下结论。')
@@ -165,7 +165,7 @@ entry('reference', '诊断对照与可选参考：干净 CSV', 'choose-diagnosti
       '可选上传干净参考CSV，与原数据须同列名、单位、时间网格；确认框声明同实验同工况、只去掉测量噪声，未确认不能用于参考对照。只用于评价，不参与训练，不替换主CSV。参考仅在当前后端缓存，刷新/过期需重选。助手分析可尝试四组参数/初值交换，需匹配PANN结果与原CSV，不重新训练。')
 entry('analyze', '让助手分析结果：本对话 / 新对话', 'ask-error analysis-menu analyze-here analyze-new',
       '让助手分析结果 在本对话中分析 新对话分析 analyze result',
-      '让助手分析结果先打开菜单；在本对话中分析发送当前选中结果的分析请求；新对话分析先保存原会话并携带该结果建立新会话再分析。分析范围以右侧选中结果为准，不因左栏配置变化冒充新计算。需要完成结果且当前无冲突任务。')
+      '让助手分析结果按钮展开/收起菜单，点击聊天区保持展开，菜单内按Esc可收起；在本对话中分析发送当前选中结果的分析请求；新对话分析先保存原会话并携带该结果建立新会话再分析。分析范围以右侧选中结果为准，不因左栏配置变化冒充新计算。需要完成结果且当前无冲突任务。')
 entry('reports', '导出报告文件夹 / 分别下载 PDF 和 JSON', 'download-report report-downloads download-report-files report-pdf-link report-json-link report-location-dialog close-report-location confirm-report-files',
       '导出 报告 保存位置 下载 PDF JSON 文件夹 export report folder download',
       '导出当前选中辨识结果。浏览器支持目录选择时，选保存位置后生成同名文件夹、PDF与JSON。否则报告保存位置窗口说明限制，可确认分别下载同名两文件，不生成ZIP；具体下载位置由浏览器决定，可在浏览器设置开启下载前询问。关闭窗口取消此选择，不删除已有文件。PDF用于阅读，JSON保留结构化结果；不自动产生新的辨识。', 'frontend/report-files.js')
@@ -189,7 +189,7 @@ entry('sync-code', '同步恢复码与复制', 'sync-code copy-sync-code',
       '自动生成并保存的64位十六进制码，用于访问对应后端备份；复制按钮只复制到剪贴板。换浏览器或清空本地后，在同一后端填入原码并保存连接才能找回仍存在的后端副本。保管好且不要分享；不是DeepSeek密钥或连接器配对码。备份没有完成或服务器数据丢失时恢复码不能凭空还原数据。')
 entry('message-evidence', '回答下方工具、来源与证据面板', '',
       '误差假设与证据 仿真重新辨识与误差比较 PLECS对比实验记录 诊断对照执行记录 多次实验一致性依据 来源 工具记录',
-      '回答下方按实际返回内容展示工具执行记录、引用来源、误差假设、仿真对比、诊断对照和多次实验一致性依据；展开查看证据。工具已执行不代表假设已证实，历史摘要不代表新计算，缺证据应明确。来源为可访问网页时可点击，本地知识说明可能只是文本来源标签。')
+      '回答下方按实际返回内容展示工具执行记录、误差假设、仿真对比、诊断对照和多次实验一致性依据；展开查看证据。工具已执行不代表假设已证实，历史摘要不代表新计算，缺证据应明确。知识来源标签和费用栏不在回答下方展示，来源与预算元数据仍保存；正文引用和会话检索的原文查看入口保留。')
 entry('project-links', 'Buck Lab 标志、实验工作台与项目来源链接', 'source-link',
       '标志 首页 导航 项目来源 Inspired by PE-GPT source link',
       'Buck Lab标志链接当前站点首页，实验工作台是当前导航标签；页脚Inspired by PE-GPT和项目来源链接打开参考项目仓库，不执行分析或保存报告。')

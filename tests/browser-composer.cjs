@@ -58,6 +58,23 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   const bounds=await form.boundingBox();
   assert(bounds.height<60&&bounds.x>=0&&bounds.x+bounds.width<=390);
   assert(await page.locator('#send-chat').isVisible());
+  await toggle.click();
+  await page.evaluate(()=>setIdentificationOpen(true));
+  for(const language of ['en','zh']){
+   if(await page.locator('html').getAttribute('lang')!==language)await page.locator('#language-toggle').click();
+   for(const width of [1440,1191,768,390,320]){
+    await page.setViewportSize({width,height:1000});
+    await page.locator('#reasoning-mode').selectOption('thinking');
+    const row=await page.locator('#attach-chat-image,#chat-use-circuit,#reasoning-mode').evaluateAll(elements=>elements.map(el=>{const r=el.getBoundingClientRect();return {x:r.x,right:r.right,cy:r.y+r.height/2};}));
+    assert(row[0].right<=row[1].x && row[1].right<=row[2].x,'Image buttons stay left of the mode selector');
+    assert(Math.max(...row.map(r=>r.cy))-Math.min(...row.map(r=>r.cy))<2,'Toolbar controls stay on one row');
+    assert(await page.locator('#reasoning-mode').evaluate(el=>{
+     const style=getComputedStyle(el),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');ctx.font=style.font;
+     return el.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)>=ctx.measureText(el.selectedOptions[0].text).width+20;
+    }),'The selected mode needs room for its full label and dropdown arrow');
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+   }
+  }
   assert.deepEqual(errors,[]);
   console.log('PASS: desktop/mobile compact layout, typing/sending, multiline draft, Shift+Enter, reload, attachments and translations');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

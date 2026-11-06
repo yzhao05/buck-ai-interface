@@ -409,7 +409,7 @@ Agent 自主决定是否检索、工具、查询词、top_k（1–8）、排序�
 
 快速模式总计最多 7 次模型请求，思考模式最多 14 次（不再包含独立分类请求）；默认时间预算 300 秒，可通过 `AGENT_TIME_LIMIT_S` 设置，硬上限 900 秒。本轮成本预算默认 0.50 USD，不是每日账单或账户余额。价格采用 2026-11-06 核对的 [DeepSeek 官方高峰美元价格](https://api-docs.deepseek.com/quick_start/pricing/)：Flash 每百万 token 的输入/缓存输入/输出分别为 $0.30/$0.006/$1.20，V4 Pro 为 $1.32/$0.044/$3.96；旧 Flash 别名按 Flash 计。使用高峰价作上限估算，未按法定节假日计算闲时折扣，不换算或冒充平台人民币账单。可用 `AGENT_INPUT_USD_PER_M`、`AGENT_CACHED_INPUT_USD_PER_M`、`AGENT_OUTPUT_USD_PER_M` 覆盖单价；未知模型需明确配置输入与输出价格。
 
-发出请求前按输入字节上界与输出上限预留；收到完整 `message_stop` 和有效用量后，按 Messages API 的 `input_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens` 与 `output_tokens` 结算并释放未使用预留。输出计数包含思考 token，累计值不重复相加；中断或缺失用量时不虚构退款，缓存计数缺失时仍保守估算输入。显示值是按配置价格计算的 token 费用加未结算预留，不是实际扣费凭证。默认单次输出上限为自动/思考 32768、快速 8192（均包含思考），可通过 `AGENT_MAX_OUTPUT_TOKENS` 设置，仍受本轮费用预算约束。`max-tokens`、不完整流和引用校验失败分别报告，不再统一提示检查 Key。API 格式兼容 OpenAI/Anthropic 不代表按其模型价格计费，本项目默认上游为 DeepSeek Messages API。
+发出请求前按输入字节上界与输出上限预留；收到完整 `message_stop` 和有效用量后，按 Messages API 的 `input_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens` 与 `output_tokens` 结算并释放未使用预留。输出计数包含思考 token，累计值不重复相加；中断或缺失用量时不虚构退款，缓存计数缺失时仍保守估算输入。`agent_budget` 保存按配置价格计算的 token 费用加未结算预留，不是实际扣费凭证；前端回答下方不展示费用栏和知识来源标签，来源与预算记录仍保存，正文引用保持原样。默认单次输出上限为自动/思考 32768、快速 8192（均包含思考），可通过 `AGENT_MAX_OUTPUT_TOKENS` 设置，仍受本轮费用预算约束。`max-tokens`、不完整流和引用校验失败分别报告，不再统一提示检查 Key。API 格式兼容 OpenAI/Anthropic 不代表按其模型价格计费，本项目默认上游为 DeepSeek Messages API。
 
 Harness 的请求、重试和压缩均经过预算网关。每组 PLECS 为基线加至多两个单因素值，单次求解 12 秒；不再设每次回答最多两组的固定限制。相同参数干预只返回已保存结果，断线或不确定执行状态不自动重跑。达到预算会保留证据并显示英文错误，不生成备用分析。
 

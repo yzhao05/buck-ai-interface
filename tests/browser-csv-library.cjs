@@ -7,7 +7,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs');
  let fits=0;page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits++;});
  const ready=()=>page.locator('#send-chat:not([disabled])').waitFor({timeout:60000});
  const openMenu=async()=>{await ready();await page.locator('#toggle-csv-library').click();await ready();};
- const closeMenu=async()=>{await page.keyboard.press('Escape');};
+ const closeMenu=async()=>{await page.locator('#toggle-csv-library').focus();await page.keyboard.press('Escape');};
  try{
   await page.goto('http://127.0.0.1:8001');await ready();
   await openMenu();assert((await page.locator('#csv-library-status').textContent()).includes('暂无历史'));await closeMenu();

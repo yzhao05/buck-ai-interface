@@ -52,7 +52,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.setViewportSize({width:390,height:844});await openMenu();
   assert(await page.locator('#analysis-menu').isVisible());assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.screenshot({path:'runtime/analysis-menu-mobile.png'});
-  await page.locator('#result-l').click();assert(await page.locator('#analysis-menu').isHidden());
+  await page.locator('#result-l').click();assert(await page.locator('#analysis-menu').isVisible());
+  await page.locator('#ask-error').click();assert(await page.locator('#analysis-menu').isHidden());
   assert.deepEqual(errors,[]);
   console.log('PASS: menu only on click, current/new analysis, source preservation, cloned ownership/result/truth, no refit, original options, copy failure, reload, bilingual/keyboard/mobile');
  }finally{await browser.close();}

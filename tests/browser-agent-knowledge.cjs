@@ -58,7 +58,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
       assert.equal(stored.budget_reason,failure.budget_reason);
       assert.equal(stored.finish_reason,failure.finish_reason);
       assert.deepEqual(stored.agent_budget,failure.agent_budget);
-      if(failure.agent_budget)assert.match(await page.locator('.message.assistant').last().innerText(),/非账单.*USD/);
+      if(failure.agent_budget)assert.doesNotMatch(await page.locator('.message.assistant').last().innerText(),/本轮本地费用估算|USD \$/);
       assert.equal(typeof stored.agent_task_id,'string');
     }
     await page.locator('#reasoning-mode').selectOption('fast');
@@ -73,6 +73,10 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     await page.waitForFunction(() => state.connected && activeConversation && !historyLocked());
     assert.equal(await page.locator("#reasoning-mode").inputValue(),"fast");
     assert.match(await page.locator('.message.assistant').last().innerText(), /Buck 模型/);
+    assert.equal(await page.locator('.message.assistant > .message-sources').count(),0);
+    assert.deepEqual(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).response.sources),response.sources);
+    assert.match(await page.locator('.message.assistant').last().innerText(),/\[kb:buck-physics\]/);
+    assert.doesNotMatch(await page.locator('body').innerText(),/支持选择、粘贴或拖入图片|对话、实验记录和 CSV 支持浏览器与后端双端保存/);
     const restoredBudget=await page.evaluate(()=>readConversation(activeConversation.id).messages
       .find(m=>m.response?.error_code==='agent_budget_exceeded')?.response);
     assert.equal(restoredBudget.budget_reason,'estimated_cost');
@@ -80,7 +84,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     assert.equal(typeof restoredBudget.agent_task_id,'string');
     assert.equal(await page.evaluate(() => activeConversation.messages.at(-1).mode), 'DeepSeek');
     await page.locator('#language-toggle').click();
-    assert.equal(await page.locator('.message-tools').filter({hasText:'Local estimate for this answer (including reservations, not a bill)'}).count(),1);
+    assert.equal(await page.locator('.message-tools').filter({hasText:'Local estimate for this answer (including reservations, not a bill)'}).count(),0);
     assert.deepEqual(await page.locator('#reasoning-mode option').allTextContents(), ['Auto mode','Fast mode','Thinking mode']);
     assert.deepEqual(errors, []);
     console.log('PASS: HTTP/timeout/budget errors and saved diagnostics, retry, query trace, cited source, no page errors');

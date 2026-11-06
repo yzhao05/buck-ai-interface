@@ -1,7 +1,7 @@
 /* Conversation is primary; imports preview waveforms, identification requires entry. */
-.chat-image-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; }
-.chat-image-tools > span { color: var(--muted); font-size: 10px; line-height: 1.6; flex: 1 1 180px; }
-#chat-image-list, .chat-image-tools { margin-left: 16px; margin-right: 16px; }
+.chat-image-tools { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; }
+.chat-image-tools button { white-space: nowrap; }
+#chat-image-list { margin-left: 16px; margin-right: 16px; }
 .message-images { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
 .chat-image-item { position: relative; }
 .chat-image-thumbnail { width: 120px; max-width: 100%; background: white; padding: 5px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); }
@@ -129,12 +129,21 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .welcome p { font-size: 13px; line-height: 2; max-width: 620px; }
 .suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .suggestions button { font-size: 11px; line-height: 1.8; padding: 15px 12px; align-items: center; }
-.chat-compose { margin: 12px max(28px, calc((100% - 760px) / 2)) 0; border-radius: 13px; }
+.chat-compose { margin: 12px max(28px, calc((100% - 760px) / 2)) 0; border-radius: 13px; container-type: inline-size; }
 .chat-compose textarea { font-size: 14px; padding: 17px 17px 8px; }
-.compose-bottom { display: grid; grid-template-columns: minmax(90px,130px) minmax(0,1fr) minmax(100px,auto) 33px; gap: 12px; padding: 5px 14px 13px; align-items:center; }
-.compose-bottom #reasoning-mode { min-width:0; width:auto; font-size:11px; height:32px; }
+.compose-bottom { display: grid; grid-template-columns: auto minmax(120px,130px) minmax(0,1fr) minmax(0,auto) 33px; gap: 10px; padding: 5px 14px 13px; align-items:center; }
+.compose-bottom #reasoning-mode { min-width:0; width:auto; margin:0; font-size:11px; height:32px; }
 .harness-progress { max-width:760px; width:calc(100% - 56px); align-self:center; }
-@media(max-width:600px){.compose-bottom {grid-template-columns:90px minmax(0,1fr) 33px}.compose-bottom #chat-context {display:none}.harness-progress{width:calc(100% - 32px)}}
+@container(max-width:600px){
+  .compose-bottom { grid-template-columns:minmax(0,1fr) minmax(96px,110px) 33px; gap:6px; padding:5px 8px 10px; }
+  .compose-bottom .chat-image-tools { gap:5px; min-width:0; }
+  .compose-bottom .chat-image-tools button { min-width:0; white-space:normal; font-size:9px; padding:7px 5px; }
+  .compose-bottom #reasoning-mode { padding-left:5px; padding-right:3px; font-size:10px; }
+  .compose-bottom #chat-context { display:none; }
+  .compose-bottom #chat-mode { grid-column:1 / -1; grid-row:2; }
+  .compose-bottom #send-chat { grid-column:3; grid-row:1; }
+}
+@media(max-width:600px){.harness-progress { width:calc(100% - 32px); }}
 .compose-bottom span { font-size: 10px; min-width: 0; max-width: none; }
 .compose-bottom #chat-mode { text-align: right; white-space: normal; overflow-wrap: anywhere; color: #738b90; }
 .send-button { height: 33px; width: 33px; }
@@ -144,7 +153,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .message { margin-bottom: 26px; }
 .message-content { font-size: 13px; line-height: 2; }
 .message-label { font-size: 10px; }
-.message-mode, .message-tools, .message-sources a, .message-sources span { font-size: 9px; }
+.message-mode, .message-tools { font-size: 9px; }
 :is(.identification-open, .waveform-open) .chat-messages { padding: 30px 25px 22px; }
 :is(.identification-open, .waveform-open) .welcome h3 { font-size: 26px; }
 :is(.identification-open, .waveform-open) .suggestions { grid-template-columns: 1fr; }
@@ -370,7 +379,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 
 .chat-compose { position: relative; }
 .chat-compose textarea { padding-left: 48px; }
-.compose-toggle { position: absolute; top: 12px; left: 8px; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; font-size: 22px; color: var(--teal); }
+.compose-toggle { position: absolute; top: 12px; left: 8px; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; font-size: 10px; color: var(--ink); }
 .compose-toggle:hover, .compose-attachments:hover { background: var(--teal-light); }
 .chat-compose .compose-attachments { display: none; }
 .chat-compose.compose-collapsed { display: grid; grid-template-columns: 32px minmax(0,1fr) auto 33px; align-items: center; gap: 8px; padding: 8px; }
