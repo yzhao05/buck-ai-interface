@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import codecs
 import threading
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 from .agent_policy import BudgetExceeded
@@ -51,16 +52,32 @@ class Gateway:
                 credential = self.headers.get('Authorization','') or 'Bearer '+self.headers.get('x-api-key','')
                 if not hmac.compare_digest(credential, 'Bearer '+gateway.secret):
                     return self.reply(401, {'error':'Unauthorized'})
-                length = int(self.headers.get('Content-Length', '0'))
+                if self.path != '/mcp' and self.path.rstrip('/') != '/v1/messages':
+                    return self.reply(404, {'error':'Unknown route'})
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                except ValueError:
+                    return self.reply(400, {'error':'Invalid Content-Length'})
                 if not 0 < length <= 16*1024*1024:
                     return self.reply(413, {'error':'Request too large'})
                 try:
                     body = json.loads(self.rfile.read(length))
-                    if self.path == '/mcp':
-                        return self.mcp(body)
-                    if self.path.rstrip('/') != '/v1/messages':
-                        return self.reply(404, {'error':'Unknown route'})
+                except (ValueError, UnicodeError):
+                    return self.reply(400, {'error':'Invalid JSON'})
+                if not isinstance(body, dict):
+                    return self.reply(400, {'error':'Request must be an object'})
+                if self.path == '/mcp':
+                    if (not isinstance(body.get('method'), str)
+                            or body.get('params') is not None and not isinstance(body['params'], dict)):
+                        return self.reply(400, {'error':'Invalid MCP request'})
+                    return self.mcp(body)
+                response_started = False
+                try:
                     with gateway.lock:
+                        # A failed turn is terminal. SDK transport retries must
+                        # neither spend again nor hide its original failure.
+                        if gateway.error is not None:
+                            raise gateway.error
                         if gateway.budget.calls >= gateway.budget.rounds:
                             raise BudgetExceeded('model step budget reached')
                         body['max_tokens'] = gateway.budget.reserve(body)
@@ -77,6 +94,7 @@ class Gateway:
                             self.send_header('Content-Type', upstream.headers.get('content-type','text/event-stream'))
                             self.send_header('Connection','close')
                             self.end_headers()
+                            response_started = True
                             buffered = ''
                             decoder = codecs.getincrementaldecoder('utf-8')()
                             for raw in upstream.iter_bytes():
@@ -95,9 +113,19 @@ class Gateway:
                                         except (ValueError,IndexError):
                                             pass
                 except Exception as exc:
-                    gateway.error = exc
+                    with gateway.lock:
+                        if gateway.error is None:
+                            gateway.error = exc
+                        failure = gateway.error
+                    status = (failure.response.status_code if isinstance(failure, httpx.HTTPStatusError)
+                              else 429 if isinstance(failure, BudgetExceeded) else 502)
+                    if response_started:
+                        # A second HTTP status line would corrupt the SSE body.
+                        # The adapter reports the stored original error.
+                        self.close_connection = True
+                        return
                     try:
-                        self.reply(429 if isinstance(exc,BudgetExceeded) else 502, {'error':{'message':'Harness gateway request failed','type':'budget_or_transport'}})
+                        self.reply(status, {'error':{'message':'Harness gateway request failed','type':'budget_or_transport'}})
                     except OSError:
                         pass
 
@@ -113,7 +141,9 @@ class Gateway:
                                       'inputSchema':t['function']['parameters']} for t in gateway.tools]}
                 elif method == 'tools/call':
                     name, arguments = params.get('name'), params.get('arguments') or {}
-                    if name not in {t['function']['name'] for t in gateway.tools}:
+                    if gateway.error is not None:
+                        value = {'isError':True,'content':[{'type':'text','text':'Model request failed; no further tools may run in this attempt'}]}
+                    elif not isinstance(name, str) or name not in {t['function']['name'] for t in gateway.tools}:
                         value = {'isError':True,'content':[{'type':'text','text':'Tool not admitted'}]}
                     else:
                         try:
@@ -226,8 +256,18 @@ async def run(messages, tools, invoke, budget):
                 raise ValueError('Harness did not complete the turn')
             return result.final_response
         except asyncio.TimeoutError:
-            raise BudgetExceeded('time budget reached')
+            # SDK/RPC timeouts are not evidence that our whole-answer deadline
+            # expired. Prefer the upstream failure if its retries timed out.
+            if gateway.error is not None:
+                raise gateway.error
+            budget.remaining()  # Raises BudgetExceeded only for an expired deadline.
+            raise
+        except Exception:
+            if gateway.error is not None:
+                raise gateway.error
+            raise
         finally:
+            failure_in_flight = sys.exc_info()[0] is not None
             active.pop(task_id,None)
             with pending_lock:
                 stopping.set()
@@ -235,10 +275,14 @@ async def run(messages, tools, invoke, budget):
                 for future in outstanding:
                     future.cancel()
             try:
-                await asyncio.to_thread(harness.close)
-            finally:
-                # Cleanup also runs if shutdown fails.
-                path.unlink(missing_ok=True)
+                try:
+                    await asyncio.to_thread(harness.close)
+                finally:
+                    path.unlink(missing_ok=True)
+            except Exception:
+                # Cleanup must not replace an upstream failure or cancellation.
+                if not failure_in_flight:
+                    raise
 
 
 def steer(identifier, message):

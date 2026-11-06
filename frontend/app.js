@@ -914,7 +914,8 @@ async function sendMessage(value, {analysisRequest=false}={}) {
         request_message_id:requestMessage.id, tool_calls:response.tool_calls,
         agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,diagnosis:response.diagnosis,simulation_evaluations:response.simulation_evaluations,
         control_checks:response.control_checks, retrieved_sources:response.retrieved_sources,
-        error_code:response.error_code
+        error_code:response.error_code,budget_reason:response.budget_reason,
+        agent_task_id:response.agent_task_id,conversation_retrieval:response.conversation_retrieval
       }, "请求未完成");
       article.dataset.messageId=failedReply.id;
       if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }

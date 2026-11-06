@@ -434,6 +434,8 @@ Windows 会话恢复：`0.2.1rc2` 打包运行时在本机从 D/E 盘工作目�
 
 Harness 使用 **DeepSeek Messages API**。聊天不再单独调用分类/配置 Chat Completions；Harness 默认使用 `DEEPSEEK_BASE_URL` 根地址下的 `/anthropic/v1/messages`。如果使用代理，单独设置 `HARNESS_BASE_URL` 为支持 Messages 的根地址（例如 `https://api.deepseek.com/anthropic`）；只有 Chat Completions 的代理不能直接替代。
 
+若刚发送就报错，先看具体错误类型：HTTP 错误保留上游状态码，Harness/网络通信超时与整轮时间限额分别报告；预算错误返回 `budget_reason`（`time`、`model_calls` 或 `estimated_cost`），并显示已获准并预留预算的模型请求数和耗时。`agent_budget` 包含时间、请求次数和预留成本限额。预留成本是本地保守估算，不代表实际账单或账户余额。一次任务的模型请求失败后，SDK 的后续重试返回同一原始错误，不继续请求上游或重复预留费用，也不再执行新的工具操作；用户重试发起新一轮。工具执行错误仍可返回给 Agent 判断，格式错误的协议请求不会污染模型请求状态。流式输出中断时关闭当前响应，由任务结果报告原始错误；清理异常不覆盖既有失败或取消状态。仅凭旧版笼统的“time, cost or tool-call limit”弹窗无法确定根因，不应直接增大预算。
+
 1. 打开云端网页的连接设置，填写本机 PLECS.exe 和模型文件夹，点击“生成本机连接器配对码”。每份配对绑定当前会话。
 2. 在安装了本项目依赖的 Windows 电脑运行页面给出的命令：
    `.venv\Scripts\python.exe -m backend.plecs_companion --server "https://your-backend" --owner "页面给出的UUID"`

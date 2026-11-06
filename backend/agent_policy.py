@@ -14,12 +14,13 @@ class Budget:
         self.thinking = thinking
         self.rounds = 14 if thinking else 7
         self.started = time.monotonic()
-        self.seconds = min(900, float(os.getenv('AGENT_TIME_LIMIT_S', '300')))
+        self.seconds = float(os.getenv('AGENT_TIME_LIMIT_S', '300'))
         self.limit = float(os.getenv('AGENT_COST_LIMIT_USD', '0.50'))
         self.input_price = float(os.getenv('AGENT_INPUT_USD_PER_M', '1'))
         self.output_price = float(os.getenv('AGENT_OUTPUT_USD_PER_M', '5'))
         if not all(math.isfinite(x) and x > 0 for x in (self.seconds, self.limit, self.input_price, self.output_price)):
             raise ValueError('Agent budget settings must be positive')
+        self.seconds = min(900, self.seconds)
         self.reserved = 0.
         self.calls = 0
 
@@ -46,6 +47,7 @@ class Budget:
 
     def metadata(self):
         return {'thinking': self.thinking, 'model_calls': self.calls,
+                'model_call_limit': self.rounds, 'time_limit_s': self.seconds,
                 'reserved_cost_usd': round(self.reserved, 6), 'cost_limit_usd': self.limit,
                 'elapsed_s': round(time.monotonic()-self.started, 2),
                 'cost_basis': 'conservative reservation at configured token prices'}
