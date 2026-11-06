@@ -8,6 +8,7 @@ import os
 import pytest
 import httpx
 from backend import harness_runtime
+from backend.agent_policy import BudgetExceeded
 
 REAL_CLIENT = httpx.AsyncClient
 REAL_RUN = harness_runtime.run
@@ -27,6 +28,9 @@ def scripted_harness(monkeypatch, tmp_path):
                 response = await client.post('http://scripted-provider/chat/completions',headers={},json=payload)
                 response.raise_for_status()
                 message = response.json()['choices'][0]['message']
+                # Scripted fixtures have no provider usage. Model their completed
+                # output conservatively so reservation settlement is exercised.
+                budget.settle(budget.calls, {'output_tokens':len(json.dumps(message, ensure_ascii=False).encode('utf-8'))})
                 calls = message.get('tool_calls') or []
                 if not calls:
                     return message.get('content') or ''
@@ -37,5 +41,5 @@ def scripted_harness(monkeypatch, tmp_path):
                     except (ValueError,TypeError) as exc:
                         output = {'error':str(exc)}
                     messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(output,ensure_ascii=False)})
-        raise ValueError('Scripted Harness exhausted its budget')
+        raise BudgetExceeded('model step budget reached')
     monkeypatch.setattr(harness_runtime,'run',run)

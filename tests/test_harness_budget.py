@@ -14,7 +14,8 @@ from backend.schemas import ChatRequest
 from conftest import REAL_RUN
 
 
-def test_first_ui_question_with_real_harness(monkeypatch):
+@pytest.mark.parametrize('stop_reason', ['end_turn', 'max_tokens', 'long_answer'])
+def test_first_ui_question_with_real_harness(monkeypatch, stop_reason):
     requests = []
 
     class Provider(BaseHTTPRequestHandler):
@@ -24,6 +25,7 @@ def test_first_ui_question_with_real_harness(monkeypatch):
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             requests.append(payload)
+            final_reason = ('end_turn' if payload['max_tokens'] >= 12000 else 'max_tokens') if stop_reason == 'long_answer' else stop_reason
             called = any(any(b.get('type') == 'tool_result' for b in item['content'])
                          for item in payload['messages'] if isinstance(item['content'], list))
             block = {'type': 'text', 'text': ''} if called else {
@@ -37,8 +39,9 @@ def test_first_ui_question_with_real_harness(monkeypatch):
                 {'type': 'content_block_start', 'index': 0, 'content_block': block},
                 {'type': 'content_block_delta', 'index': 0, 'delta': delta},
                 {'type': 'content_block_stop', 'index': 0},
-                {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn' if called else 'tool_use',
-                    'stop_sequence': None}, 'usage': {'output_tokens': 5}},
+                {'type': 'message_delta', 'delta': {'stop_reason': final_reason if called else 'tool_use',
+                    'stop_sequence': None}, 'usage': {'input_tokens':100, 'cache_read_input_tokens':5000,
+                        'cache_creation_input_tokens':0, 'output_tokens':12000 if called and stop_reason == 'long_answer' else 5}},
                 {'type': 'message_stop'},
             ]
             raw = ''.join('event: ' + f['type'] + '\ndata: ' + json.dumps(f) + '\n\n' for f in frames).encode()
@@ -48,7 +51,7 @@ def test_first_ui_question_with_real_harness(monkeypatch):
             self.end_headers()
             self.wfile.write(raw)
 
-    for name in ('AGENT_TIME_LIMIT_S', 'AGENT_COST_LIMIT_USD', 'AGENT_INPUT_USD_PER_M', 'AGENT_OUTPUT_USD_PER_M'):
+    for name in ('AGENT_TIME_LIMIT_S', 'AGENT_COST_LIMIT_USD', 'AGENT_INPUT_USD_PER_M', 'AGENT_CACHED_INPUT_USD_PER_M', 'AGENT_OUTPUT_USD_PER_M', 'AGENT_MAX_OUTPUT_TOKENS'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'local-mock-only')
     monkeypatch.setattr(harness_runtime, 'run', REAL_RUN)
@@ -66,10 +69,16 @@ def test_first_ui_question_with_real_harness(monkeypatch):
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-    assert result['mode'] == 'deepseek', result
+    if stop_reason == 'max_tokens':
+        assert result['mode'] == 'provider_error', result
+        assert result['error_code'] == 'output_token_limit', result
+        assert result['finish_reason'] == 'max-tokens'
+    else:
+        assert result['mode'] == 'deepseek', result
+        assert any(d['id'] == 'ui-overview' for d in result['sources'])
     assert len(requests) == 2
-    assert any(d['id'] == 'ui-overview' for d in result['sources'])
     assert result['agent_budget']['reserved_cost_usd'] < .5
+    assert result['agent_budget']['unsettled_model_calls'] == 0
     print('First UI question budget:', result['agent_budget'])
 
 
@@ -217,3 +226,43 @@ def test_invalid_time_setting_is_rejected_before_capping(monkeypatch, value):
 def test_valid_time_setting_still_has_hard_cap(monkeypatch):
     monkeypatch.setenv('AGENT_TIME_LIMIT_S', '1200')
     assert Budget(False).seconds == 900
+
+
+@pytest.mark.parametrize('complete', [False, True])
+@pytest.mark.parametrize('data_prefix', ['data: ', 'data:'])
+def test_gateway_settles_cumulative_usage_only_for_complete_stream(monkeypatch, complete, data_prefix):
+    from backend.provider_errors import HarnessTurnError
+    frames = [
+        {'type':'message_start', 'message':{'usage':{'input_tokens':1000,
+            'cache_read_input_tokens':9000, 'cache_creation_input_tokens':0, 'output_tokens':0}}},
+        {'type':'message_delta', 'usage':{'output_tokens':100}, 'delta':{}},
+        {'type':'message_delta', 'usage':{'output_tokens':200}, 'delta':{'stop_reason':'end_turn'}},
+        # A later stop-only delta must not erase the last cumulative usage.
+        {'type':'message_delta', 'delta':{'stop_reason':'end_turn'}},
+    ]
+    if complete:
+        frames.append({'type':'message_stop'})
+    raw = ''.join(data_prefix+json.dumps(frame)+'\n\n' for frame in frames).encode()
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self):
+            for i in range(0, len(raw), 17):
+                yield raw[i:i+17]
+
+    real_client = httpx.Client
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'local-mock-only')
+    budget = Budget(True)
+    with real_client(trust_env=False) as client:
+        monkeypatch.setattr(harness_runtime.httpx, 'Client', lambda **kwargs: real_client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, stream=Stream())), **kwargs))
+        with harness_runtime.Gateway([], None, budget, lambda *_: None) as gateway:
+            response = client.post(gateway.url+'/v1/messages',
+                headers={'Authorization':'Bearer '+gateway.secret}, json={'messages':[]})
+            assert response.content == raw
+            if complete:
+                assert gateway.error is None
+                assert budget.reserved == pytest.approx((1000*budget.input_price+9000*budget.cached_input_price+200*budget.output_price)/1e6)
+                assert not budget.reservations
+            else:
+                assert isinstance(gateway.error, HarnessTurnError)
+                assert len(budget.reservations) == 1

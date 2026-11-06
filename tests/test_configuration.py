@@ -31,9 +31,6 @@ def provider(monkeypatch, arguments, calls=None):
     return captured
 
 
-ROUTE = {"task": "configuration", "label": "辨识配置", "secondary_tasks": [], "mode": "agent"}
-
-
 def test_combined_command_proposes_patch_using_draft_not_displayed_result(monkeypatch):
     captured = provider(monkeypatch, {"open_panel": True, "changes": {"method": "pann", "mode": "LC", "resistance_ohm": 6}, "start_after_apply": True})
     async def invoke(name): pytest.fail("A proposal must never invoke old-configuration tools: " + name)

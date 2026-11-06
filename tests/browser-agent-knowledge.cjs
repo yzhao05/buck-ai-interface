@@ -44,6 +44,8 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     assert.match(dialogs[1], /HTTP 401/);
     for(const failure of [
       {error_code:'provider_timeout',provider_error:'AI provider or Harness communication timed out before completion.'},
+      {error_code:'output_token_limit',finish_reason:'max-tokens',provider_error:'AI generation reached its output-token limit, including thinking tokens, before completing the answer.'},
+      {error_code:'citation_validation_failed',provider_error:'The generated answer cited knowledge sources that were not retrieved in this task.'},
       {error_code:'agent_budget_exceeded',budget_reason:'estimated_cost',
        provider_error:'AI request exceeded the estimated cost reservation (AGENT_COST_LIMIT_USD).',
        agent_budget:{thinking:true,model_calls:0,model_call_limit:14,time_limit_s:300,reserved_cost_usd:0,cost_limit_usd:0.5}}
@@ -54,7 +56,9 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
       const stored=await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).response);
       assert.equal(stored.error_code,failure.error_code);
       assert.equal(stored.budget_reason,failure.budget_reason);
+      assert.equal(stored.finish_reason,failure.finish_reason);
       assert.deepEqual(stored.agent_budget,failure.agent_budget);
+      if(failure.agent_budget)assert.match(await page.locator('.message.assistant').last().innerText(),/非账单.*USD/);
       assert.equal(typeof stored.agent_task_id,'string');
     }
     await page.locator('#reasoning-mode').selectOption('fast');
@@ -63,7 +67,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     response = {mode:'deepseek',answer:'模型说明 [kb:buck-physics]',sources:[{id:'buck-physics',title:'Buck 模型'}],
       tool_calls:[{name:'search_knowledge',query:'Buck 模型',count:3,status:'已执行'}],job_id:null};
     await ask();
-    assert.equal(dialogs.length, 4);
+    assert.equal(dialogs.length, 6);
     assert.equal(requests.at(-1).reasoning_mode,"fast");
     await page.reload();
     await page.waitForFunction(() => state.connected && activeConversation && !historyLocked());
@@ -76,6 +80,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     assert.equal(typeof restoredBudget.agent_task_id,'string');
     assert.equal(await page.evaluate(() => activeConversation.messages.at(-1).mode), 'DeepSeek');
     await page.locator('#language-toggle').click();
+    assert.equal(await page.locator('.message-tools').filter({hasText:'Local estimate for this answer (including reservations, not a bill)'}).count(),1);
     assert.deepEqual(await page.locator('#reasoning-mode option').allTextContents(), ['Auto mode','Fast mode','Thinking mode']);
     assert.deepEqual(errors, []);
     console.log('PASS: HTTP/timeout/budget errors and saved diagnostics, retry, query trace, cited source, no page errors');

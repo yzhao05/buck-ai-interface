@@ -80,16 +80,16 @@ window.BuckHarness = (()=>{
     if(!latest)latest=(await api('/api/agent/tasks/latest')).task;
     if(!latest){status('没有可恢复的 Agent 任务');return;}
     rememberTask(latest.id);
-    if(latest.state==='completed' && readConversation(activeConversation.id)?.messages?.some(m=>m.response?.agent_task_id===latest.id&&!m.response.task_state)){
+    if(latest.state==='completed' && readConversation(activeConversation.id)?.messages?.some(m=>m.response?.agent_task_id===latest.id&&!m.response.task_state&&!m.response.error_code&&m.response.mode!=='provider_error')){
       rememberTask(null);
       status('此任务已完成，回答已在当前会话中');return;
     }
     if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
       const response=await follow(latest.id);
-      if(response.mode==='provider_error')window.alert(response.provider_error);
       const text=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
       const article=message('assistant',text,'Harness 恢复');decorateResponse(article,response);
       rememberMessage('assistant',text,{...response,agent_task_id:latest.id},'Harness 恢复');
+      if(response.mode==='provider_error')window.alert(response.provider_error);
     }catch(error){
       const note=taskNotice(error);
       if(!note)throw error;

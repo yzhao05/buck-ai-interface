@@ -51,6 +51,16 @@ function toggleSection(buttonId, contentId, label, expanded) {
   window.BuckI18n.attr(button,"title",`${open ? "收起" : "展开"}${label}`);
   button.textContent = open ? "−" : "+";
 }
+function setComposerCollapsed(collapsed) {
+  $("chat-form").classList.toggle("compose-collapsed", collapsed);
+  const button = $("toggle-chat-compose");
+  button.setAttribute("aria-expanded", String(!collapsed));
+  for (const attribute of ["aria-label", "title"]) window.BuckI18n.attr(button, attribute, collapsed ? "展开输入框" : "收起输入框");
+  button.textContent = collapsed ? "⌄" : "⌃";
+  $("chat-input").rows = collapsed ? 1 : 3;
+  $("chat-input").wrap = collapsed ? "off" : "soft";
+  try { localStorage.setItem("buck-compose-collapsed", String(collapsed)); } catch { /* Keep the current view without storage. */ }
+}
 function setPaneCollapsed(side, collapsed) {
   const panel = $(side === "left" ? "sidebar-panel" : "analysis-panel");
   const button = $(`toggle-${side}-pane`);
@@ -704,7 +714,10 @@ function decorateResponse(article, response) {
     }
     if(response.agent_budget){
       const note=document.createElement('div');note.className='message-tools';
-      note.textContent=`${tr(response.agent_budget.thinking?'思考模式':'快速模式')} · ${response.agent_budget.model_calls} 次模型请求 · 成本预算占用上界 $${response.agent_budget.reserved_cost_usd}`;
+      note.append(window.BuckI18n.node(response.agent_budget.thinking?'思考模式':'快速模式'),
+        document.createTextNode(` · ${response.agent_budget.model_calls} `),window.BuckI18n.node('次模型请求'),
+        document.createTextNode(' · '),window.BuckI18n.node('本轮本地费用估算（含预留，非账单）'),
+        document.createTextNode(` USD $${response.agent_budget.reserved_cost_usd} / $${response.agent_budget.cost_limit_usd}`));
       article.append(note);
     }
     if(response.plecs_experiments?.length){
@@ -907,17 +920,17 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       experiments:currentOnly ? [] : chatExperiments(),identification_enabled:!currentOnly && !savedResult && state.identificationOpen && Boolean(fitOptions)});
     pending.remove();
     if (response.mode === "provider_error") {
-      window.alert(response.provider_error);
       const article = message("assistant", response.provider_error, "请求未完成");
       decorateResponse(article, response);
       const failedReply = rememberMessage("assistant", response.provider_error, {
         request_message_id:requestMessage.id, tool_calls:response.tool_calls,
         agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,diagnosis:response.diagnosis,simulation_evaluations:response.simulation_evaluations,
         control_checks:response.control_checks, retrieved_sources:response.retrieved_sources,
-        error_code:response.error_code,budget_reason:response.budget_reason,
+        error_code:response.error_code,budget_reason:response.budget_reason,finish_reason:response.finish_reason,
         agent_task_id:response.agent_task_id,conversation_retrieval:response.conversation_retrieval
       }, "请求未完成");
       article.dataset.messageId=failedReply.id;
+      window.alert(response.provider_error);
       if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
       return;
     }
@@ -1181,7 +1194,14 @@ $("toggle-import").onclick=()=>toggleSection("toggle-import","import-content","�
 $("view-full").onclick=()=>{state.zoom=null;drawCharts();};
 $("view-tail").onclick=()=>{if(state.chart){const t=state.chart.time_s;const frequency=(!state.savedRun && state.result?.options.frequency_hz) || Number($("frequency").value)*1000;state.zoom=[Math.max(t[0],t[t.length-1]-10/frequency),t[t.length-1]];drawCharts();}};
 $("chat-form").onsubmit=event=>{event.preventDefault();void sendMessage($("chat-input").value);};
-$("chat-input").onkeydown=event=>{if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing){event.preventDefault();void sendMessage($("chat-input").value);}};
+$("toggle-chat-compose").onclick=()=>setComposerCollapsed(!$("chat-form").classList.contains("compose-collapsed"));
+$("compact-chat-images").onclick=()=>setComposerCollapsed(false);
+setComposerCollapsed(savedValue("buck-compose-collapsed")==="true");
+$("chat-input").onkeydown=event=>{
+  if(event.key!=="Enter" || event.isComposing)return;
+  if(event.shiftKey){if($("chat-form").classList.contains("compose-collapsed"))setComposerCollapsed(false);}
+  else{event.preventDefault();void sendMessage($("chat-input").value);}
+};
 document.querySelectorAll("[data-prompt]").forEach(button=>button.onclick=()=>void sendMessage(button.dataset.prompt));
 function closeAnalysisMenu() {
   $("analysis-menu").hidden=true;$("ask-error").setAttribute("aria-expanded","false");

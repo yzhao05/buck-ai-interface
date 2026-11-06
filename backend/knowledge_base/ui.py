@@ -117,7 +117,10 @@ entry('chat', 'AI 实验助手：输入、发送与快捷提问', 'chat-input se
       '输入最多4000字符；发送箭头或Enter提交，Shift+Enter换行。欢迎区三个快捷问题会直接发送相应问题，不只是填入输入框。上下文标签表示关联数据，服务模式标签反映当前服务。解释用途应只读检索；执行辨识、改参数、仿真须依据明确请求。')
 entry('reasoning', '回答模式：自动 / 快速 / 思考', 'reasoning-mode',
       '自动模式 快速模式 思考模式 reasoning thinking fast auto',
-      '自动当前默认启用thinking；快速关闭thinking；思考启用thinking。都可使用同一工具目录，按预算限制模型调用，快速最多7次、思考最多14次。不是计算方法，也不会切换PANN/积分。模式随会话保存。')
+      '自动当前默认启用thinking；快速关闭thinking；思考启用thinking。都可使用同一工具目录，按预算限制模型调用，快速最多7次、思考最多14次。不是计算方法，也不会切换PANN/积分。模式随会话保存。回答旁费用数字是本轮本地USD估算（含未完成请求的预留），不是DeepSeek账户账单或每日花费，不能与平台显示的人民币金额直接比较。完整响应按usage结算并释放未使用额度；默认采用DeepSeek对应模型高峰价格，缓存输入单独计价。')
+entry('chat-collapse', '聊天输入框：收起 / 展开', 'toggle-chat-compose compact-chat-images',
+      '输入框 回复框 收起 缩小 展开 箭头 单行 草稿 collapse expand composer compact',
+      '左上角箭头把聊天输入区域收成一行，保留文字输入和发送按钮，再点可展开。只改变显示，不清空草稿、图片或回答模式，不停止Agent。收起时图片工具、回答模式和上下文标签隐藏；若已添加图片，图片数量按钮仍可见，点击展开检查附件。Enter发送；Shift+Enter展开并换行。浏览器记住收起状态。')
 entry('chat-images', '添加图片 / 添加电路图 / 图片预览复用', 'attach-chat-image chat-use-circuit chat-image-file chat-image-list chat-image-dialog close-chat-image reuse-chat-image chat-image-preview',
       '添加图片 添加电路图 粘贴 拖入 移除 附加到当前提问 image attachment preview reuse',
       '选择、粘贴或拖入PNG/JPEG/GIF/WebP，每次最多3张、单张最大8MB；压缩后发送，GIF只取首帧。添加电路图优先使用已保存参考图，没有上传图时把当前默认图及参数标注转成图片；输入框为空时填入分析提示，仍需发送。待发缩略图的移除按钮只移除本次附件；点击图片可放大，关闭只关闭预览，附加到当前提问复用预览图。历史提到图片不等于本轮重新附带原图。', 'frontend/chat-images.js')

@@ -3,10 +3,29 @@ import httpx
 from .agent_policy import BudgetExceeded
 
 
+class HarnessTurnError(RuntimeError):
+    def __init__(self, reason):
+        self.reason = reason if reason in {'max-tokens', 'empty', 'error', 'aborted', 'refusal'} else 'incomplete'
+        super().__init__('Harness turn did not complete')
+
+
+class CitationValidationError(ValueError):
+    pass
+
+
 def provider_failure(exc=None, *, missing=False, **metadata):
     if missing:
         code = "missing_api_key"
         message = "AI service is not configured. Please set DEEPSEEK_API_KEY on the backend and try again."
+    elif isinstance(exc, HarnessTurnError):
+        metadata['finish_reason'] = exc.reason
+        code = 'output_token_limit' if exc.reason == 'max-tokens' else 'harness_incomplete'
+        message = ('AI generation reached its output-token limit, including thinking tokens, before completing the answer.'
+                   if exc.reason == 'max-tokens' else 'The Harness did not return a complete answer. The task can be retried.')
+    elif isinstance(exc, CitationValidationError):
+        code = 'citation_validation_failed'
+        message = 'The generated answer cited knowledge sources without saved retrieval evidence in this session. '
+        message += 'The answer could not be verified; this is not an API-key or network error.'
     elif isinstance(exc, BudgetExceeded):
         code = "agent_budget_exceeded"
         reason = {'time budget reached': 'time', 'model step budget reached': 'model_calls',

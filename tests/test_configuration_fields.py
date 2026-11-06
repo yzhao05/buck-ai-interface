@@ -6,7 +6,7 @@ import pytest
 from backend import configuration
 from backend.schemas import ControllerParameters, ConfigureIdentification, IdentificationPlanProposal
 from backend.configuration_fields import validate_structure
-from test_configuration import provider, request, ROUTE
+from test_configuration import provider, request
 
 
 @pytest.mark.parametrize('message,changes',[

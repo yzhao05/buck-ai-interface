@@ -41,7 +41,7 @@ def test_modes_share_tool_permissions_and_knowledge_loop(monkeypatch, mode, task
 
 @pytest.mark.parametrize('mode', ['fast', 'thinking'])
 def test_configuration_honors_mode_and_reports_budget(monkeypatch, mode):
-    from test_configuration import provider, request, ROUTE
+    from test_configuration import provider, request
     captured = provider(monkeypatch, {'open_panel':True,'changes':{},'start_after_apply':False})
     req = request('打开参数辨识面板', reasoning_mode=mode)
     response = asyncio.run(chat.answer(req, None))

@@ -17,6 +17,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 from .agent_policy import BudgetExceeded
+from .provider_errors import HarnessTurnError
 
 scope = contextvars.ContextVar('harness_scope', default=None)
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'harness'
@@ -81,6 +82,7 @@ class Gateway:
                         if gateway.budget.calls >= gateway.budget.rounds:
                             raise BudgetExceeded('model step budget reached')
                         body['max_tokens'] = gateway.budget.reserve(body)
+                        call_id = gateway.budget.calls
                     body['thinking'] = {'type':'enabled' if gateway.budget.thinking else 'disabled'}
                     root = os.getenv('HARNESS_BASE_URL') or os.getenv('DEEPSEEK_BASE_URL','https://api.deepseek.com').rstrip('/').removesuffix('/v1')+'/anthropic'
                     endpoint = root.rstrip('/') + ('/messages' if root.rstrip('/').endswith('/v1') else '/v1/messages')
@@ -96,22 +98,40 @@ class Gateway:
                             self.end_headers()
                             response_started = True
                             buffered = ''
+                            usage = {}
+                            output_reported = False
+                            stopped = False
                             decoder = codecs.getincrementaldecoder('utf-8')()
                             for raw in upstream.iter_bytes():
                                 gateway.budget.remaining()
-                                self.wfile.write(raw)
-                                self.wfile.flush()
                                 buffered += decoder.decode(raw)
                                 while '\n' in buffered:
                                     line, buffered = buffered.split('\n',1)
-                                    if line.startswith('data: ') and line[6:].strip() != '[DONE]':
+                                    if line.startswith('data:') and line[5:].strip() != '[DONE]':
                                         try:
-                                            frame = json.loads(line[6:])
+                                            frame = json.loads(line[5:].lstrip())
+                                            if frame.get('type') == 'message_start':
+                                                usage.update(frame.get('message', {}).get('usage') or {})
+                                            if frame.get('type') == 'message_delta':
+                                                update = frame.get('usage') or {}
+                                                usage.update(update)
+                                                output_reported = output_reported or 'output_tokens' in update
+                                            if frame.get('type') == 'message_stop':
+                                                stopped = True
+                                                if output_reported:
+                                                    with gateway.lock:
+                                                        gateway.budget.settle(call_id, usage)
                                             delta = frame.get('delta',{}).get('text') if frame.get('type')=='content_block_delta' else None
                                             if delta:
                                                 gateway.emit('text_delta', {'text':delta})
                                         except (ValueError,IndexError):
                                             pass
+                                # Settle before forwarding message_stop: the SDK
+                                # may immediately start the next model request.
+                                self.wfile.write(raw)
+                                self.wfile.flush()
+                            if not stopped:
+                                raise HarnessTurnError('incomplete')
                 except Exception as exc:
                     with gateway.lock:
                         if gateway.error is None:
@@ -237,7 +257,7 @@ async def run(messages, tools, invoke, budget):
         harness = DeepSeekHarness(dsh_home=str(home),cwd=str(home),runtime_cwd=runtime_cwd,
             profile='sdk-minimal',patches=(str(path),),
             model=os.getenv('DEEPSEEK_MODEL','deepseek-flash'),base_url=gateway.url,
-            api_key=gateway.secret,max_tokens=8000 if budget.thinking else 3000,
+            api_key=gateway.secret,max_tokens=budget.max_output_tokens,
             reasoning_effort='high' if budget.thinking else 'off',
             initialize_timeout_seconds=30,request_timeout_seconds=30)
         active[task_id] = (harness,identifier)
@@ -253,7 +273,7 @@ async def run(messages, tools, invoke, budget):
                 raise gateway.error
             if result.finish_reason not in ('completed',None) or not result.final_response.strip():
                 (home/'failure.json').write_text(json.dumps(result.events,ensure_ascii=False),encoding='utf-8')
-                raise ValueError('Harness did not complete the turn')
+                raise HarnessTurnError(result.finish_reason if result.finish_reason not in ('completed', None) else 'empty')
             return result.final_response
         except asyncio.TimeoutError:
             # SDK/RPC timeouts are not evidence that our whole-answer deadline

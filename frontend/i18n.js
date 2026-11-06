@@ -2,6 +2,11 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "次模型请求": "model requests",
+    "本轮本地费用估算（含预留，非账单）": "Local estimate for this answer (including reservations, not a bill)",
+    "收起输入框": "Collapse input box",
+    "展开输入框": "Expand input box",
+    "展开查看已添加图片": "Expand to view attached images",
     "任务状态": "Task status",
     "任务已停止，可恢复。": "Task stopped. You can resume it.",
     "任务已中断，可恢复。": "Task interrupted. You can resume it.",

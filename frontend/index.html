@@ -116,7 +116,17 @@
     <button id="agent-cancel" type="button" class="button subtle small">停止任务</button>
     <button id="agent-resume" type="button" class="button subtle small">找回 / 恢复任务</button>
   </details>
-<form class="chat-compose" id="chat-form"><label class="sr-only" for="chat-input">向实验助手提问</label><textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea><input type="hidden" id="chat-images" value=""><input type="file" id="chat-image-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><div id="chat-image-list" class="message-images" hidden></div><div class="chat-image-tools"><button type="button" id="attach-chat-image" class="button subtle small">添加图片</button><button type="button" id="chat-use-circuit" class="button subtle small">添加电路图</button><span>支持选择、粘贴或拖入图片；每次最多 3 张，单张最大 8 MB。图片会压缩，GIF 仅发送首帧。</span></div><div class="compose-bottom"><label for="reasoning-mode" class="sr-only">回答模式</label><select id="reasoning-mode" aria-label="回答模式"><option value="auto">自动模式</option><option value="fast">快速模式</option><option value="thinking">思考模式</option></select><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div></form>
+      <form class="chat-compose" id="chat-form">
+        <button id="toggle-chat-compose" type="button" class="icon-button compose-toggle" aria-label="收起输入框" title="收起输入框" aria-expanded="true" aria-controls="chat-input chat-image-list chat-compose-tools">⌃</button>
+        <label class="sr-only" for="chat-input">向实验助手提问</label>
+        <textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea>
+        <input type="hidden" id="chat-images" value="">
+        <input type="file" id="chat-image-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
+        <div id="chat-image-list" class="message-images" hidden></div>
+        <div id="chat-compose-tools" class="chat-image-tools"><button type="button" id="attach-chat-image" class="button subtle small">添加图片</button><button type="button" id="chat-use-circuit" class="button subtle small">添加电路图</button><span>支持选择、粘贴或拖入图片；每次最多 3 张，单张最大 8 MB。图片会压缩，GIF 仅发送首帧。</span></div>
+        <button id="compact-chat-images" type="button" class="icon-button compose-attachments" aria-label="展开查看已添加图片" title="展开查看已添加图片" hidden>▧</button>
+        <div class="compose-bottom"><label for="reasoning-mode" class="sr-only">回答模式</label><select id="reasoning-mode" aria-label="回答模式"><option value="auto">自动模式</option><option value="fast">快速模式</option><option value="thinking">思考模式</option></select><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div>
+      </form>
       <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要、对话及随消息附加的图片将发送至已配置的 DeepSeek。<br>清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
     </main>
     <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>

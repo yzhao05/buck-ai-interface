@@ -28,6 +28,8 @@ function renderMessageImages(article,images=[]){
 function renderChatImages(){
   const list=$("chat-image-list");list.replaceChildren();
   const images=chatImages();list.hidden=!images.length;
+  $("compact-chat-images").hidden=!images.length;
+  $("compact-chat-images").textContent=`▧ ${images.length}`;
   images.forEach((image,index)=>{
     const item=document.createElement("div");item.className="chat-image-item";item.append(imageThumbnail(image));
     const remove=document.createElement("button");remove.type="button";remove.className="chat-image-remove";remove.textContent="×";

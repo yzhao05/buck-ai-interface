@@ -91,7 +91,53 @@ def test_provider_failure_after_search_preserves_trace_without_answer(monkeypatc
 def test_unknown_citation_after_search_is_rejected(monkeypatch):
     fake_provider(monkeypatch, [search("Buck 模型"),
         {"role": "assistant", "content": "Unsupported source [kb:invented]"}])
-    assert run()["mode"] == "provider_error"
+    result = run()
+    assert result["mode"] == "provider_error"
+    assert result['error_code'] == 'citation_validation_failed'
+    assert result['retrieved_sources'] and result['tool_calls']
+
+
+@pytest.mark.parametrize('first_fails', [False, True])
+@pytest.mark.parametrize('scope_change', ['none', 'owner', 'dataset'])
+def test_saved_search_evidence_survives_only_in_same_harness_session(monkeypatch, first_fails, scope_change):
+    from backend import harness_runtime
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-only')
+
+    async def scenario():
+        async def first(messages, tools, execute, budget):
+            found = await execute('search_knowledge', {'query':'Buck 模型', 'top_k':8})
+            assert any(d['id'] == 'buck-physics' for d in found['documents'])
+            if first_fails:
+                raise httpx.ReadTimeout('interrupted after retrieval')
+            return '已检索。[kb:buck-physics]'
+        monkeypatch.setattr(harness_runtime, 'run', first)
+        token = harness_runtime.scope.set({'owner':'first-owner', 'id':'first-task'})
+        try:
+            prior = await chat.answer(ChatRequest(message='解释模型'), no_execution)
+        finally:
+            harness_runtime.scope.reset(token)
+        assert prior['mode'] == ('provider_error' if first_fails else 'deepseek')
+
+        def no_search(*args):
+            pytest.fail('Reusing saved evidence must not trigger another search')
+        monkeypatch.setattr(chat, 'retrieve', no_search)
+        async def second(messages, tools, execute, budget):
+            return '继续解释已读取的模型。[kb:buck-physics]'
+        monkeypatch.setattr(harness_runtime, 'run', second)
+        token = harness_runtime.scope.set({'owner':'other-owner' if scope_change == 'owner' else 'first-owner', 'id':'second-task'})
+        try:
+            result = await chat.answer(ChatRequest(message='继续解释', dataset_id='new-data' if scope_change == 'dataset' else None), no_execution)
+        finally:
+            harness_runtime.scope.reset(token)
+        assert result['tool_calls'] == []
+        if scope_change == 'none':
+            assert result['mode'] == 'deepseek'
+            assert [d['id'] for d in result['sources']] == ['buck-physics']
+            assert [d['id'] for d in result['retrieved_sources']] == ['buck-physics']
+        else:
+            assert result['error_code'] == 'citation_validation_failed'
+            assert result['retrieved_sources'] == []
+    asyncio.run(scenario())
 
 
 def test_tool_round_limit_stops_more_searches(monkeypatch):

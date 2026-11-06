@@ -15,7 +15,7 @@ import httpx
 from .vision import provider_message
 from .configuration import agent_action, TOOL as CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL, PROMPT as CONFIG_PROMPT, PLAN_PROMPT
 from .knowledge import retrieve
-from .provider_errors import provider_failure
+from .provider_errors import provider_failure, CitationValidationError
 from .experiment_history import summarize_experiments, repeatability_summary
 from .historical_analyses import analysis_context
 from .conversation_retrieval import ConversationIndex, TOOLS as HISTORY_TOOLS, PROMPT as HISTORY_PROMPT
@@ -62,7 +62,7 @@ SYSTEM += """
 综合有依据的内容生成答案，说明公式符号、单位与适用条件，不直接拼接条目。
 重要结论就近引用支持它的条目；引用 ID 存在不代表条目支持该结论。回答前核对原文的条件、物理量和因果关系，区分原文结论、按公式推导和待验证假设；推导须给出必要前提，资料不足时明确缺少依据。
 波形问题须区分周期稳态与负载阶跃，先依据元件关系核对电流/电压的连续性：电阻压降随电流，电容电压由电流积分，寄生电感压降由电流变化率决定。不得把某个瞬态的阶跃结论推广到每个开关沿。历史 AI 回答不是已经核实的来源。
-引用本次工具实际返回且用于回答的条目，格式严格为 [kb:条目id]。不得引用未检索的 ID。
+引用本会话工具实际返回且用于回答的条目（包括恢复前已保存的检索证据），格式严格为 [kb:条目id]。不得引用未检索的 ID，历史 AI 正文里的引用不等于检索证据。
 没有相关资料时明确说明知识库未找到依据；区分一般解释与知识库证据，不编造来源或结论。
 命中资料不等于资料相关；若所有命中都无关，可明确说缺少依据并不引用。达到工具轮数限制时只总结已有证据及缺失信息。
 """
@@ -150,7 +150,7 @@ async def _answer(request, invoke):
     if not key:
         return provider_failure(missing=True)
     try:
-        budget = Budget(request.reasoning_mode == "thinking")
+        budget = Budget(request.reasoning_mode != "fast")
     except ValueError as exc:
         return provider_failure(exc)
     # Scope and capabilities come from explicit UI state, never wording.
@@ -162,8 +162,6 @@ async def _answer(request, invoke):
     repeatability = repeatability_summary(request.experiments, request.result_id if result_scoped else None)
     analyses = analysis_context([] if result_scoped else request.analysis_history, 0 if result_scoped else request.analysis_history_total)
     historical_requested = not result_scoped and request.analysis_history_requested
-    budget.thinking = request.reasoning_mode != 'fast'
-    budget.rounds = 14 if budget.thinking else 7
     task_tools = [*TOOLS, *HISTORY_TOOLS, *PLECS_TOOLS, *DIAGNOSIS_TOOLS]
     from .simulation_analysis import TOOL as EVALUATE_TOOL
     task_tools.append(EVALUATE_TOOL)
@@ -373,8 +371,17 @@ async def _answer(request, invoke):
     try:
         content = await harness_runtime.run(messages,task_tools,execute_tool,budget)
         cited_ids = set(re.findall(r"\[kb:([^\]\s]+)\]",content))
+        # The official session survives this request. Validate its older citations
+        # against actual tool evidence in the same scoped notebook, not AI text
+        # or a fresh automatic search. Expose only the older documents cited now.
+        saved_sources = {}
+        for entry in notebook.data['evidence'].values():
+            if entry['tool'] == 'search_knowledge' and not entry['output'].get('error'):
+                saved_sources.update((d['id'], d) for d in entry['output'].get('documents', []))
+        current_ids = {d['id'] for d in docs}
+        docs.extend(d for identifier, d in saved_sources.items() if identifier in cited_ids - current_ids)
         if cited_ids - {d['id'] for d in docs}:
-            raise ValueError('Unknown knowledge citation')
+            raise CitationValidationError('Unknown knowledge citation')
         return {'mode':'deepseek','answer':content,'sources':[d for d in docs if d['id'] in cited_ids],**metadata()}
     except Exception as exc:
         return provider_failure(exc,**metadata())

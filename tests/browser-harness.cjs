@@ -83,6 +83,19 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.evaluate(()=>BuckHarness.recover());
   assert.match(await page.locator('.message.assistant').last().innerText(),/new answer/);
   assert.equal(await page.evaluate(()=>localStorage.getItem(`buck-agent:${base}:${sessionId}`)),null);
+  // A failed reply from an earlier attempt is not the completed answer.
+  await page.route('**/api/agent/tasks/completed-after-failure',route=>route.fulfill({json:{id:'completed-after-failure',state:'completed'}}));
+  await page.route('**/api/agent/tasks/completed-after-failure/events',route=>route.fulfill({contentType:'application/x-ndjson',body:recoveryEvents.map(e=>JSON.stringify(e)).join('\n')+'\n'}));
+  await page.evaluate(()=>{
+    rememberMessage('assistant','earlier attempt failed',{agent_task_id:'completed-after-failure',error_code:'provider_timeout'},'请求未完成');
+    localStorage.setItem(`buck-agent:${base}:${sessionId}`,'completed-after-failure');
+  });
+  await page.evaluate(()=>BuckHarness.recover());
+  assert.equal(await page.evaluate(()=>activeConversation.messages.at(-1).content),'new answer');
+  const completedCount=await page.evaluate(()=>activeConversation.messages.length);
+  await page.evaluate(()=>localStorage.setItem(`buck-agent:${base}:${sessionId}`,'completed-after-failure'));
+  await page.evaluate(()=>BuckHarness.recover());
+  assert.equal(await page.evaluate(()=>activeConversation.messages.length),completedCount,'A successful answer must not be appended twice');
   const quotaResult=await page.evaluate(async()=>{
     const original=Storage.prototype.setItem;
     Storage.prototype.setItem=function(key,value){if(key.startsWith('buck-agent:'))throw new DOMException('Full','QuotaExceededError');return original.call(this,key,value);};

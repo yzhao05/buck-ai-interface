@@ -6,7 +6,7 @@ import pytest
 from backend import configuration
 from backend.configuration_fields import validate_structure
 from backend.schemas import ConfigureIdentification, IdentificationPlanProposal, Mapping
-from test_configuration import provider, request, ROUTE
+from test_configuration import provider, request
 from test_identification_plan import proposal, request as plan_request
 
 
