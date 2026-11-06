@@ -95,7 +95,7 @@ def test_mismatched_data_and_missing_states_are_not_replayed(experiment):
 
 def test_api_selected_source_ownership_reference_cache_and_no_training(experiment,monkeypatch):
     data,mapping,baseline,source=experiment
-    monkeypatch.setattr(main,'TOKEN','');monkeypatch.delenv('DEEPSEEK_API_KEY',raising=False)
+    monkeypatch.setattr(main,'TOKEN','');__import__('provider_stub').install(monkeypatch)
     owner=str(uuid.uuid4());client=TestClient(main.app,headers={'X-Session-ID':owner})
     raw=(ROOT/'examples/plecs_buck_case16a.csv').read_bytes()
     d=client.post('/api/datasets',files={'file':('source.csv',raw)}).json()
@@ -114,7 +114,7 @@ def test_api_selected_source_ownership_reference_cache_and_no_training(experimen
     assert response.status_code==200,response.text
     output=response.json()
     assert output['control_checks']['pann_source_result_id']==pann_id
-    assert output['answer'].index('已验证的数值效应')<output['answer'].index('可能原因')
+    assert output['control_checks']['status'] == 'completed'
     assert set(main.jobs)==before and output['job_id'] is None
     other=TestClient(main.app,headers={'X-Session-ID':str(uuid.uuid4())})
     assert other.post('/api/chat',json=body).status_code==422
@@ -166,7 +166,7 @@ def test_controller_controls_reproduce_closed_loop_without_heldout_drive():
     ('参数初值交换的原理是什么',False),
     ("Don't run controls, explain the current result",False)])
 def test_control_commands_never_change_live_settings_or_retrain(experiment,monkeypatch,message,execute):
-    monkeypatch.delenv('DEEPSEEK_API_KEY',raising=False)
+    __import__('provider_stub').install(monkeypatch)
     _,_,_,source=experiment;calls=[]
     async def invoke(name):
         calls.append(name)
@@ -174,4 +174,4 @@ def test_control_commands_never_change_live_settings_or_retrain(experiment,monke
         return {'status':'unavailable','error':'测试：数据不足'} if name=='run_diagnostic_controls' else source
     response=asyncio.run(chat.answer(ChatRequest(message=message,result_id='r',enable_diagnostic_controls=True),invoke))
     assert ('run_diagnostic_controls' in calls)==execute
-    assert response['job_id'] is None and 'ui_action' not in response
+    assert response['job_id'] is None and not response.get('ui_action')

@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from backend import chat, main, archive
 from backend.schemas import HistoricalAnalysis
 from backend.historical_analyses import analysis_context, explicit_label
-from backend.task_router import make_route, rule_selection
+from backend.task_router import make_route
+from provider_stub import rule_selection
 
 
 def replies():
@@ -61,21 +62,20 @@ def test_local_retrieval_without_experiment_snapshots_or_live_csv(client):
         "identification_enabled":True})
     assert response.status_code==200,response.text
     answer=response.json()["answer"]
-    assert "4 条完整" in answer and "历史 AI 回答" in answer
-    assert "PANN" in answer and "抗噪加权积分" in answer
-    assert "尚未生成自动差异分析" in answer
+    assert answer == '' and response.json()['error_code'] == 'missing_api_key'
     assert response.json()["job_id"] is None and set(main.jobs)==before
 
 
 def test_missing_history_does_not_start_identification(client):
     response=client.post("/api/chat",json={"message":"对比历史分析", "analysis_history_requested":True})
     assert response.status_code==200
-    assert "未找到" in response.json()["answer"] and response.json()["job_id"] is None
+    assert response.json()["error_code"] == "missing_api_key" and response.json()["job_id"] is None
 
 
 @pytest.mark.parametrize("fails",[False,True])
 def test_provider_reads_full_replies_outside_recent_messages(client,monkeypatch,fails):
     monkeypatch.setenv("DEEPSEEK_API_KEY","test-key")
+    monkeypatch.setenv("AGENT_COST_LIMIT_USD", "2")
     seen=[];source=replies()
     class Provider:
         def __init__(self,**kwargs): pass
@@ -102,7 +102,7 @@ def test_provider_reads_full_replies_outside_recent_messages(client,monkeypatch,
         "analysis_history_requested":True,"history":[{"role":"user","content":"后续闲聊"}]*10})
     assert response.status_code==200,response.text
     assert len(seen)==(1 if fails else 2)
-    assert response.json()["mode"]==("local_fallback" if fails else "deepseek")
+    assert response.json()["mode"]==("provider_error" if fails else "deepseek")
 
 
 def test_analysis_metadata_survives_private_archive_roundtrip(client,tmp_path,monkeypatch):

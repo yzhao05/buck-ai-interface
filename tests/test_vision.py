@@ -89,7 +89,7 @@ def test_provider_receives_actual_image_parts(monkeypatch, failure):
     assert response.status_code == 200
     assert len(seen) == 1
     assert not response.json().get("job_id")
-    assert ("图片尚未识别" in response.json()["answer"]) == failure
+    assert (response.json()["mode"] == "provider_error") == failure
 
 
 @pytest.mark.parametrize("message", ["看看图片", "识别图片中的电感电容", "Identify the components in this image", "开始参数辨识"])
@@ -102,7 +102,7 @@ def test_no_key_is_explicit_about_no_vision(monkeypatch, message):
     response = TestClient(main.app).post("/api/chat", headers={"X-Session-ID": str(uuid.uuid4())},
                                          json={"message": message, "images": [picture()], "identification_enabled": True})
     assert response.status_code == 200
-    assert "图片尚未识别" in response.json()["answer"]
+    assert response.json()["answer"] == "" and response.json()["error_code"] == "missing_api_key"
 
 
 def test_images_survive_archive_roundtrip(tmp_path):
@@ -122,4 +122,4 @@ def test_english_image_fallback(monkeypatch):
     response = TestClient(main.app).post("/api/chat", headers={"X-Session-ID": str(uuid.uuid4())},
                                          json={"message": "read image", "language": "en", "images": [picture()]})
     assert response.status_code == 200
-    assert response.json()["answer"].startswith("Images have not been analyzed")
+    assert response.json()["provider_error"].startswith("AI service is not configured")

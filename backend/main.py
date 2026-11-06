@@ -17,6 +17,9 @@ from starlette.concurrency import run_in_threadpool
 from .diagnostic_controls import compatible, run_controls
 
 from . import chat
+from . import plecs_diagnostics
+from . import plecs_local
+from pydantic import BaseModel, Field
 from .data import MAX_BYTES, analyze, read_csv, suggest_mapping
 from .identification import identify
 from .pann_adapter import available as pann_available
@@ -126,7 +129,7 @@ def compact(data):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "0.1.0", "chat_mode": "deepseek" if os.getenv("DEEPSEEK_API_KEY") else "local",
+    return {"status": "ok", "version": "0.1.0", "chat_mode": "deepseek" if os.getenv("DEEPSEEK_API_KEY", "").strip() else "unavailable",
             "model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "requires_token": bool(TOKEN),
             "pann_available": pann_available(),
             "source_url": os.getenv("SOURCE_URL", ""), "archive_enabled": True,
@@ -304,13 +307,97 @@ def completed_experiments(owner: str = Depends(session)):
         return {"experiments": runs}
 
 
+def local_plecs_access(request):
+    if os.getenv('RENDER') or os.getenv('APP_ENV') == 'production' or request.client.host not in {'127.0.0.1', '::1', 'testclient'}:
+        raise HTTPException(403, '本地 PLECS 功能需要连接本机后端。')
+    origin = request.headers.get('origin')
+    if origin and origin.rstrip('/') not in origins:
+        raise HTTPException(403, '不允许的页面来源')
+
+
+class PlecsSettings(BaseModel):
+    executable: str = Field(default="", max_length=1000)
+    model_directory: str = Field(default='', max_length=1000)
+
+
+@app.get('/api/plecs/settings')
+def get_plecs_settings(request: Request, owner: str = Depends(session)):
+    local_plecs_access(request)
+    return plecs_local.settings(owner)
+
+
+@app.post('/api/plecs/settings')
+def set_plecs_settings(body: PlecsSettings, request: Request, owner: str = Depends(session)):
+    local_plecs_access(request)
+    try:
+        return plecs_local.configure(owner, body.executable, body.model_directory)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
 @app.post("/api/chat")
-async def chat_route(body: ChatRequest, owner: str = Depends(session)):
+async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(session)):
     throttle(owner, "chat", 10)
     control_cache = None
-    async def invoke(name):
+    model_context = json.dumps([body.dataset_id, body.result_id if body.saved_result else None, body.circuit_filename], ensure_ascii=False)
+    def bind_model_context():
+        state = plecs_local.settings(owner)
+        state['model_context'] = model_context
+        plecs_local.save(owner, state)
+    async def search_current_model():
+        import re
+        hints = [image.name for image in body.images]
+        if body.circuit_filename:
+            hints.insert(0,body.circuit_filename)
+        hints.extend(re.findall(r'"([^"]+\.plecs)"|([^\s"<>]+\.plecs)',body.message,re.I))
+        hints = [next((v for v in h if v), '') if isinstance(h, tuple) else h for h in hints]
+        if len(body.message)<100:
+            hints.append(body.message.strip())
+        if body.dataset_id:
+            hints.append(get_dataset(body.dataset_id,owner).name)
+        if body.saved_result:
+            hints.append(body.saved_result.result.get('filename',''))
+        found = await run_in_threadpool(plecs_local.search_models, owner, hints)
+        bind_model_context()
+        return found
+    async def invoke(name, arguments=None):
         nonlocal control_cache
         try:
+            if name == 'get_diagnostic_evidence':
+                from .agent_policy import evidence
+                job = jobs.get(body.result_id)
+                if (job and job['owner']==owner and job['status']=='complete'
+                    and job['config']['options']==body.options.model_dump()
+                    and job['config']['mapping']==(body.mapping.model_dump() if body.mapping else None)):
+                    return evidence({**with_ground_truth(job['result'],body.ground_truth),'result_id':body.result_id})
+                return evidence(await invoke('get_identification_result'))
+            if name in {'connect_plecs','select_plecs_model','get_plecs_models','run_plecs_experiment','search_plecs_models','open_plecs_model'}:
+                local_plecs_access(request)
+            if name == 'search_plecs_models':
+                return await search_current_model()
+            if name == 'connect_plecs':
+                connection = await run_in_threadpool(plecs_local.ensure_running, owner)
+                if connection.get('status')=='ready':
+                    connection['model_search'] = await search_current_model()
+                return connection
+            if name == 'select_plecs_model':
+                path = (arguments or {}).get('path', '')
+                if not path or path not in body.message:
+                    return {'error':'只能选择用户本条消息明确提供的模型路径。请询问用户电路文件完整路径。'}
+                selected = await run_in_threadpool(plecs_local.register, owner, path)
+                bind_model_context()
+                return selected
+            if name in {'get_plecs_models', 'open_plecs_model', 'run_plecs_experiment'} and plecs_local.settings(owner).get('model_context') != model_context:
+                return {'error':'当前数据或电路已改变，请重新搜索或选择模型。'}
+            if name == 'open_plecs_model':
+                return await run_in_threadpool(plecs_diagnostics.open_model, owner, (arguments or {}).get('model'))
+            if name == 'get_plecs_models':
+                return plecs_diagnostics.catalog(owner)
+            if name == 'run_plecs_experiment':
+                if body.images:
+                    return {'error': '图片分析不执行仿真。'}
+                throttle(owner, 'plecs', 4)
+                return await run_in_threadpool(plecs_diagnostics.experiment, arguments, owner, body.result_id)
             if name == 'run_diagnostic_controls':
                 if control_cache is not None:
                     return control_cache
@@ -380,7 +467,7 @@ async def chat_route(body: ChatRequest, owner: str = Depends(session)):
             if name == 'run_diagnostic_controls':
                 return {'status':'unavailable','error':'历史诊断字段不完整，未完成对照。请重新辨识后再分析。'}
             raise
-        except (HTTPException, ValueError) as exc:
+        except (HTTPException, ValueError, OSError) as exc:
             if name == "start_identification" and isinstance(exc, HTTPException) and exc.status_code == 409:
                 existing = active_job(owner)["job"]
                 if existing:

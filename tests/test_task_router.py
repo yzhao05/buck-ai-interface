@@ -7,6 +7,7 @@ import pytest
 
 from backend import chat, task_router
 from backend.schemas import ChatRequest
+from backend.provider_errors import ProviderUnavailable
 
 
 def completion(message, url="https://example.test/chat/completions"):
@@ -32,10 +33,8 @@ def selection(task, secondary=None):
 ])
 def test_rules_without_key(monkeypatch, message, task):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    route = asyncio.run(task_router.classify(ChatRequest(message=message)))
-    assert route["task"] == task
-    assert route["mode"] == "rules"
-    assert ("start_identification" in task_router.route_tools(route)) == (task == "identification")
+    with pytest.raises(ProviderUnavailable):
+        asyncio.run(task_router.classify(ChatRequest(message=message)))
 
 
 def test_classifier_is_a_separate_bounded_model_call(monkeypatch):
@@ -87,9 +86,8 @@ def test_invalid_model_output_falls_back_without_execution(monkeypatch, bad):
             return completion(message, url)
 
     monkeypatch.setattr(task_router.httpx, "AsyncClient", Client)
-    route = asyncio.run(task_router.classify(ChatRequest(message="推导 Buck 公式")))
-    assert route["task"] == "knowledge" and route["mode"] == "fallback"
-    assert route["notice"] and "start_identification" not in task_router.route_tools(route)
+    with pytest.raises(ProviderUnavailable):
+        asyncio.run(task_router.classify(ChatRequest(message="推导 Buck 公式")))
 
 
 def test_router_timeout_is_labeled(monkeypatch):
@@ -103,9 +101,9 @@ def test_router_timeout_is_labeled(monkeypatch):
             raise httpx.ReadTimeout("secret-never-return")
 
     monkeypatch.setattr(task_router.httpx, "AsyncClient", Client)
-    route = asyncio.run(task_router.classify(ChatRequest(message="电容寿命")))
-    assert route["mode"] == "fallback" and route["task"] == "hardware"
-    assert "secret-never-return" not in json.dumps(route)
+    with pytest.raises(ProviderUnavailable) as error:
+        asyncio.run(task_router.classify(ChatRequest(message="电容寿命")))
+    assert "secret-never-return" not in str(error.value)
 
 
 @pytest.mark.parametrize("message", ["只解释辨识原理", "不要辨识，只解释公式", "好的", "continue",
@@ -130,7 +128,7 @@ def test_mixed_task_prompt_has_no_read_only_instruction():
     prompt = task_router.route_prompt(route)
     assert "不要启动计算" not in prompt and "不自动重新辨识" not in prompt
     readonly = task_router.make_route(task_router.TaskSelection(task="guidance"), "如何上传数据？", "agent")
-    assert "不启动新的数值辨识" in task_router.route_prompt(readonly)
+    assert "不启动新的参数辨识" in task_router.route_prompt(readonly)
 
 
 @pytest.mark.parametrize("task,message,expected_prefetch", [

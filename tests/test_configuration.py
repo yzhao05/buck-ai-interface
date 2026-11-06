@@ -1,3 +1,4 @@
+from provider_stub import rule_selection
 import asyncio
 import json
 
@@ -93,7 +94,7 @@ def test_no_key_does_not_start_old_configuration(monkeypatch):
     async def invoke(_): pytest.fail("Must not start a fit on fallback")
     result = asyncio.run(chat.answer(request(), invoke))
     assert result["ui_action"] is None and result["job_id"] is None
-    assert "本次未修改" in result["answer"]
+    assert result["answer"] == "" and result["error_code"] == "missing_api_key"
 
 
 def test_start_with_panel_closed_also_uses_frontend_apply_path(monkeypatch):
@@ -106,7 +107,7 @@ def test_start_with_panel_closed_also_uses_frontend_apply_path(monkeypatch):
 
 @pytest.mark.parametrize("message", ["进入参数辨识，选择 PANN，固定 R=6，然后开始参数辨识", "打开参数辨识", "把负载电阻改为8欧姆", "Use PANN, set R to 8 ohms, then start identification"])
 def test_configuration_route_takes_precedence(message):
-    route = task_router.make_route(task_router.rule_selection(message), message, "rules")
+    route = task_router.make_route(rule_selection(message), message, "rules")
     assert route["task"] == "configuration"
     assert "start_identification" not in task_router.route_tools(route)
 
@@ -129,21 +130,14 @@ def test_open_panel_after_analysis_is_not_a_result_followup(monkeypatch):
 
 
 @pytest.mark.parametrize("message", [
-    "把训练轮数改为250，然后开始辨识", "选择 PANN，PWM 切换为实测，然后开始",
-    "设置输入电压为35，再开始辨识", "Set epochs to 240 and start identification",
-    "Change the time range?", "把窗口长度改为3周期然后开始",
-    "把去噪窗口改为2周期，然后开始辨识", "Set smoothing to modified-sinc and start identification",
+    "选择 PANN，PWM 切换为实测，然后开始",
+    "设置输入电压为35，再开始辨识", "把窗口长度改为3周期然后开始",
 ])
 def test_unsupported_changes_cannot_be_ignored_and_started(monkeypatch, message):
     captured = provider(monkeypatch, {"open_panel": True, "changes": {}, "start_after_apply": True})
     result = asyncio.run(configuration.propose(request(message), ROUTE))
-    if message == "Change the time range?":
-        # No affirmative start request, regardless of provider output.
-        assert result["ui_action"] is None
-    else:
-        assert result["ui_action"] is None and "暂不支持" in result["answer"]
-        assert not captured
-        assert task_router.rule_selection(message).task == "configuration"
+    assert result["ui_action"] is None
+    assert captured  # Now supported, but the model must not silently omit the edit.
 
 
 @pytest.mark.parametrize("message", ["保持训练轮数不变，改用 PANN，然后开始", "Keep epochs unchanged and set R to 6"])

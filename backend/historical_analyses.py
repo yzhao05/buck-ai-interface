@@ -41,16 +41,3 @@ def analysis_context(analyses, total):
     return {"source":"historical_assistant_answers", "available_count":max(total,len(replies)),
             "selected_count":len(replies), "selection":"latest_up_to_four_result_analysis_replies",
             "replies":replies,"comparison_groups":groups}
-
-
-def local_analysis_history(context):
-    if not context["replies"]:
-        return "本会话未找到可配对的历史结果分析回答。请确认分析仍保存在当前会话中；这不代表必须重新运行辨识。本次没有启动计算。"
-    lines=[f"已找回最近 {context['selected_count']} 条完整结果分析（本会话共 {context['available_count']} 条）。依据来自历史 AI 回答，不是本次重新计算。", "",
-           "| 历史分析 | 方法 | PWM 来源 |", "|---|---|---|"]
-    for index, reply in enumerate(context["replies"],1):
-        method={"pann":"PANN","weighted_integral":"抗噪加权积分","integral":"积分辨识"}.get(reply["method"],"未记录")
-        pwm={"measured":"实测 PWM","controller":"重建 PWM"}.get(reply["pwm_source"],"未记录")
-        lines.append(f"| {index} | {method} | {pwm} |")
-    lines.extend(["", "当前为本地检索结果，尚未生成自动差异分析。AI 服务可用时，将依据这些完整回答比较同一 PWM 下的两种方法，以及同一种方法下的两种 PWM 来源；未记录的数值不补造。"])
-    return "\n".join(lines)

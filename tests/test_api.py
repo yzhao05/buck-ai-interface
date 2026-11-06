@@ -27,7 +27,7 @@ def test_upload_fit_chat_and_isolation(client):
     blocked=client.post("/api/chat",json={**body,"message":"开始参数辨识"})
     assert blocked.status_code==200
     assert blocked.json()["job_id"] is None
-    assert "进入参数辨识" in blocked.json()["answer"]
+    assert blocked.json()["error_code"] == "missing_api_key"
     job=client.post("/api/identify",json=body);assert job.status_code==202
     job_id=job.json()["job_id"]
     for _ in range(100):
@@ -38,11 +38,8 @@ def test_upload_fit_chat_and_isolation(client):
     assert status["stage"] == "complete"
     response=client.post("/api/chat",json={**body,"result_id":job_id,"message":"分析结果误差并给出修改计划"})
     assert response.status_code==200
-    assert "当前估计" in response.json()["answer"] and "结论" in response.json()["answer"]
-    assert "估计噪声标准差" in response.json()["answer"]
-    assert "5% 复核门槛" in response.json()["answer"]
+    assert response.json()['answer'] == '' and response.json()['error_code'] == 'missing_api_key'
     assert status['result']['measurement_diagnostics']['scope'] == 'same_record_holdout_not_new_record_prediction'
-    assert response.json()["mode"]=="local"
     changed=client.post("/api/chat",json={**body,"options":{"end_s":.0007,"method":"weighted_integral"},"result_id":job_id,"message":"分析结果误差"})
     assert "当前估计" not in changed.json()["answer"]  # stale config cannot reuse fit
     other={"X-Session-ID":str(uuid.uuid4())}
@@ -92,10 +89,8 @@ def test_csv_archive_bytes_access_expiry_and_reupload(client, monkeypatch):
 def test_no_fake_lifetime(client):
     response=client.post("/api/chat",json={"message":"这个电容还有多少年寿命？"})
     data=response.json()
-    assert data["mode"]=="local"
-    assert "不能" in data["answer"] and "器件型号" in data["answer"]
-    assert any(s["id"]=="capacitor-life" for s in data["sources"])
-    assert data["route"]["task"] == "hardware" and data["route"]["mode"] == "rules"
+    assert data['mode'] == 'provider_error' and data['answer'] == ''
+    assert data['error_code'] == 'missing_api_key' and data['sources'] == []
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -143,16 +138,18 @@ def test_formula_route_does_not_require_live_dataset(client):
     response = client.post("/api/chat", json={"message": "推导补偿器传递函数", "dataset_id": "expired",
         "mapping": {"time": "t", "current": "i", "voltage": "v"}})
     assert response.status_code == 200
-    assert response.json()["route"]["task"] == "knowledge"
+    assert response.json()["error_code"] == "missing_api_key"
     assert response.json()["job_id"] is None
 
 
-def test_identification_route_preserves_entry_and_data_checks(client):
+def test_identification_route_preserves_entry_and_data_checks(client, monkeypatch):
+    from provider_stub import install
+    captured = install(monkeypatch, execute=True)
     blocked = client.post("/api/chat", json={"message": "开始参数辨识"}).json()
     assert blocked["route"]["task"] == "identification" and blocked["job_id"] is None
-    assert "进入参数辨识" in blocked["answer"]
+    assert "进入参数辨识" in captured[-1]["messages"][-1]["content"]
     missing = client.post("/api/chat", json={"message": "开始参数辨识", "identification_enabled": True}).json()
-    assert missing["job_id"] is None and "CSV" in missing["answer"]
+    assert missing["job_id"] is None and "CSV" in captured[-1]["messages"][-1]["content"]
 
 
 @pytest.mark.parametrize("message", ["查看辨识结果", "参数辨识按钮在哪里？", "停止辨识", "辨识已经完成了"])
@@ -165,4 +162,4 @@ def test_non_execution_requests_never_queue_identification(client, monkeypatch, 
         "dataset_id": data["dataset_id"], "mapping": data["suggested_mapping"]})
     assert response.status_code == 200
     assert response.json()["job_id"] is None
-    assert response.json()["route"]["task"] != "identification"
+    assert response.json()["error_code"] == "missing_api_key"

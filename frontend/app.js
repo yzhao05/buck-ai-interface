@@ -29,6 +29,14 @@ const state = { dataset: null, csvFile: null, mapping: null, summary: null, resu
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
 const tools = {search_conversation:"检索会话记录", read_conversation_message:"读取历史消息", get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", get_analysis_history:"读取历史分析", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
 tools.run_diagnostic_controls="运行参数与初值对照";
+Object.assign(tools,{get_diagnostic_evidence:'读取训练与残差证据',connect_plecs:'连接或唤醒 PLECS',
+  open_plecs_model:'打开电路模型',search_plecs_models:'搜索电路模型文件夹',select_plecs_model:'选择实验电路',get_plecs_models:'读取电路参数',run_plecs_experiment:'运行 PLECS 对比实验'});
+function localPlecsConfig(){try{return JSON.parse(savedValue(`buck-plecs:${base}`)||'null');}catch{return null;}}
+async function syncPlecsConfig(){
+  const config=localPlecsConfig();
+  if(config && ['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname))
+    await api('/api/plecs/settings',{method:'POST',body:config,timeout:5000});
+}
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
   const button = $(buttonId), content = $(contentId);
@@ -176,7 +184,7 @@ async function connect() {
     state.connected = true;
     $("connection-status").className = "status connected";
     $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("后端已连接"));
-    ui($("chat-mode"), health.chat_mode === "deepseek" ? `DeepSeek · ${health.model}` : "本地规则分析 · 未配置 API Key");
+    ui($("chat-mode"), health.chat_mode === "deepseek" ? `DeepSeek · ${health.model}` : "AI unavailable · API key not configured");
     const pannOption = $("fit-method").querySelector('[value="pann"]');
     pannOption.disabled = !health.pann_available;
     ui(pannOption, health.pann_available ? "PANN · 物理网络微调" : "PANN · 需后端 PyTorch");
@@ -269,8 +277,8 @@ function fillMappings(dataset) {
   }
   for (const id of ["time-unit","current-unit","voltage-unit"]) $(id).selectedIndex = 0;
 }
-async function importData(file = null, resolveFile = null, {fromPlan=false}={}) {
-  if (fromPlan ? state.busy || state.chatBusy || state.syncBusy || state.job : historyLocked()) return;
+async function importData(file = null, resolveFile = null) {
+  if (historyLocked()) return;
   // An explicit import belongs to the latest clear generation already received
   // locally. A later clear during this request must still invalidate this file.
   const uploadEpoch=Math.max(activeConversation.file_epoch || 0,readConversation(activeConversation.id)?.file_epoch || 0);
@@ -464,8 +472,8 @@ function displayTruthComparison() {
   ui($("parameter-error-c"),comparison ? `${fmt(comparison.relative_error_pct.C,6)}%` : "—");
   $("truth-error").hidden=!state.truthError;ui($("truth-error"),state.truthError);
 }
-function calculateParameterError() {
-  if (!state.result || historyLocked())return;
+function calculateParameterError({fromChat=false}={}) {
+  if (!state.result || (fromChat ? state.busy||state.syncBusy||state.job : historyLocked()))return;
   const L_H=Number(state.truthDraft.l)/1e6,C_F=Number(state.truthDraft.c)/1e6;
   state.truthComparison=null;state.truthError="";
   if (![L_H,C_F].every(v=>Number.isFinite(v)&&v>0&&v<=1e30)) state.truthError="真实电感和真实电容必须是大于 0 的有限数值，请检查单位。";
@@ -676,6 +684,16 @@ $("diagnostic-reference-file").addEventListener('change',async event=>{
   }catch(error){notice(error.message);}
 });
 function decorateResponse(article, response) {
+    if(response.agent_budget){
+      const note=document.createElement('div');note.className='message-tools';
+      note.textContent=`${tr(response.agent_budget.thinking?'思考模式':'快速模式')} · ${response.agent_budget.model_calls} 次模型请求 · 成本预算占用上界 $${response.agent_budget.reserved_cost_usd}`;
+      article.append(note);
+    }
+    if(response.plecs_experiments?.length){
+      const box=document.createElement('details');box.className='message-tools';
+      const title=document.createElement('summary');title.textContent='PLECS 对比实验记录';box.append(title);
+      const pre=document.createElement('pre');pre.textContent=JSON.stringify(response.plecs_experiments,null,2);box.append(pre);article.append(box);
+    }
     if(response.control_checks){
       const box=document.createElement('details');box.className='message-tools diagnostic-controls-evidence';
       const summary=document.createElement('summary');ui(summary,'诊断对照执行记录');box.append(summary);
@@ -715,12 +733,12 @@ function decorateResponse(article, response) {
       task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
       if(response.ui_action?.parser==='deepseek')task.append(document.createTextNode(" · "),window.BuckI18n.node("DeepSeek 计划解析"));
       else if (response.route.mode !== "agent") task.append(document.createTextNode(" · "), window.BuckI18n.node(
-        response.route.mode === "fallback" ? "分类服务暂不可用，使用本地规则" : "本地规则分类"));
+        "上下文路由"));
       article.querySelector(".message-label").after(task);
     }
     if (response.tool_calls?.length) {
       const log = document.createElement("div"); log.className = "message-tools";
-      ui(log, response.tool_calls.map(t => `${tools[t.name] || t.name} · ${t.status}`).join("\n")); article.append(log);
+      ui(log, response.tool_calls.map(t => `${tools[t.name] || t.name} · ${t.status}${t.query ? ` · ${t.query} (${t.count})` : ""}`).join("\n")); article.append(log);
     }
     if (response.sources?.length) {
       const sources = document.createElement("div"); sources.className = "message-sources";
@@ -734,9 +752,15 @@ function decorateResponse(article, response) {
 }
 function configurationFingerprint() {
   return JSON.stringify({conversation:activeConversation?.id,session:sessionId,base,
-    dataset:state.dataset?.dataset_id,sha256:state.dataset?.sha256,mapping:state.mapping,
+    dataset:state.dataset?.dataset_id,sha256:state.dataset?.sha256,mapping:state.mapping,result:state.resultId,
+    truth:state.truthDraft,reference:selectedDiagnosticReference(),referenceConfirmed:$('diagnostic-reference-confirm').checked,
     fields:experimentFields.filter(id=>id!=="chat-images").map(id=>[$(id).id,$(id).value]),
     mappingFields:["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"].map(id=>$(id).value)});
+}
+function validTuningInterval(changes){
+  const start='start_s' in changes?changes.start_s:($('start-ms').value===''?null:Number($('start-ms').value)/1000);
+  const end='end_s' in changes?changes.end_s:($('end-ms').value===''?null:Number($('end-ms').value)/1000);
+  return start===null||end===null||start<end;
 }
 async function applyIdentificationAction(action, context) {
   const stale="会话、数据或设置已变化，本次操作未应用。请按当前界面重新发送指令。";
@@ -744,7 +768,7 @@ async function applyIdentificationAction(action, context) {
   if(action.type==="identification_plan")return acceptIdentificationPlan(action,context);
   if (action.type!=="configure_identification" || typeof action.open_panel!=="boolean" || typeof action.start_after_apply!=="boolean") throw new Error("配置操作格式无效。");
   const changes=action.changes;
-  if (!changes || Array.isArray(changes) || Object.keys(changes).some(k=>!["method","mode","resistance_ohm"].includes(k))
+  if (!validConfigurationChanges(changes) || !validConfigurationExtras(action)
       || ("method" in changes && !["pann","weighted_integral"].includes(changes.method))
       || ("mode" in changes && !["LC","LCR"].includes(changes.mode))
       || ("resistance_ohm" in changes && !(typeof changes.resistance_ohm==="number" && Number.isFinite(changes.resistance_ohm) && changes.resistance_ohm>.01 && changes.resistance_ohm<=100000))) throw new Error("配置操作格式无效。");
@@ -756,28 +780,33 @@ async function applyIdentificationAction(action, context) {
   if (configurationFingerprint()!==context.fingerprint)return tr(stale);
   if(active.job?.job_id){void watchJob(active.job.job_id);return tr("已有任务或同步正在进行，本次未修改配置或启动新实验。");}
   if (state.busy || state.syncBusy || state.job)return tr("已有任务或同步正在进行，本次未修改配置或启动新实验。");
-  if (pwmSource()==="controller" && (changes.mode || $("fit-mode").value)!=="LC")return tr("重建 PWM 只支持固定 R 的 LC 模式，本次未修改设置。");
   if (changes.method==="pann" && $("fit-method").querySelector('[value="pann"]').disabled)return tr("后端未安装 PyTorch，未切换方法或启动实验。");
+  const staged=await prepareConfigurationExtras(action,context);
+  const selectedSource=changes.pwm_source||$('pwm-source').value;
+  const targetMapping=staged.mapping||state.mapping;
+  const targetSource=selectedSource==='auto'?(targetMapping&&!targetMapping.pwm?'controller':'measured'):selectedSource;
+  if(targetSource==='controller'&&(changes.mode||$('fit-mode').value)!=='LC')return tr('重建 PWM 只支持固定 R 的 LC 模式，本次未修改设置。');
   // Mark before applying; replaying stored replies/retrying the same response cannot run twice.
   sessionStorage.setItem(key,"processed");
-  const applied=[];
+  pendingConfigurationStart=null;
+  const applied=await applyConfigurationExtras(action,staged);
   if (action.open_panel || Object.keys(changes).length || action.start_after_apply) {
     toggleSection("toggle-experiment","experiment-content","实验配置",true);
     setIdentificationOpen(true);
   }
-  if (changes.method) {$("fit-method").value=changes.method;applied.push(changes.method==="pann"?"PANN":tr("抗噪加权积分"));}
-  if (changes.mode) {$("fit-mode").value=changes.mode;applied.push(changes.mode);}
-  if ("resistance_ohm" in changes) {
-    if (Number($("fixed-r").value)!==changes.resistance_ohm && pwmSource()==="controller")$("controller-confirmed").value="no";
-    $("fixed-r").value=String(changes.resistance_ohm);applied.push(`R = ${changes.resistance_ohm} Ω`);
-  }
+  applied.push(...applyConfigurationChanges(changes,{resetConfirmation:Boolean(staged.dataset||staged.mappingChanged||staged.imageChanged)}));
   controls();persistConversation();
   const prefix=tr(applied.length ? "辨识设置已应用。" : "参数辨识面板已打开。")+(applied.length ? ` ${applied.join(" · ")}。` : "");
   if (!action.start_after_apply)return prefix+" "+tr("未启动实验，右侧保留已有结果。");
+  const plan=currentIdentificationPlan();
+  if(plan&&plan.status==='paused'){
+    plan.status='queued';saveIdentificationPlan(plan);return prefix+' '+tr('将继续已有辨识计划，并重新检查实验条件。');
+  }
   if (!state.dataset) {toggleSection("toggle-import","import-content","导入波形",true);return prefix+" "+tr("请先上传 CSV；本次未启动实验。");}
   if (!state.mapping) {$("mapping-details").open=true;return prefix+" "+tr("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
   if (pwmSource()==="controller" && $("controller-confirmed").value!=="yes") {
-    $("controller-settings").hidden=false;return prefix+" "+tr("请核对并确认控制电路与当前参数一致；本次未启动实验。");
+    pendingConfigurationStart={fingerprint:configurationFingerprint()};
+    $("controller-settings").hidden=false;return prefix+' '+tr('请核对并确认：当前电路接线与控制图一致，参数也与当前设置一致吗？回复“确认”后继续本次辨识；确认前未启动实验。');
   }
   if (pwmSource()==="measured" && !state.mapping.pwm)return prefix+" "+tr("请映射实际 PWM 列，或手动选择并确认控制器重建；本次未启动实验。");
   if (resultMatchesCurrent(state.result))return prefix+" "+tr("当前配置已有完成结果，未重复启动实验。");
@@ -787,7 +816,8 @@ async function applyIdentificationAction(action, context) {
 async function sendMessage(value, {analysisRequest=false}={}) {
   const images=chatImages();
   const text = value.trim() || (images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
-  if (!state.connected) { notice("请先连接分析后端。"); return; }
+  revokePendingConfigurationStart(text);
+  if (!state.connected) { window.alert("Backend is not connected. Please connect to the backend and try again."); return; }
   const currentOnly=analysisRequest || resultAnalysisPrompts.has(text);
   const controlRequest=!currentOnly && !images.length && /进入|打开|展开|选择|选用|改用|切换|设为|改成|改为|设置|固定|调整|完成|开始|启动|执行|运行|\b(?:open|enter|select|use|switch|set|fix|change|start|run|perform|identify)\b/i.test(text);
   const targetResultId=state.resultId;
@@ -829,11 +859,19 @@ async function sendMessage(value, {analysisRequest=false}={}) {
         // Integral mode does not use the hidden epoch field. An unfinished
         // epoch edit must not make every unrelated chat request fail with 422.
         if (validNumericInput(epochInput)) draftOptions.epochs=Number(epochInput.value);
-        actionContext={request_id:requestMessage.id,options:draftOptions,fingerprint:configurationFingerprint()};
+        draftOptions.pwm_denoise=$('pwm-denoise').value;
+        if(validNumericInput($('pwm-filter-cycles')))draftOptions.pwm_filter_cycles=Number($('pwm-filter-cycles').value);
+        draftOptions.controller=BuckCircuit.read();
+        const catalog=await configurationCatalog({includeRemote:/csv|文件|上传|切换|更换|换成|file|dataset/i.test(text)});
+        actionContext={request_id:requestMessage.id,options:draftOptions,fingerprint:configurationFingerprint(),catalog};
       } catch { /* Invalid drafts remain a form validation error. */ }
     }
-    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,
-      ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options} : undefined,
+    try { await syncPlecsConfig(); } catch (error) { notice(error.message); }
+    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,reasoning_mode:$("reasoning-mode").value,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
+      ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options,pwm_source_setting:$('pwm-source').value,
+        mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
+        pending_start:pendingConfigurationStart?.fingerprint===actionContext.fingerprint,
+        pending_reference_confirmation:Boolean(selectedDiagnosticReference()&&!$('diagnostic-reference-confirm').checked)} : undefined,
       dataset_id:savedResult || imageQuestion ? null : state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
       saved_result:savedResult ? {...savedResult,result:experimentSnapshot(state.result)} : undefined,
       options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
@@ -845,24 +883,39 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       // The backend classifier enforces read-only tools for comparison alone.
       experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult && !imageQuestion}});
     pending.remove();
+    if (response.mode === "provider_error") {
+      window.alert(response.provider_error);
+      const article = message("assistant", response.provider_error, "请求未完成");
+      decorateResponse(article, response);
+      const failedReply = rememberMessage("assistant", response.provider_error, {
+        request_message_id:requestMessage.id, tool_calls:response.tool_calls,
+        agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,
+        control_checks:response.control_checks, retrieved_sources:response.retrieved_sources,
+        error_code:response.error_code
+      }, "请求未完成");
+      article.dataset.messageId=failedReply.id;
+      if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
+      return;
+    }
     if (response.ui_action) {
       try {response.answer=await applyIdentificationAction(response.ui_action,actionContext);}
       catch(error){response.answer=tr("未能应用配置操作：")+tr(error.message);}
       response.ui_action_status=response.answer;
     }
-    const answer = (response.provider_error ? response.provider_error + "\n\n" : "") + response.answer;
-    const replyMode=response.mode === "deepseek" ? "DeepSeek" : response.mode === "plan_error" ? "计划未执行" : "本地规则分析";
+    const answer = response.answer;
+    const replyMode=response.mode === "deepseek" ? "DeepSeek" : "请求未完成";
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
-    const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,
+    const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
       request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
       repeatability:response.repeatability,
       control_checks:response.control_checks,
+      agent_budget:response.agent_budget,plecs_experiments:response.plecs_experiments,
       ...(response.ui_action ? {ui_action:response.ui_action,ui_action_status:response.ui_action_status} : {}),
       ...(analysisMeta && !response.job_id ? {analysis:{...analysisMeta,request_id:requestMessage.id}} : {})}, replyMode);
     article.dataset.messageId=savedReply.id;
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
-  } catch (error) { pending.remove(); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
+  } catch (error) { pending.remove(); window.alert("Chat request failed. Please check the backend connection and try again."); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
   finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; startQueuedIdentificationPlan(); }
 }
 function svgNode(name, attrs = {}, text = null) {
@@ -1145,13 +1198,24 @@ $("clear-data").onclick=async()=>{
   }catch(error){notice(error.message);}
   finally {state.busy=false;controls();}
 };
-$("open-settings").onclick=()=>{$("api-url").value=base;$("access-token").value=accessToken;$("sync-code").value=archiveKey;ui($("settings-status"), "");$("settings-dialog").showModal();};
+$("open-settings").onclick=async()=>{$("api-url").value=base;$("access-token").value=accessToken;$("sync-code").value=archiveKey;$("plecs-executable").value='';ui($("settings-status"), "");$("settings-dialog").showModal();
+  $("plecs-model-directory").value='';
+  const rememberedPlecs=localPlecsConfig();
+  if(rememberedPlecs){$("plecs-executable").value=rememberedPlecs.executable;$("plecs-model-directory").value=rememberedPlecs.model_directory||'';}
+  try{if(['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)){
+    const selectedBase=base;const p=await api('/api/plecs/settings',{timeout:5000});
+    if(base===selectedBase && !$("plecs-executable").value)$("plecs-executable").value=p.executable || '';
+    if(base===selectedBase && !$("plecs-model-directory").value)$("plecs-model-directory").value=p.model_directory || '';
+  }}catch{/* PLECS configuration is optional. */}
+};
 $("sync-now").onclick=()=>void synchronizeArchive();
 $("copy-sync-code").onclick=async()=>{
   try { await navigator.clipboard.writeText($("sync-code").value);ui($("settings-status"),"同步恢复码已复制，请妥善保管。"); }
   catch { ui($("settings-status"),"复制失败，请手动复制同步恢复码。"); }
 };
 $("api-url").oninput=()=>{
+  $("plecs-executable").value='';
+  $("plecs-model-directory").value='';
   // Never carry the previous backend's credential into a different connection.
   $("access-token").value=tokenKey($("api-url").value.trim())===tokenKey(base) ? accessToken : savedToken($("api-url").value.trim());
 };
@@ -1191,6 +1255,12 @@ $("settings-form").onsubmit=async event=>{
     ui($("settings-status"), "正在连接…");
     if(backendChanged || codeChanged){state.connected=false;resetExperiment();await initializeHistory();}
     if(await connect()){
+      if(['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)){
+        if(!['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname))throw new Error('PLECS 自动启动需要连接本机后端。');
+        const plecsConfig={executable:$("plecs-executable").value.trim(),model_directory:$("plecs-model-directory").value.trim()};
+        await api('/api/plecs/settings',{method:'POST',body:plecsConfig});
+        localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(plecsConfig));
+      }
       await synchronizeArchive({preferRemote:true});
       if(!state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
       scheduleArchiveSync();
@@ -1201,6 +1271,7 @@ $("settings-form").onsubmit=async event=>{
   }catch(e){ui($("settings-status"), e.message);}
 };
 $("chat-input").addEventListener("input",persistConversation);
+$("reasoning-mode").addEventListener("change",persistConversation);
 $("experiment-content").addEventListener("change",persistConversation);
 for (const [button,content,label] of [["toggle-experiment","experiment-content","实验配置"],["toggle-history","history-content","历史会话"]]) {
   $(button).onclick=()=>{

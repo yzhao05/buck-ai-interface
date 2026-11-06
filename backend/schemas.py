@@ -1,7 +1,8 @@
 from typing import Literal
 import json
 import math
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, create_model
+from copy import deepcopy
 from .vision import ChatImage
 
 
@@ -75,19 +76,73 @@ class FitRequest(AnalysisRequest):
     options: FitOptions = Field(default_factory=FitOptions)
 
 
-class IdentificationChanges(StrictModel):
+class PatchModel(StrictModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False, strict=True)
+
+
+def partial_model(name, source, exclude=()):
+    fields = {}
+    for key, info in source.model_fields.items():
+        if key in exclude:
+            continue
+        field = deepcopy(info)
+        field.default = None
+        fields[key] = (info.annotation | None, field)
+    return create_model(name, __base__=PatchModel, **fields)
+
+
+ControllerChanges = partial_model('ControllerChanges', ControllerParameters)
+MappingChanges = partial_model('MappingChanges', Mapping)
+FitChanges = partial_model('FitChanges', FitOptions, ('controller', 'pwm_source', 'method'))
+
+
+class IdentificationTuning(FitChanges):
+    epochs: int | None = Field(default=None, strict=True, ge=10, le=300)
+    start_s: float | None = Field(default=None, strict=True, allow_inf_nan=False)
+    end_s: float | None = Field(default=None, strict=True, allow_inf_nan=False)
+    pwm_denoise: Literal['sg', 'modified_sinc', 'none'] | None = None
+    pwm_filter_cycles: float | None = Field(default=None, strict=True, ge=.1, le=8, allow_inf_nan=False)
+    controller: ControllerChanges | None = None
+    pwm_source: Literal['auto', 'measured', 'controller'] | None = None
+    controller_confirmed: bool | None = Field(default=None, strict=True)
+
+
+class IdentificationChanges(IdentificationTuning):
     method: Literal["pann", "weighted_integral"] | None = None
     mode: Literal["LC", "LCR"] | None = None
     resistance_ohm: float | None = Field(default=None, strict=True, gt=0.01, le=100000)
 
 
-class ConfigureIdentification(StrictModel):
+class ConfigurationAssets(StrictModel):
+    csv_id: str | None = Field(default=None, max_length=160)
+    circuit_id: str | None = Field(default=None, max_length=160)
+    result_id: str | None = Field(default=None, max_length=160)
+
+
+class AnalysisChanges(StrictModel):
+    truth_L_H: float | None = Field(default=None, strict=True, gt=0, le=1e30)
+    truth_C_F: float | None = Field(default=None, strict=True, gt=0, le=1e30)
+    reference_csv_id: str | None = Field(default=None, max_length=160)
+    reference_confirmed: bool | None = Field(default=None, strict=True)
+    calculate_error: bool | None = Field(default=None, strict=True)
+
+
+class ConfigurationExtras(StrictModel):
+    mapping: MappingChanges = Field(default_factory=MappingChanges)
+    assets: ConfigurationAssets = Field(default_factory=ConfigurationAssets)
+    analysis: AnalysisChanges = Field(default_factory=AnalysisChanges)
+    evidence: dict[str, str] = Field(default_factory=dict, max_length=60)
+
+
+class ConfigureIdentification(ConfigurationExtras):
     open_panel: bool = Field(strict=True)
     changes: IdentificationChanges
     start_after_apply: bool = Field(strict=True)
+    clarification: str = Field(default='', max_length=500)
 
 
-class IdentificationPlanProposal(StrictModel):
+class IdentificationPlanProposal(ConfigurationExtras):
+    tuning: IdentificationTuning = Field(default_factory=IdentificationTuning)
     execute: bool = Field(strict=True)
     clarification: str = Field(max_length=500)
     filename: str | None = Field(max_length=255)
@@ -101,6 +156,12 @@ class IdentificationUIContext(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     # Separate from the displayed historical result's options.
     options: FitOptions
+    pwm_source_setting: Literal['auto','measured','controller'] | None = None
+    mapping: Mapping | None = None
+    columns: list[str] = Field(default_factory=list, max_length=300)
+    catalog: list[dict[str, str]] = Field(default_factory=list, max_length=300)
+    pending_start: bool = False
+    pending_reference_confirmation: bool = False
 
 
 class ChatMessage(StrictModel):
@@ -228,6 +289,8 @@ class DiagnosticReference(StrictModel):
 
 
 class ChatRequest(StrictModel):
+    reasoning_mode: Literal["auto", "fast", "thinking"] = "auto"
+    circuit_filename: str = Field(default='', max_length=200)
     enable_diagnostic_controls: bool = False
     diagnostic_reference: DiagnosticReference | None = None
     ui_context: IdentificationUIContext | None = None

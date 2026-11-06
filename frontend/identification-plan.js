@@ -75,7 +75,8 @@ async function acceptIdentificationPlan(action,context){
   if(!Array.isArray(action.methods) || action.methods.length!==2 || new Set(action.methods).size!==2 || action.methods.some(m=>!["pann","weighted_integral"].includes(m))
       || !(action.filename===null || (typeof action.filename==='string' && action.filename.length<=255 && /\.csv$/i.test(action.filename) && !/[\\/]/.test(action.filename))))throw new Error("配置操作格式无效。");
   const c=action.changes;
-  if(!c || Object.keys(c).some(k=>!["mode","pwm_source","resistance_ohm"].includes(k)) || ('pwm_source' in c && !["measured","controller"].includes(c.pwm_source))
+  if(action.assets?.result_id||Object.keys(action.analysis||{}).length)throw new Error('请在辨识完成后单独设置真值、诊断参考或选择历史结果。');
+  if(!validConfigurationChanges(c) || !validConfigurationExtras(action) || ('pwm_source' in c && !["auto","measured","controller"].includes(c.pwm_source))
       || (c.mode && !["LC","LCR"].includes(c.mode)) || (c.pwm_source==='controller' && c.mode!=='LC')
       || ('resistance_ohm' in c && !(typeof c.resistance_ohm==='number' && Number.isFinite(c.resistance_ohm) && c.resistance_ohm>.01 && c.resistance_ohm<=100000)))throw new Error("配置操作格式无效。");
   if(action.version===3 && (c.mode!=='LC' || 'pwm_source' in c))throw new Error("配置操作格式无效。");
@@ -114,36 +115,31 @@ async function continueIdentificationPlan(){
     saveIdentificationPlan(plan);controls();
     toggleSection('toggle-experiment','experiment-content','实验配置',true);setIdentificationOpen(true);
     if(!state.connected)throw new Error("请先连接分析后端。");
-    if(plan.filename && state.dataset?.filename.toLowerCase()!==plan.filename.toLowerCase()){
-      if(plan.done.length || plan.jobId)throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
-      const {entries,incomplete}=await historicalCsvEntries();
-      const candidates=entries.filter(e=>e.filename.toLowerCase()===plan.filename.toLowerCase());
-      const hashes=new Set(candidates.map(e=>e.sha256));
-      if(hashes.size>1)throw new Error("找到同名但内容不同的 CSV。请在历史 CSV 列表中明确选择文件，再继续计划。");
-      if(incomplete)throw new Error("历史 CSV 查询不完整。请手动选择目标 CSV，再继续计划。");
-      if(!candidates.length)throw new Error("没有找到指定 CSV。请上传或从历史列表选择计划中的文件，再点击继续。");
-      // Loading a different file requires the user to confirm its circuit again.
-      const range=[$('start-ms').value,$('end-ms').value];
-      const loaded=await importData(null,()=>historicalCsvFile(candidates[0]),{fromPlan:true});
-      if(loaded?.error)throw new Error(loaded.error);
-      if(state.dataset?.sha256!==candidates[0].sha256)throw new Error("没有找到指定 CSV。请上传或从历史列表选择计划中的文件，再点击继续。");
-      if(range[0])$('start-ms').value=range[0];if(range[1])$('end-ms').value=range[1];
-    }
-    if(!state.dataset){toggleSection('toggle-import','import-content','导入波形',true);throw new Error("请先上传 CSV；本次未启动实验。");}
     // Once a job has been submitted, reject edits before asking for new circuit
     // confirmation or validating a different configuration.
     if((plan.done.length || plan.jobId) && plan.inputs!==planInputs())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
     const c=plan.changes;
-    if(!plan.done.length && !plan.jobId){
-      if(plan.version===3)$('pwm-source').value='controller';
-      if(c.pwm_source)$('pwm-source').value=c.pwm_source;if(c.mode)$('fit-mode').value=c.mode;
-      if('resistance_ohm' in c){
-        if(Number($('fixed-r').value)!==c.resistance_ohm)$('controller-confirmed').value='no';
-        $('fixed-r').value=String(c.resistance_ohm);
+    if(!plan.done.length && !plan.jobId && !plan.settingsApplied){
+      if(!validConfigurationChanges(c)||plan.assets?.result_id||Object.keys(plan.analysis||{}).length)throw new Error('配置操作格式无效。');
+      const context={fingerprint:configurationFingerprint()};
+      context.catalog=await configurationCatalog({includeRemote:Boolean(plan.filename||plan.assets?.csv_id)});
+      const action={...plan,assets:{...plan.assets}};
+      if(plan.filename&&!action.assets.csv_id&&state.dataset?.filename.toLowerCase()!==plan.filename.toLowerCase()){
+        const candidates=[...context.catalog.values()].filter(item=>item.kind==='csv'&&item.name.toLowerCase()===plan.filename.toLowerCase());
+        if(candidates.length>1)throw new Error('找到同名但内容不同的 CSV。请在历史 CSV 列表中明确选择文件，再继续计划。');
+        if(context.catalog.incomplete)throw new Error('历史 CSV 查询不完整。请手动选择目标 CSV，再继续计划。');
+        if(!candidates.length)throw new Error('没有找到指定 CSV。请上传或从历史列表选择计划中的文件，再点击继续。');
+        action.assets.csv_id=candidates[0].id;
       }
-      prepareControllerDefaults();controls();persistConversation();
+      if(plan.filename&&action.assets.csv_id&&context.catalog.get(action.assets.csv_id)?.name.toLowerCase()!==plan.filename.toLowerCase())throw new Error('文件名与所选 CSV 不一致，请重新选择。');
+      if(!state.dataset&&!action.assets.csv_id){toggleSection('toggle-import','import-content','导入波形',true);throw new Error('请先上传 CSV；本次未启动实验。');}
+      const staged=await prepareConfigurationExtras(action,context);
+      await applyConfigurationExtras(action,staged);
+      applyConfigurationChanges(c,{resetConfirmation:Boolean(staged.dataset||staged.mappingChanged||staged.imageChanged)});controls();persistConversation();
+      plan.settingsApplied=true;
       if(plan.version===3)$('pwm-source').value=plan.runs[0].pwm_source;
     }
+    if(!state.dataset){toggleSection('toggle-import','import-content','导入波形',true);throw new Error('请先上传 CSV；本次未启动实验。');}
     if(plan.version!==3)plan.pwmSource=pwmSource();
     const runs=planRuns(plan);
     if(!state.mapping){$('mapping-details').open=true;throw new Error("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
@@ -200,7 +196,13 @@ async function continueIdentificationPlan(){
       const text=tr(plan.note)+'\n\n'+plan.done.map(r=>`- **${plan.version===3?planRunLabel(r):r.method==='pann'?'PANN':tr('抗噪加权积分')}**: L = ${fmt(r.parameters.L_H*1e6,6)} μH, C = ${fmt(r.parameters.C_F*1e6,6)} μF, R = ${fmt(r.parameters.R_ohm,6)} Ω`).join('\n');
       message('assistant',text,'辨识任务');rememberMessage('assistant',text,null,'辨识任务');
     }
-  }catch(error){if(plan.status!=='cancelled'){plan.status='paused';plan.note=error.message;}}
+  }catch(error){if(plan.status!=='cancelled'){
+    plan.status='paused';plan.note=error.message;
+    if(!plan.done.length&&!plan.jobId&&/确认控制电路/.test(error.message)){
+      pendingConfigurationStart={fingerprint:configurationFingerprint()};
+      plan.note+=' '+tr('请确认当前接线和参数一致；回复“确认”后继续此计划。');
+    }
+  }}
   finally{
     state.planRunning=false;
     try{saveIdentificationPlan(plan);}catch(error){

@@ -226,14 +226,3 @@ class ConversationIndex:
             return self.search(**arguments) if name == "search_conversation" else self.read(**arguments)
         except TypeError:
             return {"error": "工具参数不符合要求。"}
-
-    def local_answer(self, result):
-        excerpts = result.get("excerpts", [])
-        if not excerpts:
-            return "已检索本会话完整已保存记录，未找到匹配原文。请换用当时讨论的关键词；本次未启动辨识。"
-        lines = [f"已从本会话 {len(self.messages)} 条消息中读取 {len(excerpts)} 条相关材料。当前仅展示本地检索原文，尚未生成 AI 总结。"]
-        for item in excerpts:
-            label = "用户" if item["role"] == "user" else "AI 回答"
-            scope = f"片段 {item['start']}–{item['end']}/{item['total_length']} 字符" if item["partial"] else "全文"
-            lines.append(f"[消息 #{item['ordinal']}] {label} · {scope}\n\n" + item["content"])
-        return "\n\n---\n\n".join(lines)

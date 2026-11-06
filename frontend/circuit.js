@@ -14,7 +14,7 @@ window.BuckCircuit = (() => {
     ["frequency","开关频率","kHz",1,100,.1,2000], ["vin","输入电压","V",1,28,.1,2000],
     ["fixed-r","已知负载电阻","Ω",1,6,.011,100000]
   ];
-  let draftImage = "", uploading = false, renderKey = "", generation = 0;
+  let draftImage = "", draftImageName = "", uploading = false, renderKey = "", generation = 0;
   const number = value => Number.isFinite(Number(value)) ? Number(Number(value).toPrecision(6)).toString() : "—";
   function read() {
     let saved = {};
@@ -22,6 +22,13 @@ window.BuckCircuit = (() => {
     return Object.fromEntries(specs.slice(0,14).map(([key,,,scale,value])=>[key,Number(Number(saved?.[key] ?? value*scale).toPrecision(15))]));
   }
   function validImage(value) { return value.length <= 360000 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value); }
+  function rememberImage(data_url=el('controller-image').value,name=el('controller-image-name').value){
+    if(!validImage(data_url))return;
+    let saved=[];try{saved=JSON.parse(el('controller-image-library').value||'[]');}catch{}
+    if(!Array.isArray(saved))saved=[];
+    if(!saved.some(image=>image.data_url===data_url))saved.push({name:name||'circuit.png',data_url});
+    el('controller-image-library').value=JSON.stringify(saved);
+  }
   function node(tag, attrs={}, text) {
     const n = document.createElementNS("http://www.w3.org/2000/svg",tag);
     Object.entries(attrs).forEach(([k,v])=>n.setAttribute(k,v));
@@ -106,6 +113,7 @@ window.BuckCircuit = (() => {
     const values=valuesFromSaved();
     specs.forEach(([key])=>el("circuit-"+key).value=values[key]);
     draftImage=validImage(el("controller-image").value) ? el("controller-image").value : "";
+    draftImageName=el("controller-image-name").value;
     I.text(el("circuit-error"),"");renderDraft();el("circuit-dialog").showModal();
   }
   const fields=el("circuit-fields");
@@ -119,9 +127,10 @@ window.BuckCircuit = (() => {
   el("circuit-dialog").addEventListener("close",()=>{generation++;draftImage="";uploading=false;el("save-circuit").disabled=false;el("circuit-file").value="";});
   el("upload-circuit").onclick=()=>{open();el("circuit-file").click();};
   el("circuit-upload-edit").onclick=()=>el("circuit-file").click();
-  el("circuit-default-edit").onclick=()=>{draftImage="";renderDraft();};
+  el("circuit-default-edit").onclick=()=>{draftImage="";draftImageName="";renderDraft();};
   el("show-default-circuit").onclick=()=>{
-    el("controller-image").value="";render();document.dispatchEvent(new Event("buck-circuit-change"));
+    rememberImage();
+    el("controller-image").value="";el("controller-image-name").value="";render();document.dispatchEvent(new Event("buck-circuit-change"));
   };
   el("reset-controller").onclick=()=>{specs.forEach(([key,,,,value])=>el("circuit-"+key).value=value);renderDraft();};
   el("circuit-file").onchange=async event=>{
@@ -143,7 +152,7 @@ window.BuckCircuit = (() => {
         if(data.length<=360000)break;
       }
       if(!validImage(data))throw new Error("图片压缩后仍过大，请裁剪电路区域后重试。");
-      if(ticket===generation && el("circuit-dialog").open){draftImage=data;renderDraft();}
+      if(ticket===generation && el("circuit-dialog").open){draftImage=data;draftImageName=file.name.slice(0,200);renderDraft();}
     } catch(error) {if(ticket===generation)I.text(el("circuit-error"),error.message.startsWith("图片")||error.message.startsWith("请选择") ? error.message : "无法读取图片，请选择有效的 PNG、JPG 或 WebP 文件。");}
     finally{bitmap?.close();if(ticket===generation){uploading=false;el("save-circuit").disabled=false;}el("circuit-file").value="";}
   };
@@ -152,7 +161,9 @@ window.BuckCircuit = (() => {
     const values=draftValues();
     if(values.duty_min>=values.duty_max){I.text(el("circuit-error"),"占空比下限必须小于上限。");return;}
     const params=Object.fromEntries(specs.slice(0,14).map(([key,,,scale])=>[key,Number((values[key]*scale).toPrecision(15))]));
+    rememberImage();rememberImage(draftImage,draftImageName);
     el("controller-parameters").value=JSON.stringify(params);el("controller-image").value=draftImage;
+    el("controller-image-name").value=draftImageName;
     for(const id of ["frequency","vin","fixed-r"])el(id).value=values[id];
     el("circuit-dialog").close();render();document.dispatchEvent(new Event("buck-circuit-change"));
   };
@@ -161,5 +172,5 @@ window.BuckCircuit = (() => {
     for(const id of ["edit-circuit","circuit-preview","upload-circuit","show-default-circuit"])el(id).disabled=busy;
     if(busy && el("circuit-dialog").open)el("circuit-dialog").close();
   }
-  return {read,render,setBusy};
+  return {read,render,setBusy,rememberImage,specs:specs.slice(0,14)};
 })();

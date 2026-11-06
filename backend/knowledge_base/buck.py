@@ -32,9 +32,11 @@ vo 对地连接 C1、固定负载 R，以及经 S1 接入的 R5。
 控制级：vo—R1—va—(R2 || C2)—vm；vm—R4—地；vm—C3—vb—R3—vop。
 运放：正输入 Vref，负输入 vm，输出 vop；vop → Gain → Saturation → PWM → T1。
 完整状态：x = [iL, vo, x2, x3]^T，x2=va-vm，x3=vb-vm。
-轻量辨识状态：x_p = [iL, vo]^T，输入是实际测得的 PWM q(t)。""",
+实测 PWM 模式：功率级状态 x_p = [iL, vo]^T，以实测 q(t) 驱动，忽略反馈取样支路。
+已知控制器重建模式：训练段重建 q(t) 与 isense，固定已知 R 辨识 L/C；验证联立完整四状态自主运行。""",
       """功率公式包括开关分段、CCM/DCM、稳态、纹波、应力、寄生、平均模型和小信号；控制公式包括有限增益运放 KCL、补偿网络、PWM、限幅、闭环及离散扩展；辨识公式包括积分回归与验证指标。
-Case16A/B 使用上述闭环网络；独立的 Case17 固定占空比模型删除了反馈和切换负载。知识库中的模型值只能解释明确指定的参考模型，不能当作新 CSV 的辨识结果。""",
+Case16A/B 使用上述闭环网络；独立的 Case17 固定占空比模型删除了反馈和切换负载。知识库中的模型值只能解释明确指定的参考模型，不能当作新 CSV 的辨识结果。
+界面提供抗噪加权积分与 PANN 两种方法，均按所选 PWM 来源使用对应模型；控制器重建须先确认接线、参数、时钟与初态，不辨识控制器参数。""",
       ["local-plecs", "plecs-demo", "pe-gpt"]),
 entry("buck-symbols", "符号、单位与电流方向 / Symbols and units",
       "符号 单位 定义 方向 symbols units definitions lcr esr",
@@ -266,15 +268,19 @@ entry("buck-discrete-control", "离散控制扩展与延迟 / Optional digital i
       ["local-plecs"]),
 entry("buck-identification-formulas", "L/C/R 积分辨识回归 / Integral identification",
       "辨识 识别 积分 回归 最小二乘 lcr parameter identification integral regression least squares",
-      "网页实测 PWM 模式：已知 Vin、实际 PWM、理想非同步 Buck、区间内 Rload 恒定，忽略反馈取电。下列积分式针对该模式；控制器重建 LC 模式须将电容方程中的 iL 替换为 iL-isense，并固定已知 R。",
+      "已知 Vin、理想非同步 Buck、区间内 Rload 恒定。实测 PWM 模式忽略反馈取电，支持 L/C/R 联合辨识或固定 R 的 L/C 辨识；已确认配置的控制器重建模式计入 isense，仅支持固定已知 R 的 L/C 辨识。下列先给基础积分式，再给当前抗噪加权积分式。",
       """对窗口 [ta,tb]：L ΔiL=∫(q Vin-vo)dt，记 yL=∫(q Vin-vo)dt。
 最小二乘：min_{L>0} Σw[yL,w-L ΔiL,w]^2。
 电容 KCL 积分：∫iL dt=C Δvo+G∫vo dt，G=1/Rload。
 Xw=[Δvo,w, ∫vo dt]；θ=[C,G]^T；min_{C>0,G>0} ||Xθ-y||²，Rload=1/G。
 固定 R 时：C Δvo=∫iL dt-(1/R)∫vo dt。
 完整反馈修正：把回归右侧 ∫iL dt 改为 ∫(iL-isense)dt。
-变量负载：∫iL dt=C Δvo+∫Gload(t)vo dt+∫isense dt，不能直接当作单一常数 G 回归。""",
-      "含关断零电流段的窗口不满足电感积分方程，要排除。C/G 两列需线性独立且有动态激励；仅稳态 DC 无法识别 C。网页实际做有界和列缩放回归，不是对每个噪声点做导数相除。增加知识条目不会把反馈修正自动接入现有算法。",
+变量负载：∫iL dt=C Δvo+∫Gload(t)vo dt+∫isense dt，不能直接当作单一常数 G 回归。
+端点零权重：u=(t-ta)/(tb-ta)，φ=u²(1-u)²，φ(ta)=φ(tb)=0，φ'=dφ/dt。
+加权电感式：L[-∫φ' iL dt]=∫φ(q Vin-vo)dt。
+加权电容式：C[-∫φ' vo dt]+G∫φ vo dt=∫φ(iL-isense)dt。
+实测 PWM 模式取 isense=0；控制器重建模式使用训练段重建的 isense，G=1/R 已知。""",
+      "含关断零电流段的窗口不满足电感积分方程，要从电感回归中排除。C/G 两列需线性独立且有动态激励；仅稳态 DC 无法识别 C。当前 weighted_integral 使用训练段 2/5/10 周期窗口和带正值边界、参数缩放的回归，直接输出加权积分参数；pann 使用同一估计初始化，再以波形损失微调，不保证更准确。两种方法在控制器重建模式均已计入取样支路。旧 integral API 保留基础积分算法供复现，仅支持实测 PWM；不能把旧结果当作加权积分结果。",
       ["local-fitter", "local-plecs"]),
 entry("buck-identifiability", "可辨识性、噪声与参数误差 / Identifiability",
       "可辨识 条件数 噪声 误差 原因 修改 计划 rank noise identifiability bias error",
@@ -288,13 +294,13 @@ PWM 时移 δt 导致开关电压积分误差量级约 Vin·δt（单边沿）�
       ["local-fitter", "local-plecs"]),
 entry("buck-validation", "波形统计、验证与误差指标 / Validation metrics",
       "rmse nrmse 验证 时间加权 统计 平均 误差 validation metrics waveform mean",
-      "非均匀时间戳、连续时间统计；当前实现对时间积分采用梯形规则，PWM 电压积分采用零阶保持。",
+      "非均匀时间戳、连续时间统计。波形统计和误差采用梯形积分；旧 integral 的测量积分也采用梯形规则。当前加权积分对分段线性测量与权函数采用三点 Gauss 求积，PWM 保持零阶保持。",
       """T=tend-tstart；mean(x)=(1/T)∫x(t)dt；RMS(x)=sqrt[(1/T)∫x(t)^2dt]。
 RMSE=sqrt[(1/T)∫(xhat-x)^2dt]；NRMSE%=100 RMSE/max(RMS(x),10^-9)。
 梯形规则：∫x dt≈Σ(x[k]+x[k+1])/2·(t[k+1]-t[k])。
 PWM 零阶保持：∫q Vin dt≈Σ q[k] Vin·(t[k+1]-t[k])。
 训练分界 t_split=t_start+f_train(t_end-t_start)。
 连续验证：只在所选区间起点初始化，预测贯穿训练和后段，验证段不重置为测量状态。""",
-      "RMS/NRMSE 归一化定义需说明，不要与按峰峰值归一化混用。当前网页使用测量 PWM、同一记录后段验证；这不是自主闭环，也不是独立工况外推。没有真实参数就不报告参数真实误差；新四状态知识不改变该验证协议。",
+      "RMS/NRMSE 归一化定义需说明，不要与按峰峰值归一化混用。实测 PWM 模式以同一记录的实测 PWM 连续前向预测，不是自主闭环；已知控制器重建模式在训练段重建 PWM 和取样支路，验证时以预测电压驱动已知控制器，自主闭环运行，不使用留出电压或实测 PWM 驱动。两种模式均按时间划分同一记录的训练段和留出段，不在留出段重置状态，也都不是独立工况验证。加权积分从首个测量状态的非负投影开始；PANN 联合初值模式仅采用首窗口同轮次估计初值，固定测量初值模式作为对照；控制器状态使用已确认的初态。波形误差比较也受初态策略影响。没有独立参数真值就不报告参数真实误差，低波形误差或训练稳定不能证明参数准确。",
       ["local-fitter"]),
 ]

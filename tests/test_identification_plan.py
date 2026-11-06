@@ -1,3 +1,4 @@
+from provider_stub import rule_selection
 import asyncio
 import json
 
@@ -25,6 +26,9 @@ def provider(monkeypatch, arguments, *, fail=False, calls=None):
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def post(self, url, **kwargs):
+            if kwargs['json']['tools'][0]['function']['name'] == 'route_task':
+                return httpx.Response(200, request=httpx.Request('POST',url), json={'choices':[{'message':{'tool_calls':[
+                    {'function':{'name':'route_task','arguments':json.dumps({'task':'configuration','secondary_tasks':[]})}}]}}]})
             captured.append(kwargs['json'])
             if fail:
                 raise httpx.ConnectError('unavailable')
@@ -64,8 +68,8 @@ def test_no_provider_does_not_fall_back_to_rules(monkeypatch):
     monkeypatch.delenv('DEEPSEEK_API_KEY',raising=False)
     result=asyncio.run(configuration.propose(request('根据已有PWM运行两种方法'),{}))
     assert result['ui_action'] is None and result['job_id'] is None
-    assert 'DeepSeek' in result['answer']
-    assert result['mode']=='plan_error'
+    assert result['answer'] == '' and result['error_code'] == 'missing_api_key'
+    assert result['mode']=='provider_error'
 
 
 def test_chat_dispatch_uses_model_plan_without_starting_old_configuration(monkeypatch):
@@ -83,7 +87,7 @@ def test_provider_failure_does_not_fall_back_to_old_settings(monkeypatch):
     provider(monkeypatch,{},fail=True)
     result=asyncio.run(configuration.propose(request('根据已有PWM运行两种方法',pwm_source='controller',mode='LC'),{}))
     assert result['ui_action'] is None and result['job_id'] is None
-    assert result['mode']=='plan_error'
+    assert result['mode']=='provider_error'
 
 
 @pytest.mark.parametrize('updates', [
@@ -172,7 +176,7 @@ FOUR_REQUEST='根据我的CASE16A_noise03_seed13.csv，完成rebuild pwm和实�
     '请完成四组仿真', '请运行两种方法，然后比较结果'])
 def test_four_run_execution_is_dispatched_to_configuration(text):
     assert configuration.batch_requested(text)
-    assert task_router.rule_selection(text).task=='configuration'
+    assert rule_selection(text).task=='configuration'
 
 
 def test_four_runs_parsed_by_deepseek_with_identification_panel_closed(monkeypatch):

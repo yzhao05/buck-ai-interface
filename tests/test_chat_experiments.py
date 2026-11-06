@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from backend import chat, main
 from backend.schemas import ChatExperiment
 from backend.experiment_history import summarize_experiments
-from backend.task_router import make_route, rule_selection
+from backend.task_router import make_route
+from provider_stub import rule_selection
 
 
 def experiments():
@@ -39,15 +40,13 @@ def test_compare_saved_runs_without_live_job_or_csv(client):
         "mapping": {"time": "t", "current": "i", "voltage": "v"}})
     assert response.status_code == 200, response.text
     answer = response.json()["answer"]
-    assert "已保存 4 次实验" in answer and "5% / 0%" in answer
-    assert answer.count("CASE16A_clean_grid.csv") == 4
-    assert answer.count("未计算") == 3
-    assert "PANN | 实测" in answer and "PANN | 重建" in answer
-    assert "抗噪加权积分 | 实测" in answer and "抗噪加权积分 | 重建" in answer
+    assert answer == '' and response.json()['error_code'] == 'missing_api_key'
     assert response.json()["job_id"] is None and set(main.jobs) == before
 
 
 def test_explicit_run_then_compare_retains_execution_context(client, monkeypatch):
+    from provider_stub import install
+    install(monkeypatch, execute=True)
     calls=[]
     def start(body, owner):
         calls.append(body.model_dump())
@@ -117,8 +116,8 @@ def test_provider_context_tool_reads_and_fallback(client, monkeypatch, provider_
     assert response.status_code==200,response.text
     assert response.json()["job_id"] is None
     assert len(seen)==(1 if provider_fails else 2)
-    assert response.json()["mode"]==("local_fallback" if provider_fails else "deepseek")
-    if provider_fails: assert "已保存 4 次实验" in response.json()["answer"]
+    assert response.json()["mode"]==("provider_error" if provider_fails else "deepseek")
+    if provider_fails: assert response.json()["answer"] == ""
 
 
 def test_current_result_traces_are_not_forwarded():

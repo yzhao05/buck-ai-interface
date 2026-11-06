@@ -44,7 +44,9 @@ def test_duplicate_submission_resumes_and_active_lookup_is_isolated(setup):
     assert client.get("/api/jobs/"+ident).headers["cache-control"] == "no-store"
 
 
-def test_changed_config_keeps_old_job_and_chat_can_recover_it(setup):
+def test_changed_config_keeps_old_job_and_chat_can_recover_it(setup, monkeypatch):
+    from provider_stub import install
+    captured = install(monkeypatch, execute=True)
     client, body, submissions = setup
     ident = client.post("/api/identify", json=body).json()["job_id"]
     changed = {**body, "options": {"method": "weighted_integral", "vin": 30}}
@@ -52,7 +54,7 @@ def test_changed_config_keeps_old_job_and_chat_can_recover_it(setup):
     response = client.post("/api/chat", json={**changed, "message": "开始参数辨识", "identification_enabled": True})
     assert response.status_code == 200
     assert response.json()["job_id"] == ident
-    assert "原任务仍使用提交时的配置" in response.json()["answer"]
+    assert '"configuration_changed": true' in captured[-1]["messages"][-1]["content"]
     assert len(submissions) == 1
     assert main.jobs[ident]["config"]["options"]["vin"] == 28
 

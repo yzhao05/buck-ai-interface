@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from backend import chat, main
 from backend.schemas import FitOptions
-from backend.task_router import make_route, rule_selection
+from backend.task_router import make_route
+from provider_stub import rule_selection
 
 
 @pytest.fixture
@@ -37,17 +38,10 @@ def context(monkeypatch):
 
 def test_local_comparison_and_no_persistent_truth(context):
     client, body, original = context
-    response = client.post("/api/chat", json=body)
-    assert response.status_code == 200
-    answer = response.json()["answer"]
-    assert "真实电感 60 μH" in answer and "真实电容 500 μF" in answer
-    assert "电感相对误差 0.0368333%" in answer and "电容相对误差 0.006%" in answer
-    assert "未提供" not in answer and "未独立核验" not in answer and "RMSE" not in answer
-    assert main.jobs[body["result_id"]]["result"] == original
-    del body["ground_truth"]
-    answer = client.post("/api/chat", json=body).json()["answer"]
-    assert "未计算参数相对误差" in answer
-    assert "电感相对误差 0.0368333%" not in answer
+    response = client.post('/api/chat', json=body)
+    assert response.json()['error_code'] == 'missing_api_key'
+    assert response.json()['answer'] == ''
+    assert main.jobs[body['result_id']]['result'] == original
 
 
 def saved_request(body, result):
@@ -68,7 +62,7 @@ def test_saved_result_without_dataset_or_cached_job(context, monkeypatch):
     monkeypatch.setattr(main, "start_fit", no_fit)
     response = client.post("/api/chat", json=body)
     assert response.status_code == 200
-    assert "电感相对误差 0.0368333%" in response.json()["answer"]
+    assert response.json()["answer"] == "" and response.json()["mode"] == "provider_error"
     assert not response.json().get("job_id")
 
 
@@ -125,7 +119,7 @@ def test_truth_cannot_bypass_result_binding(context, change):
         assert response.status_code == 422
     else:
         assert response.status_code == 200
-        assert "当前没有" in response.json()["answer"]
+        assert response.json()["error_code"] == "missing_api_key"
         assert "电感相对误差" not in response.json()["answer"]
 
 
@@ -136,7 +130,7 @@ def test_invalid_or_overflowing_truth_is_not_used(context, value):
     response = client.post("/api/chat", json=body)
     if value == 1e-320:
         assert response.status_code == 200
-        assert "超出可计算范围" in response.json()["answer"]
+        assert response.json()["error_code"] == "missing_api_key"
     else:
         assert response.status_code == 422
 
@@ -188,8 +182,8 @@ def test_deepseek_context_tool_and_fallback_share_comparison(context, monkeypatc
     assert len(seen) == (1 if fail_provider else 2)
     assert stored == stored_before
     if fail_provider:
-        assert response.json()["mode"] == "local_fallback"
-        assert "电感相对误差 0.0368333%" in response.json()["answer"]
+        assert response.json()["mode"] == "provider_error"
+        assert response.json()["answer"] == "" and response.json()["mode"] == "provider_error"
         assert "最后一轮" not in response.json()["answer"]
         assert "保留其他计算条件提醒" not in response.json()["answer"]
         assert "RMSE" not in response.json()["answer"]
@@ -197,33 +191,18 @@ def test_deepseek_context_tool_and_fallback_share_comparison(context, monkeypatc
 
 def test_concise_report_still_mentions_failed_validation(context):
     client, body, _ = context
-    stored = main.jobs[body["result_id"]]["result"]
-    stored["metrics"]["current_nrmse_pct"] = 8
-    stored["warnings"] = ["窗口选择过程", "PWM 重建边沿"]
-    answer = client.post("/api/chat", json=body).json()["answer"]
-    assert "验证尚未通过" in answer
-    assert "电感相对误差" in answer
-    for hidden in ("其他过程事实", "数据和波形事实", "窗口选择过程", "PWM 重建边沿", "RMSE", "可能原因"):
-        assert hidden not in answer
+    main.jobs[body['result_id']]['result']['metrics']['current_nrmse_pct'] = 8
+    response = client.post('/api/chat', json=body).json()
+    assert response['answer'] == '' and response['error_code'] == 'missing_api_key'
 
 
 @pytest.mark.parametrize("include_truth", [False, True])
 def test_analysis_omits_routine_limitations_without_inventing_accuracy(context, include_truth):
     client, body, _ = context
-    stored = main.jobs[body["result_id"]]["result"]
-    stored["method"] = "pann"
-    stored["diagnostics"] = {"pann": {"convergence": {"status": "stable", "reasons": []}}}
     if not include_truth:
-        del body["ground_truth"]
-    answer = client.post("/api/chat", json=body).json()["answer"]
-    assert "符合稳定性判据" in answer
-    for hidden in ("明确无法", "不能得出", "parameter_error", "unverified", "非收敛证明", "未独立核验", "如果你希望"):
-        assert hidden not in answer
-    if include_truth:
-        assert "电感相对误差 0.0368333%" in answer
-    else:
-        assert "未计算参数相对误差" in answer
-        assert "%" not in answer
+        del body['ground_truth']
+    response = client.post('/api/chat', json=body).json()
+    assert response['answer'] == '' and response['error_code'] == 'missing_api_key'
 
 
 def test_analysis_ignores_only_final_best_evidence():
@@ -248,10 +227,9 @@ def test_analysis_ignores_only_final_best_evidence():
 ])
 def test_explicit_waveform_error_question_is_answered(context, question, expected, excluded):
     client, body, _ = context
-    body["message"] = question
-    answer = client.post("/api/chat", json=body).json()["answer"]
-    assert expected in answer and excluded not in answer
-    assert "电感相对误差" in answer
+    body['message'] = question
+    response = client.post('/api/chat', json=body).json()
+    assert response['answer'] == '' and response['error_code'] == 'missing_api_key'
 
 
 @pytest.mark.parametrize("legacy", [False, True])

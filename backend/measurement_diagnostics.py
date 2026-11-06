@@ -6,23 +6,6 @@ Raw timestamps/measurements are used, never display or resampled training curves
 import numpy as np
 
 
-def describe_measurements(report):
-    if not report:
-        return ""
-    labels = {"bias": "均值偏置", "slow_variation": "慢变化", "correlated_residual": "相邻相关", "edge_concentration": "开关边沿集中"}
-    lines = []
-    for key, label in (("current", "电流"), ("voltage", "电压")):
-        c = report["channels"][key]
-        if c["noise_sigma"] is None:
-            line = f"{label}：噪声代理估计不足或低于分辨水平，暂不能判断是否接近噪声底"
-        else:
-            line = f"{label}：估计噪声标准差 {c['noise_sigma']:.4g} {c['unit']}，留出残差 RMSE 为其 {c['rmse_to_noise_ratio']:.3g} 倍"
-        if c["flags"]:
-            line += "；诊断线索：" + "、".join(labels[f] for f in c["flags"])
-        if c["noise_above_application_threshold"]:
-            line += "；估计噪声已高于 5% 应用门槛，应优先检查测量条件"
-        lines.append(line + "。")
-    return "\n".join(lines) + "\n噪声与残差筛查是启发式估计，不改变原有 5% 复核门槛；线索需对照验证。"
 
 
 def _weights(t):

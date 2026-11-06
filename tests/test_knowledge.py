@@ -55,12 +55,12 @@ def test_formula_after_upload_does_not_start_fit(monkeypatch, message):
     response = asyncio.run(chat.answer(request, invoke))
     assert calls == []  # Formula route does not depend on the uploaded dataset.
     assert response["job_id"] is None
-    assert "buck-identification-formulas" in response["answer"]
+    assert response["mode"] == "provider_error" and response["answer"] == ""
 
 
 @pytest.mark.parametrize("message", ["请先辨识参数，再解释公式", "解释公式，并开始参数辨识",
                                      "Identify parameters and explain the equations"])
-def test_local_mixed_request_starts_fit_and_explains(monkeypatch, message):
+def test_missing_key_mixed_request_does_not_start_fit(monkeypatch, message):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     calls = []
 
@@ -71,10 +71,10 @@ def test_local_mixed_request_starts_fit_and_explains(monkeypatch, message):
 
     response = asyncio.run(chat.answer(ChatRequest(message=message, dataset_id="uploaded",
                                                    identification_enabled=True), invoke))
-    assert calls == ["start_identification"]
-    assert response["job_id"] == "test-mixed-request"
-    assert "公式" in response["answer"]
-    assert "未启动" not in response["answer"]
+    assert calls == []
+    assert response["job_id"] is None
+    assert response["error_code"] == "missing_api_key"
+    assert response["answer"] == ""
 
 
 def controller_values():

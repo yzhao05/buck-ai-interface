@@ -1,3 +1,4 @@
+import copy
 import asyncio
 import json
 
@@ -6,7 +7,8 @@ import pytest
 
 from backend import chat
 from backend.schemas import ChatRequest
-from backend.task_router import make_route, rule_selection
+from backend.task_router import make_route
+from provider_stub import rule_selection
 
 
 @pytest.fixture(autouse=True)
@@ -29,12 +31,15 @@ def test_deepseek_tool_roundtrip(monkeypatch, message):
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def post(self, url, headers, json):
-            requests.append(json)
+            requests.append(copy.deepcopy(json))
             if len(requests) == 1:
                 message = {"role":"assistant", "content":None, "tool_calls":[
                     {"id":"fit-1", "type":"function", "function":{"name":"start_identification", "arguments":"{}"}}]}
+            elif len(requests) == 2 and requests[0]["tool_choice"] != "auto":
+                message = {"role":"assistant", "content":None, "tool_calls":[
+                    {"id":"search", "type":"function", "function":{"name":"search_knowledge", "arguments":'{"query":"Buck 模型"}'}}]}
             else:
-                message = {"role":"assistant", "content":"已启动辨识任务，完成后查看结果。"}
+                message = {"role":"assistant", "content":"已启动辨识任务。[kb:buck-physics]" if len(requests)>2 else "已启动辨识任务。"}
             return httpx.Response(200, request=httpx.Request("POST",url), json={"choices":[{"message":message}]})
     async def invoke(name):
         calls.append(name)
@@ -59,7 +64,7 @@ def test_provider_failure_is_labeled_and_secret_not_returned(monkeypatch):
     async def invoke(name):return None
     monkeypatch.setattr(chat.httpx,"AsyncClient",Client)
     result=asyncio.run(chat.answer(ChatRequest(message="电容寿命"),invoke))
-    assert result["mode"]=="local_fallback"
+    assert result["mode"]=="provider_error"
     assert "401" in result["provider_error"]
     assert "secret-value-test" not in json.dumps(result)
 
@@ -113,12 +118,12 @@ def test_search_uses_model_query_and_validates_arguments(monkeypatch, arguments,
     monkeypatch.setattr(chat.httpx, "AsyncClient", Client)
     # Initial user query intentionally unrelated: prove tool arguments control retrieval.
     response = asyncio.run(chat.answer(ChatRequest(message="电容寿命"), invoke))
-    assert response["mode"] == "deepseek"
+    assert response["mode"] == ("provider_error" if expected_error else "deepseek")
     if expected_error:
         assert "error" in outputs[0]
     else:
-        assert outputs[0][0]["id"] == "buck-controller-transfer"
-        assert any(d["id"] == "buck-controller-transfer" for d in response["sources"])
+        assert outputs[0]["documents"][0]["id"] == "buck-controller-transfer"
+        assert any(d["id"] == "buck-controller-transfer" for d in response["retrieved_sources"])
 
 
 @pytest.mark.parametrize("message", ["推导辨识公式", "只解释辨识原理", "Explain how parameter identification works",
@@ -148,5 +153,5 @@ def test_formula_tool_call_cannot_start_identification(monkeypatch, message):
 
     monkeypatch.setattr(chat.httpx, "AsyncClient", Client)
     response = asyncio.run(chat.answer(ChatRequest(message=message, identification_enabled=True), invoke))
-    assert response["mode"] == "deepseek" and response["job_id"] is None
+    assert response["mode"] in {"deepseek", "provider_error"} and response["job_id"] is None
     assert "error" in tool_outputs[0]

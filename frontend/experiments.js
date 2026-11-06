@@ -102,8 +102,8 @@ function renderResultLibrary() {
     button.append(name,detail);button.onclick=()=>void selectExperiment(run.id);list.append(button);
   }
 }
-async function selectExperiment(id,{fetchFull=true,persist=true}={}) {
-  if(historyLocked() || !activeConversation)return;
+async function selectExperiment(id,{fetchFull=true,persist=true,fromChat=false}={}) {
+  if((fromChat ? state.busy||state.syncBusy||state.job : historyLocked()) || !activeConversation)return;
   if(persist && !persistConversation()){notice("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");return;}
   const run=readConversation(activeConversation.id)?.experiments?.find(item=>item.id===id);
   if(!run)return;

@@ -18,24 +18,6 @@ def controls_requested(message):
     return bool(re.search(r"(?:参数|初值|参考)[^。；\n]{0,35}(?:交换|对照)|(?:运行|执行|做).{0,8}(?:这些|这几个|上述|诊断)?对照|\b(?:ablation|swap|run (?:the )?(?:diagnostic )?controls)\b",message,re.I))
 
 
-def describe_controls(report):
-    if not report:
-        return ''
-    if report.get('status') != 'completed':
-        return '已验证原因：本次未完成数值对照。'+report.get('error','证据不足。')
-    lines = ['已验证的数值效应（当前固定模型，未重新训练）：']
-    labels = ['固定积分参数，仅改用 PANN 初值', '固定测量初值，仅改用 PANN 参数']
-    for label, effect in zip(labels, report['verified_numerical_effects'][:2]):
-        d = effect['rmse_delta']['heldout_measured']
-        lines.append(f"- {label}：电流 RMSE 变化 {d['current_rmse_A']:+.5g} A，电压 RMSE 变化 {d['voltage_rmse_V']:+.5g} V（负值为降低）。")
-    ref = report['reference']
-    if ref['status']=='evaluated_user_declared_reference':
-        m = report['cases']['pann_pann_state']['heldout_reference']
-        lines.append(f"- PANN 参数与初值对用户声明的干净参考：电流 RMSE {m['current_rmse_A']:.5g} A，电压 RMSE {m['voltage_rmse_V']:.5g} V。")
-    else:
-        lines.append('干净参考对照未执行：'+ref['reason'])
-    lines.append('可能原因（待验证）：这些对照尚不能证明真实硬件的 ESR、负载变化或测量偏置；需针对残差线索做独立验证。')
-    return '\n'.join(lines)
 
 
 def compatible(current, candidate):

@@ -122,8 +122,7 @@ def test_readonly_no_snapshots_no_csv_no_classifier(client, monkeypatch):
         "dataset_id": "expired", "result_id": "expired", "identification_enabled": True})
     assert response.status_code == 200, response.text
     data = response.json()
-    assert "尚未生成 AI 总结" in data["answer"] and "main" in data["answer"]
-    assert data["conversation_retrieval"]["read_count"] == 2
+    assert data["answer"] == "" and data["error_code"] == "missing_api_key"
     assert data["job_id"] is None and before == set(main.jobs)
 
 
@@ -139,9 +138,8 @@ def test_explicit_run_then_history_comparison_keeps_execution(client, monkeypatc
         "conversation_retrieval_requested": True, "identification_enabled": True, "dataset_id": "current-csv",
         "mapping": {"time": "t", "current": "i", "voltage": "v"}, "options": {"method": "weighted_integral", "vin": 30}})
     assert response.status_code == 200, response.text
-    assert response.json()["job_id"] == "mixed-history-job"
-    assert len(calls) == 1 and calls[0]["options"]["vin"] == 30
-    assert "已启动" in response.json()["answer"]
+    assert response.json()["job_id"] is None and calls == []
+    assert response.json()["error_code"] == "missing_api_key"
 
 
 def test_provider_receives_selected_material_can_refine_and_read(client, monkeypatch):
@@ -193,5 +191,5 @@ def test_failed_provider_preserves_local_material(client, monkeypatch):
     monkeypatch.setattr(chat.httpx, "AsyncClient", Provider)
     response = client.post("/api/chat", json={"message": "总结之前的 GitHub 讨论", "conversation_messages": corpus()})
     data = response.json()
-    assert data["mode"] == "local_fallback" and "main" in data["answer"]
+    assert data["mode"] == "provider_error" and data["answer"] == ""
     assert data["conversation_retrieval"]["read_count"] == 2

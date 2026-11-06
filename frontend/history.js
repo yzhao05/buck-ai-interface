@@ -4,8 +4,9 @@ let activeConversation = null;
 let conversationPrefix = "";
 let pendingAttachment = null;
 const conversationCache = new Map();
-const experimentFields = ["vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "pwm-denoise", "pwm-filter-cycles", "controller-confirmed", "controller-parameters", "controller-image", "selected-result", "chat-images"];
-const experimentDefaults = {vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"200", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
+const experimentFields = ["reasoning-mode","vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "pwm-denoise", "pwm-filter-cycles", "controller-confirmed", "controller-parameters", "controller-image", "controller-image-name", "selected-result", "chat-images"];
+const experimentDefaults = {"reasoning-mode":"auto",vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"200", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
+experimentFields.push('controller-image-library');
 experimentDefaults['pwm-denoise']='sg';experimentDefaults['pwm-filter-cycles']='6';
 function historyWarning(text = "") {
   ui($("history-status"), text); $("history-status").hidden = !text;

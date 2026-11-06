@@ -10,7 +10,8 @@ from backend.knowledge_base.buck import FORMULA_DOCUMENTS
 def render():
     lines = ["# Buck 功率与控制电路公式知识库", "",
              "以本地 PLECS 原模型、Case16A/B 与独立 Case17 为依据。公式按 KCL/KVL 推导；外部资料用于核对适用域。",
-             "知识库补充不会把当前轻量辨识器升级为四状态闭环辨识。标称值不是未知 CSV 的真值。",
+             "当前支持实测 PWM 两状态模型与已确认配置的控制器重建模式：后者计入反馈取样支路，固定已知 R 辨识 L/C，并以完整四状态自主闭环验证；控制器参数保持已知，不参与辨识。两种模式均为同一记录后段留出，不是独立工况验证。标称值不是未知 CSV 的真值。",
+             "界面提供抗噪加权积分与 PANN：前者直接输出端点零权重积分估计，后者以此初始化再微调；旧 integral API 仅保留作实测 PWM 模式的基础积分复现。",
              "本文由 `tests/build_formula_reference.py` 从 `buck.py` 生成；修改 `buck.py` 后重新生成。", "",
              "完整参数、连接和源文件 SHA-256 见 [模型证据](model_evidence.json)。", ""]
     for doc in FORMULA_DOCUMENTS:

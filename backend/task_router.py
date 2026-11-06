@@ -11,12 +11,15 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
+from .provider_errors import ProviderUnavailable
 from .knowledge import formula_question
 from .configuration import configuration_requested, batch_requested
 
-Task = Literal["guidance", "knowledge", "waveform", "identification", "configuration", "diagnosis", "hardware", "general"]
+Task = Literal["guidance", "knowledge", "waveform", "identification", "configuration", "diagnosis", "hardware", "plecs", "general"]
 READ = ("get_waveform_summary", "get_identification_result", "get_experiment_history", "search_knowledge")
 TASKS = {
+    "plecs": {"label": "PLECS 本地操作", "tools": ("search_knowledge",),
+              "prompt": "根据用户请求连接 PLECS、搜索或选择本地电路，并按需在副本上执行对照。打开程序不等于执行仿真，工具失败时说明真实原因。"},
     "configuration": {"label": "辨识配置", "tools": (),
                       "prompt": "用户要求打开面板或修改辨识设置，走结构化配置流程；不能按旧配置启动。"},
     "guidance": {"label": "使用指导", "tools": ("search_knowledge",),
@@ -32,7 +35,7 @@ TASKS = {
     "hardware": {"label": "硬件寿命", "tools": READ,
                  "prompt": "你负责器件应力、损耗、选型与寿命问答。引用资料；缺少型号、温度与运行历史时不能报告剩余年数。"},
     "general": {"label": "一般问答", "tools": ("search_knowledge",),
-                "prompt": "你负责一般专业问答与能力说明。当前不能启动 PLECS、自动改电路或自动优化控制器，明确这些边界并提供可行步骤。"},
+                "prompt": "你负责一般专业问答与能力说明。根据本次实际可用工具说明能力；PLECS 仅连接本机后端，不自动优化真实硬件。"},
 }
 
 
@@ -47,8 +50,12 @@ CLASSIFIER_SYSTEM = """你是 Buck Lab 的任务分类 Agent，参考 PE-GPT 的
 类别：guidance=界面/CSV/部署使用指导；knowledge=电路原理、公式推导；waveform=已有波形观测；
 identification=用户明确要求执行 L/C/R 辨识；diagnosis=辨识结果、误差原因、修改计划、多次实验对比；
 configuration=用户要求打开辨识面板或选择/修改方法、LC/LCR、负载R等设置，包括设置后开始的组合指令。此类优先于 identification，即使面板未打开。
+训练轮数、时间区间、SG/modified-sinc/关闭滤波、滤波周期数的修改也是 configuration；只修改设置不等于要求启动。例如“训练轮数改为300，先不运行”仍是配置任务。
+修改 Vin、频率、训练占比、PWM来源、PANN窗口/初值、控制器元件参数、映射列和单位、真实L/C、诊断参考，切换已上传CSV或电路图，明确确认电路/参考条件，也都是 configuration。优先于一般知识或电路分析。未明确要求运行时不启动辨识。
+pending_configuration_start=true 时，“确认”“是的”等回答电路确认问题的回复属于 configuration；不要当作新的一般问答。
+pending_reference_confirmation=true 时，对参考数据同工况询问的简短确认回复同样属于 configuration。
 根据已有 CSV 完成“实际 PWM 和重建 PWM、PANN 和加权积分四个仿真/实验”属于 configuration 的四组辨识计划，不是 general，也不要求辨识面板已经打开。
-hardware=器件应力、损耗、选型、寿命；general=其他问答或尚未支持的自动仿真/设计任务。
+hardware=器件应力、损耗、选型、寿命；plecs=连接/打开 PLECS、搜索本地模型文件夹、选择 .plecs 文件、运行仿真对照（包括用户回复模型路径）；general=其他问答。
 选一个主任务，最多两个次任务。若明确要求执行辨识并解释公式，主任务为 identification，次任务为 knowledge。
 只询问“如何辨识”“辨识原理”或明确不要执行时不能选择 identification。
 有 CSV 或已打开辨识界面不代表用户要求执行。历史仅用于理解指代，当前用户指令优先。
@@ -101,25 +108,6 @@ def identification_intent(message):
     return "unspecified"
 
 
-def rule_selection(message):
-    text = message.lower()
-    if configuration_requested(text):
-        return TaskSelection(task="configuration")
-    if identification_intent(text) == "execute":
-        return TaskSelection(task="identification", secondary_tasks=["knowledge"] if formula_question(text) else [])
-    if re.search(r"寿命|老化|器件|硬件|mosfet|igbt|esr|损耗|温升|选型|\b(?:life|lifetime|aging|thermal|hardware)\b", text):
-        return TaskSelection(task="hardware", secondary_tasks=["knowledge"] if formula_question(text) else [])
-    if formula_question(text) or re.search(r"原理|\bprinciple|how.*identif|辨识方法|如何辨识|怎么辨识", text):
-        return TaskSelection(task="knowledge")
-    if re.search(r"对比|比较|横向|纵向|误差|修改|计划|结果|偏差|噪声|残差|不确定性|一致性|重复采集|(?:辨识|识别|拟合).*完成|\b(?:compare|comparison|error|errors|result|results|diagnos|plan|rmse|noise|residual|uncertainty|repeatability)", text):
-        return TaskSelection(task="diagnosis")
-    if re.search(r"上传|导入|列映射|连接|界面|按钮|入口|使用|怎么用|\b(?:upload|import|mapping|connect|setup)\b", text):
-        return TaskSelection(task="guidance")
-    if re.search(r"波形|纹波|超调|\b(?:waveform|waveforms|ripple|overshoot)\b", text):
-        return TaskSelection(task="waveform")
-    return TaskSelection(task="general")
-
-
 def result_followup_history(request):
     """Resolve a short follow-up against the latest marked analysis of this run."""
     if not request.result_id or identification_intent(request.message) == "execute":
@@ -130,7 +118,8 @@ def result_followup_history(request):
         return None
     if re.search(r"检索|搜索|找出|对比|比较|横向|纵向|\b(?:search|find|compare|comparison|versus)\b", text, re.I):
         return None
-    if rule_selection(text).task in {"guidance", "knowledge", "hardware", "waveform", "configuration"}:
+    if formula_question(text) or configuration_requested(text) or re.search(
+            r"上传|导入|按钮|寿命|老化|器件|波形|纹波|\b(?:upload|import|button|lifetime|hardware|waveform|ripple)\b", text, re.I):
         return None
     if not re.match(r"^(?:请|那|那么|please\s+)?(?:为什么|为何|还有.*(?:可能|原因|解释)|复查|再检查|重新检查|重新分析|详细解释|展开|继续解释|why\b|any other\b|what else\b|recheck\b|double.check\b|explain (?:more|further)\b)", text, re.I):
         return None
@@ -161,7 +150,7 @@ def make_route(selection, message, mode, notice=None):
         selection = TaskSelection(task="identification", secondary_tasks=list(dict.fromkeys(
             t for t in extra if t != "identification"))[:2])
     elif selection.task == "identification" and intent == "explain":
-        selection = rule_selection(message)
+        selection = TaskSelection(task="general")
     secondary = list(dict.fromkeys(t for t in selection.secondary_tasks if t not in {selection.task, "identification"}))
     route = {"task": selection.task, "label": TASKS[selection.task]["label"],
              "secondary_tasks": secondary, "mode": mode}
@@ -180,19 +169,18 @@ def route_tools(route):
 
 
 def route_prompt(route):
-    permission = "允许按用户明确请求执行辨识，必须通过工具与后端校验。" if route["task"] == "identification" else "本次任务只读，不启动新的数值辨识。"
+    permission = "允许按用户明确请求执行辨识，必须通过工具与后端校验。" if route["task"] == "identification" else "不启动新的参数辨识；PLECS 连接、文件检索及仿真权限以本次提供的工具为准。"
     return "当前主任务：" + route["label"] + "。" + permission + "\n" + "\n".join(
         TASKS[t]["prompt"] for t in [route["task"], *route["secondary_tasks"]])
 
 
 async def classify(request):
     key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-    fallback = rule_selection(request.message)
-    if batch_requested(request.message):
-        return make_route(fallback, request.message, "rules")
     if not key:
-        return make_route(fallback, request.message, "rules")
+        raise ProviderUnavailable("AI service is not configured")
     context = {"has_dataset": bool(request.dataset_id and request.mapping),
+               "pending_configuration_start": bool(request.ui_context and request.ui_context.pending_start),
+               "pending_reference_confirmation": bool(request.ui_context and request.ui_context.pending_reference_confirmation),
                "historical_analysis_count": len(request.analysis_history),
                "analysis_history_requested": request.analysis_history_requested,
                "saved_experiment_count": len(request.experiments),
@@ -216,5 +204,5 @@ async def classify(request):
                 raise ValueError("Expected exactly one classification")
             selection = TaskSelection.model_validate_json(calls[0]["function"]["arguments"])
             return make_route(selection, request.message, "agent")
-    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError):
-        return make_route(fallback, request.message, "fallback", "任务分类服务暂不可用，已使用本地规则分类。")
+    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
+        raise ProviderUnavailable("AI classification failed") from exc
