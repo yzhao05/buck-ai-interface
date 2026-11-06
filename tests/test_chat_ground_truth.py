@@ -9,17 +9,12 @@ from fastapi.testclient import TestClient
 
 from backend import chat, main
 from backend.schemas import FitOptions
-from backend.task_router import make_route
-from provider_stub import rule_selection
 
 
 @pytest.fixture
 def context(monkeypatch):
     monkeypatch.setattr(main, "TOKEN", "")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    async def classify(request):
-        return make_route(rule_selection(request.message), request.message, "rules")
-    monkeypatch.setattr(chat, "classify", classify)
     owner, identifier = str(uuid.uuid4()), uuid.uuid4().hex
     result = {"parameters": {"L_H": 59.9779e-6, "C_F": 500.03e-6, "R_ohm": 6},
               "method": "weighted_integral", "R_estimated": False, "quality": "模型内拟合一致",
@@ -138,6 +133,7 @@ def test_invalid_or_overflowing_truth_is_not_used(context, value):
 @pytest.mark.parametrize("fail_provider", [False, True])
 def test_deepseek_context_tool_and_fallback_share_comparison(context, monkeypatch, fail_provider):
     client, body, _ = context
+    body["current_result_analysis"] = True
     stored = main.jobs[body["result_id"]]["result"]
     stored["diagnostics"]["pann"] = {"best_epoch": 100, "best_step": 150, "best_at_budget_end": True,
                                       "completed_epochs": 100, "convergence": {"status": "stable", "reasons": []}}
@@ -152,7 +148,7 @@ def test_deepseek_context_tool_and_fallback_share_comparison(context, monkeypatc
         async def post(self, url, **kwargs):
             messages = kwargs["json"]["messages"]
             assert "不列出或展开分析‘其他过程事实’‘数据和波形事实’" in messages[0]["content"]
-            assert "完整分析保留预测参数、单位、R 固定或估计身份" in messages[0]["content"]
+            assert "预测 L、C 及单位，R 的数值和固定/估计身份" in messages[0]["content"]
             assert "不固定使用同一组标题" in messages[0]["content"]
             assert "不为了让回答不同而提出新原因" in messages[0]["content"]
             assert "分析正文不输出‘明确无法给出的结论’" in messages[0]["content"]
@@ -236,8 +232,7 @@ def test_explicit_waveform_error_question_is_answered(context, question, expecte
 def test_current_lc_analysis_excludes_old_lcr_on_repeated_requests(context, monkeypatch, legacy):
     client, body, _ = context
     body["message"] = "请分析当前辨识结果的误差，并给出有依据的修改计划。"
-    if not legacy:
-        body["current_result_analysis"] = True
+    body["current_result_analysis"] = True  # Scope is explicit for every client.
     body["options"]["mode"] = "LC"
     job = main.jobs[body["result_id"]]
     job["config"]["options"] = copy.deepcopy(body["options"])
@@ -250,7 +245,6 @@ def test_current_lc_analysis_excludes_old_lcr_on_repeated_requests(context, monk
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only")
     async def forbidden_classifier(request):
         raise AssertionError("The explicit result action must not rely on model classification")
-    monkeypatch.setattr(chat, "classify", forbidden_classifier)
     seen = []
     class Provider:
         def __init__(self, **kwargs): pass
@@ -332,22 +326,27 @@ def test_followup_keeps_current_analysis_and_live_truth_only(context, monkeypatc
         async def __aexit__(self, *args): pass
         async def post(self, url, **kwargs):
             payload = kwargs["json"]; serialized = json.dumps(payload)
-            assert "OLD_LCR" not in serialized
             assert "CURRENT_EXPLANATION" in serialized and "FOLLOWUP_EXPLANATION" in serialized
             assert "temperature" not in payload
             messages = payload["messages"]
             assert "重新核对上一条推理的数字、假设和因果链" in messages[0]["content"]
-            assert "本次是同一结果的继续讨论" in messages[0]["content"]
             data = json.loads(messages[1]["content"].split("：", 1)[1])
-            assert data["analysis_scope"] == "result_followup"
+            assert data["analysis_scope"] == "conversation"
+            assert "OLD_LCR" not in json.dumps(data["current_result_discussion"])
             assert data["current_result_id"] == body["result_id"]
-            assert data["previous_result"]["parameter_comparison"]["ground_truth"]["C_F"] == 510e-6
+            assert data["previous_result"] is None
+            if messages[-1]['role'] != 'tool':
+                return httpx.Response(200,request=httpx.Request('POST',url),json={'choices':[{'message':{
+                    'role':'assistant','content':None,'tool_calls':[{'id':'read','type':'function',
+                    'function':{'name':'get_identification_result','arguments':'{}'}}]}}]})
+            result=json.loads(messages[-1]['content'])
+            assert result['parameter_comparison']['ground_truth']['C_F'] == 510e-6
             assert data["experiment_history"] == []
-            assert not {t["function"]["name"] for t in payload["tools"]}.intersection({"start_identification", "get_experiment_history", "search_conversation"})
+            assert "search_conversation" in {t["function"]["name"] for t in payload["tools"]}
             seen.append(data)
             return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"message": {"role": "assistant", "content": "针对前文证据继续解释。"}}]})
     monkeypatch.setattr(chat.httpx, "AsyncClient", Provider)
     response = client.post("/api/chat", json=body)
     assert response.status_code == 200
-    assert response.json()["mode"] == "deepseek" and response.json()["route"]["task"] == "diagnosis"
+    assert response.json()["mode"] == "deepseek" and response.json()["route"]["mode"] == "agent"
     assert len(seen) == 1

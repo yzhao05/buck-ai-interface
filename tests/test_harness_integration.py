@@ -4,6 +4,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 import uuid
+import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,7 +17,8 @@ from backend.schemas import ChatRequest, FitOptions
 from conftest import REAL_RUN
 
 
-def test_official_harness_mcp_stream_resume_and_tool_roster(monkeypatch):
+@pytest.mark.parametrize('thinking', [False, True])
+def test_official_harness_mcp_stream_resume_and_tool_roster(monkeypatch, thinking):
     requests, executions, emitted = [], [], []
     class Provider(BaseHTTPRequestHandler):
         def log_message(self,*_): pass
@@ -44,16 +47,31 @@ def test_official_harness_mcp_stream_resume_and_tool_roster(monkeypatch):
         tools=[{'type':'function','function':{'name':'probe','description':'Read a value','parameters':{'type':'object','properties':{}}}}]
         try:
             messages=[{'role':'system','content':'Use probe then answer'},{'role':'user','content':'Test'}]
-            assert await REAL_RUN(messages,tools,invoke,Budget(False))=='verified'
+            assert await REAL_RUN(messages,tools,invoke,Budget(thinking))=='verified'
+            # A successful response/close alone does not prove persistence:
+            # the Windows packaged runtime can swallow native-module errors.
+            home = harness_runtime.ROOT / identifier
+            # The SDK stores the escaped absolute cwd inside its directory name.
+            # Windows paths can exceed MAX_PATH even for a short pytest base;
+            # ordinary pathlib glob then silently omits the existing files.
+            durable_home = Path('\\\\?\\' + str(home.resolve())) if os.name == 'nt' else home
+            saved = list((durable_home / 'sessions').rglob('session*.jsonl'))
+            assert len(saved) == 1, 'Harness must persist the session before restart'
+            before_resume = saved[0].read_text(encoding='utf-8')
+            assert before_resume.strip()
+            for line in before_resume.splitlines():
+                json.loads(line)
+            assert json.loads(before_resume.splitlines()[0])['cwd'] == str(home.resolve())
             state['resume']=True
-            assert await REAL_RUN(messages,tools,invoke,Budget(False))=='verified'
+            assert await REAL_RUN(messages,tools,invoke,Budget(thinking))=='verified'
+            assert len(saved[0].read_text(encoding='utf-8')) > len(before_resume)
         finally:harness_runtime.scope.reset(token)
     try:asyncio.run(run())
     finally:server.shutdown();server.server_close()
     assert executions==['probe']
     assert len(requests)==3
     assert all([tool['name'] for tool in p['tools']]==['mcp__buck__probe'] for p in requests)
-    assert all(p['thinking']['type']=='disabled' for p in requests)
+    assert all(p['thinking']['type']==('enabled' if thinking else 'disabled') for p in requests)
     assert ('text_delta',{'text':'verified'}) in emitted
 
 
@@ -199,12 +217,12 @@ def test_cloud_chat_bridge_simulation_return_and_error_comparison(tmp_path,monke
     monkeypatch.setattr(simulation_analysis,'identify',lambda *a,**kw:{'parameters':{'L_H':.002,'C_F':.00105,'R_ohm':6},'metrics':{}})
     async def evaluation(owner,identifier,result_id):return simulation_analysis.evaluate(owner,identifier,result_id)
     monkeypatch.setattr(simulation_analysis,'evaluate_async',evaluation)
-    async def classify(_):return {'task':'diagnosis','secondary_tasks':[],'mode':'agent','label':'diagnosis'}
-    monkeypatch.setattr(chat,'classify',classify)
     collected=[]
     async def scenario(messages,tools,invoke,budget):
         connected=await invoke('connect_plecs',{})
         assert connected['status']=='ready'
+        found=await invoke('search_plecs_models',{'hints':['buck.plecs']})
+        await invoke('select_plecs_model',{'path':found['match']['path']})
         catalog=await invoke('get_plecs_models',{})
         selected=next(iter(catalog['models']))
         args={'model':selected,'parameter':'C1.C','values':[.0011],'hypothesis':'Sensitivity','expected_observation':'Parameter error changes'}
@@ -232,7 +250,7 @@ def test_cloud_chat_bridge_simulation_return_and_error_comparison(tmp_path,monke
         response=client.post('/api/chat',json={'message':'用 buck.plecs 排查误差','circuit_filename':'buck.plecs','options':{'method':'weighted_integral'}})
         assert response.json()['mode']=='deepseek',response.json()
     finally:stop.set();thread.join(timeout=5)
-    assert claimed==['connect_plecs','get_plecs_models','run_plecs_experiment']
+    assert claimed==['connect_plecs','search_plecs_models','select_plecs_model','get_plecs_models','run_plecs_experiment']
     assert collected[0]['cases'][0]['relative_error_pct']['C']==pytest.approx(5)
     assert collected[0]['cases'][1]['relative_error_pct']['C']==pytest.approx(100/22)
     assert 'error_change_percentage_points' in collected[0]['cases'][1]

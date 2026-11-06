@@ -9,8 +9,6 @@ from fastapi.testclient import TestClient
 from backend import chat, main
 from backend.schemas import ChatExperiment
 from backend.experiment_history import summarize_experiments
-from backend.task_router import make_route
-from provider_stub import rule_selection
 
 
 def experiments():
@@ -26,9 +24,6 @@ def experiments():
 def client(monkeypatch):
     monkeypatch.setattr(main, "TOKEN", "")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    async def classify(request):
-        return make_route(rule_selection(request.message), request.message, "rules")
-    monkeypatch.setattr(chat, "classify", classify)
     return TestClient(main.app, headers={"X-Session-ID": str(uuid.uuid4())})
 
 
@@ -92,7 +87,7 @@ def test_provider_context_tool_reads_and_fallback(client, monkeypatch, provider_
             payload=kwargs["json"];messages=payload["messages"]
             seen.append(copy.deepcopy(messages))
             context=json.loads(messages[1]["content"].split("：",1)[1])
-            assert context["configuration"] is None
+            assert isinstance(context["configuration"],dict)
             records=context["experiment_history"]
             assert len(records)==4
             for record in records:

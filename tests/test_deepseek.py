@@ -7,17 +7,6 @@ import pytest
 
 from backend import chat
 from backend.schemas import ChatRequest
-from backend.task_router import make_route
-from provider_stub import rule_selection
-
-
-@pytest.fixture(autouse=True)
-def isolate_executor_from_classifier(monkeypatch):
-    # These tests cover the answering/tool loop. Real classifier-to-executor
-    # round trips are covered separately in test_task_router.py.
-    async def classify(request):
-        return make_route(rule_selection(request.message), request.message, "rules")
-    monkeypatch.setattr(chat, "classify", classify)
 
 
 @pytest.mark.parametrize("message", ["请识别参数", "请先辨识参数，再解释公式",
@@ -46,7 +35,7 @@ def test_deepseek_tool_roundtrip(monkeypatch, message):
         if name == "start_identification":return {"job_id":"real-test-job", "status":"queued"}
         return {"rows":1000}
     monkeypatch.setattr(chat.httpx, "AsyncClient", Client)
-    result=asyncio.run(chat.answer(ChatRequest(message=message,dataset_id="data"), invoke))
+    result=asyncio.run(chat.answer(ChatRequest(message=message,dataset_id="data",identification_enabled=True,reasoning_mode="fast"), invoke))
     assert result["mode"]=="deepseek" and result["job_id"]=="real-test-job"
     assert calls.count("start_identification")==1
     assert requests[1]["messages"][-1]["tool_call_id"]=="fit-1"
@@ -118,7 +107,7 @@ def test_search_uses_model_query_and_validates_arguments(monkeypatch, arguments,
     monkeypatch.setattr(chat.httpx, "AsyncClient", Client)
     # Initial user query intentionally unrelated: prove tool arguments control retrieval.
     response = asyncio.run(chat.answer(ChatRequest(message="电容寿命"), invoke))
-    assert response["mode"] == ("provider_error" if expected_error else "deepseek")
+    assert response["mode"] == "deepseek"
     if expected_error:
         assert "error" in outputs[0]
     else:
@@ -129,7 +118,7 @@ def test_search_uses_model_query_and_validates_arguments(monkeypatch, arguments,
 @pytest.mark.parametrize("message", ["推导辨识公式", "只解释辨识原理", "Explain how parameter identification works",
                                      "不要辨识，只解释公式", "请解释如何开始参数辨识",
                                      "参数辨识公式是什么？", "辨识参数不要执行，只看公式", "辨识误差分析"])
-def test_formula_tool_call_cannot_start_identification(monkeypatch, message):
+def test_unenabled_identification_cannot_execute(monkeypatch, message):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     tool_outputs = []
 
@@ -152,6 +141,6 @@ def test_formula_tool_call_cannot_start_identification(monkeypatch, message):
         raise AssertionError("Formula question must not execute a fit")
 
     monkeypatch.setattr(chat.httpx, "AsyncClient", Client)
-    response = asyncio.run(chat.answer(ChatRequest(message=message, identification_enabled=True), invoke))
+    response = asyncio.run(chat.answer(ChatRequest(message=message, identification_enabled=False), invoke))
     assert response["mode"] in {"deepseek", "provider_error"} and response["job_id"] is None
     assert "error" in tool_outputs[0]

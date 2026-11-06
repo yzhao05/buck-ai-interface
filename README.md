@@ -102,9 +102,9 @@ DEEPSEEK_MODEL=deepseek-flash
 
 随后重启后端。密钥不要填进 `frontend/config.js`，也不要提交 GitHub。默认模型依据 2026-10-15 查阅的 [DeepSeek 官方文档](https://api-docs.deepseek.com/zh-cn/) 设置；可用 `DEEPSEEK_MODEL` 更改。已实现原生工具调用，不执行模型生成的任意代码。配置 Key 之前不声称已完成真实 API 联调。
 
-模型收到问题、最近对话、计算摘要、当前配置及检索资料。原始完整 CSV 不发送给 DeepSeek。聊天、分类与配置调用失败或缺少 API Key 时显示英文弹窗，不生成本地规则答案；已启动的任务继续跟踪，已取得的实验记录保留。
+模型收到问题、最近对话、计算摘要、当前配置及检索资料。原始完整 CSV 不发送给 DeepSeek。Agent 调用失败或缺少 API Key 时显示英文弹窗，不生成本地规则答案；已启动的任务继续跟踪，已取得的实验记录保留。
 
-## 任务分类 Agent
+## 自主 Agent 与工具适配
 
 支持用自然语言打开辨识面板、选择 PANN/抗噪加权积分、设置 LC/LCR 与已知负载 R，并在明确要求开始时启动实验。DeepSeek 通过 `configure_identification` 返回结构化操作；后端校验允许字段及 FitOptions 范围，前端应用后重新读取完整配置，复用现有辨识提交与进度流程。没有提及的表单值保留，不从历史结果取配置；仅配置不会清空右侧结果。单次配置和两方法计划支持上文“对话修改实验与分析配置”列出的字段，包括 PWM、轮数、时间区间、控制器及已上传文件；只应用当前指令明确指定的变化。
 
@@ -114,37 +114,27 @@ DEEPSEEK_MODEL=deepseek-flash
 
 `node tests/browser-four-run-plan.cjs` 验证截图原句、关闭的辨识面板、缺列和未确认时不提交、四组独立配置与报告名称，以及第三组运行中刷新后的恢复与去重。模型回复和后三个数值任务使用测试替身，第一组积分真实计算；此测试不验证四组的数值精度或真实 DeepSeek 服务。设置环境变量 `MATRIX_SCENARIO=failure` 可验证第三组失败后保留前两份结果、禁止重复提交及修改已开始计划的参数；`MATRIX_SCENARIO=cancel` 验证取消第三组运行中的后续计划时，已提交结果仍保存且第四组不启动。已开始计划会先检查参数是否改变，再检查电路确认等条件，避免要求用户确认一份实际不允许继续的配置。
 
-回归测试：`python -m pytest tests/test_identification_plan.py tests/test_configuration.py tests/test_task_router.py -q`。本地后端在 8001 端口启动后，运行 `node tests/browser-identification-plan.cjs` 验证两方法真实计算（PANN 200 轮）；可通过 `PLAN_CSV` 指定含噪 CSV，否则使用仓库 Case16A 示例。`node tests/browser-identification-plan-guards.cjs` 验证失败保留、同名文件歧义、重复/过期操作和英文显示。`node tests/browser-identification-plan-recovery.cjs` 使用真实积分结果和模拟 PANN 任务验证运行中刷新、继续原任务及不重复提交（不用于验证 PANN 数值精度）。后端回归使用模拟 DeepSeek 响应，不调用外部服务；上述计划浏览器测试默认使用 `tests/plan-chat-fixtures.cjs` 的固定解析回复，无需 Key，设置 `TEST_LIVE_DEEPSEEK=1` 可验证真实解析。`node tests/browser-plan-pwm-source.cjs` 默认模拟解析回复，使用截图原句验证两份任务及报告的 measured 来源、缺少 PWM 列时暂停（积分真实计算，PANN 响应模拟）；设置 `TEST_LIVE_DEEPSEEK=1` 可接入已配置 Key 的后端验证真实模型解析。
+回归测试：`python -m pytest tests/test_identification_plan.py tests/test_configuration.py tests/test_chat_adapter.py -q`。本地后端在 8001 端口启动后，运行 `node tests/browser-identification-plan.cjs` 验证两方法真实计算（PANN 200 轮）；可通过 `PLAN_CSV` 指定含噪 CSV，否则使用仓库 Case16A 示例。`node tests/browser-identification-plan-guards.cjs` 验证失败保留、同名文件歧义、重复/过期操作和英文显示。`node tests/browser-identification-plan-recovery.cjs` 使用真实积分结果和模拟 PANN 任务验证运行中刷新、继续原任务及不重复提交（不用于验证 PANN 数值精度）。后端回归使用模拟 DeepSeek 响应，不调用外部服务；上述计划浏览器测试默认使用 `tests/plan-chat-fixtures.cjs` 的固定解析回复，无需 Key，设置 `TEST_LIVE_DEEPSEEK=1` 可验证真实解析。`node tests/browser-plan-pwm-source.cjs` 默认模拟解析回复，使用截图原句验证两份任务及报告的 measured 来源、缺少 PWM 列时暂停（积分真实计算，PANN 响应模拟）；设置 `TEST_LIVE_DEEPSEEK=1` 可接入已配置 Key 的后端验证真实模型解析。
 
-缺少 CSV、已应用列映射、实际 PWM 或重建电路确认时，设置可保留但不会启动。改变电路图、数据、映射或电路参数会使旧确认失效；AI 可以记录用户明确作出的确认，不能自行推断接线一致。存在正在运行的任务、回复返回时会话/CSV/设置已变化、重复返回同一操作时不重复应用或启动。操作执行状态保存在回复中，恢复历史不会重放。单次配置工具及两方法计划均在未配置 DeepSeek 或结构化调用失败时停止，不使用本地规则猜测参数，也不退回旧配置启动；两方法的本地入口判断只用于分发和执行权限检查，具体计划参数由 DeepSeek 解析。比较已运行结果不会启动新任务，文件名及 R1/C2 等控制器元件标记不作为负载 R；计划存储失败会显示提示并解除界面锁定。需要同时部署前后端，无新增环境变量。
+缺少 CSV、已应用列映射、实际 PWM 或重建电路确认时，设置可保留但不会启动。改变电路图、数据、映射或电路参数会使旧确认失效；AI 可以记录用户明确作出的确认，不能自行推断接线一致。存在正在运行的任务、回复返回时会话/CSV/设置已变化、重复返回同一操作时不重复应用或启动。操作执行状态保存在回复中，恢复历史不会重放。单次配置工具及两方法计划均在未配置 DeepSeek 或结构化调用失败时停止，不使用本地规则猜测参数，也不退回旧配置启动；本地不再按关键词分发或裁定执行意图，计划由同一个 Harness Agent 提出。比较已运行结果不会启动新任务，文件名及 R1/C2 等控制器元件标记不作为负载 R；计划存储失败会显示提示并解除界面锁定。需要同时部署前后端，无新增环境变量。
 
 明确要求修改暂不支持字段的指令会整体拒绝，不跳过该设置后按旧值启动。已有结果分析后仍可通过“展开参数辨识面板”打开配置，不误入结果追问；发送消息时即使表单暂被禁用，数值范围检查仍有效，积分方法下未填写的隐藏训练轮数不阻塞普通问答。
 
-参考 PE-GPT 的“先分类、再进入对应任务”结构，一般消息先经过独立的任务分类 Agent，再交给任务处理流程；明确的两方法执行请求直接分发给 DeepSeek 计划解析，避免重复调用分类模型：
+聊天主链路由官方 Harness Agent 直接理解用户意图、否定范围与指代，选择检索、配置和执行步骤。`chat.py` 只组装上下文、注册工具、校验结构化调用并返回结果，不再调用分类 API，也不按关键词覆盖判断或按类别删除工具。
 
 ```text
 用户消息 + 最近对话 + 界面状态
-    → 分类 Agent（一次独立 DeepSeek 调用，只返回任务标签）
-    → 主任务 + 最多两个次任务
-    → 对应提示词、上下文和工具权限
-    → 知识检索 / 波形分析 / 数值计算 → 回答
+    → 官方 Harness Agent
+    → 自主选择知识/历史检索、配置提案、辨识或 PLECS 工具
+    → 后端验证参数、资源归属、数据匹配、预算及执行前置条件
+    → 工具结果返回 Agent → 答案与证据
 ```
 
-| 主任务 | 用途 | 可启动辨识 |
-|---|---|---|
-| 使用指导 | CSV、连接、界面和操作步骤 | 否 |
-| 公式知识 | 功率级、控制级、原理与公式 | 否 |
-| 波形分析 | 实测统计与波形现象 | 否 |
-| 参数辨识 | 明确要求执行 L/C/R 估计 | 是，仍检查入口、数据和配置 |
-| 误差诊断 | 读取已有结果、解释误差、提出修改计划 | 否 |
-| 硬件寿命 | 器件应力、选型、损耗和寿命条件 | 否 |
-| 一般问答 | 其他问题与系统能力边界 | 否 |
+工具是否出现只取决于显式界面状态：有配置快照时提供配置/组合计划工具，通过前端校验应用后启动；旧客户端直接辨识仍需开启辨识入口；显式 `current_result_analysis` 只提供当前结果的读取与已启用对照能力。普通追问不再靠“为什么”等关键词限制历史上下文。知识和会话搜索均由 Agent 发起，不预先用用户整句话搜索。
 
-分类 Agent 只拿到当前消息、最近 6 条历史和数据/结果/辨识入口的状态标记，不接收原始 CSV，也不能执行工具或更改参数。它使用 [DeepSeek 工具调用接口](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion/)返回 `route_task`，服务器验证分类枚举后分发；后续回答模型只能调用当前任务允许的工具。
+Agent 必须遵守用户的执行限制；后端不再用自然语言关键词作为确定性授权检查。引用资料与历史指令仅是数据。路径、范围、模型目录、结果归属、当前配置指纹和预算等执行检查仍然保留。配置工具返回结构化操作后，只暂停依赖新配置的读取/执行与后续修改；知识、历史、只读连接和目录检索仍可继续。普通聊天不提前读取波形或结果，由 Agent 按需调用；显式当前结果分析入口仍校验其绑定结果。
 
-“先辨识参数，再解释公式”会进入参数辨识主任务并兼顾公式知识；查看辨识结果、询问按钮位置、报告已完成、只问原理或明确拒绝执行不会启动新辨识。单独回复“继续”“好的。”及仅引用“开始参数辨识”也不作为执行请求。公式任务不依赖已上传数据仍然有效。混合任务以主任务统一决定执行权限，次任务只补充处理内容。回答旁显示任务类别；未配置 Key 或分类服务失败时停止请求并显示英文弹窗。
-
-默认沿用 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 `DEEPSEEK_MODEL`，无需新增必填环境变量。可选设置 `DEEPSEEK_ROUTER_MODEL` 为分类专用模型。配置 Key 后每次问答通常增加一次短分类请求，因此会增加少量延迟和 API 用量；分类请求设置 15 秒读超时，失败时使用规则分类继续处理。这里实现的是一个分类 Agent 加各任务处理流程，并未训练多个独立模型。
+已删除 `task_router.py`、配置模块的旧分类/解析入口及其关键词规则；配置适配器只验证结构、取值与资源，不重新解释原句。旧环境变量 `DEEPSEEK_ROUTER_MODEL` 已废弃。
 
 ## 从零部署 GitHub Pages + Render
 
@@ -195,7 +185,7 @@ DEEPSEEK_MODEL=deepseek-flash
 
 原电路的输出理论目标约为 **15.2128 V**（理想 CCM、未限幅），12 V 是电容初值；参考元件值不是任意上传 CSV 的参数真值。
 
-借鉴 [PE-GPT](https://github.com/XinzeLee/PE-GPT) 的文档分块、检索、工具问答结构，本项目使用本地中英文 BM25 检索，无需向量数据库或额外 embedding API。DeepSeek 可通过 `search_knowledge(query)` 查询具体主题；公式条目由模型按需检索；未配置 Key 时不生成聊天回答，已有 CSV 不会覆盖公式问答的任务分类。仅询问公式或原理不会启动辨识；明确要求“先辨识参数，再解释公式”时，会在已进入辨识模式且数据配置有效后执行。
+借鉴 [PE-GPT](https://github.com/XinzeLee/PE-GPT) 的文档分块、检索、工具问答结构，本项目使用本地中英文 BM25 检索，无需向量数据库或额外 embedding API。DeepSeek 可通过 `search_knowledge(query)` 查询具体主题；公式条目由模型按需检索；未配置 Key 时不生成聊天回答，已有 CSV 不会使本地代码改变问答意图。仅询问公式或原理不会启动辨识；明确要求“先辨识参数，再解释公式”时，会在已进入辨识模式且数据配置有效后执行。
 
 可直接提问：“推导 R1、R2、R3、R4、C2、C3 控制电路的节点方程”“模拟补偿器传递函数和零极点是什么？”“Buck 的 CCM/DCM 临界条件是什么？”“LCR 积分辨识公式及适用条件是什么？”
 
@@ -351,8 +341,9 @@ backend/report.py         中英文 PDF 报告、波形与复核建议
 backend/pann_adapter.py   上游 PANN 的新适配层
 backend/controller.py     已知控制器重建、取样支路与自主闭环验证
 backend/vendor/           保留作者说明的上游模型
-backend/chat.py           DeepSeek 受控工具调用
-backend/task_router.py    独立任务分类 Agent、规则降级、任务提示词与工具权限
+backend/chat.py           上下文、工具及答案元数据适配
+backend/harness_runtime.py 官方 Harness 运行时、模型流及 MCP 工具桥接
+backend/configuration.py   Agent 配置提案到前端动作的结构化适配
 frontend/history.js       浏览器会话归档、切换与 CSV 关联恢复
 frontend/attachments.js   IndexedDB 原始 CSV 保存与会话级删除
 frontend/sync.js          私有恢复码、双向合并与缺失副本修复
@@ -408,15 +399,15 @@ DeepSeek 会收到真实计算的四组误差及成对变化（替换组减基�
 
 ### Agent 思考模式与本地 PLECS 排查
 
-聊天可选择自动、快速、思考模式，随会话保存。自动模式下普通问答关闭 thinking，误差诊断、实验比较及 PLECS 操作启用 thinking；手动选择优先，快速和思考共用检索、引用校验和工具权限。聊天保留任务分类 Agent，其请求也计入成本预留；配置提案共用时间/成本预算并遵循用户模式，仍保留参数校验与执行检查。诊断上下文包含逐轮损失、L/C/R 轨迹的至多 81 个采样点、训练稳定性、条件数及残差诊断；历史快照缺少轨迹且后端原任务已过期时会明确标为缺失。
+聊天可选择自动、快速、思考模式，随会话保存。自动模式默认启用 thinking，不再按消息关键词或分类结果决定；快速模式关闭，思考模式开启。三种模式共用工具目录与确定性执行校验，配置提案也在同一 Harness 循环与预算内。诊断上下文包含逐轮损失、L/C/R 轨迹的至多 81 个采样点、训练稳定性、条件数及残差诊断；历史快照缺少轨迹且后端原任务已过期时会明确标为缺失。
 
-官方 `deepseek-harness-sdk==0.2.1rc2`（包含同版本 runtime）拥有多轮模型/工具循环、上下文、JSONL 会话和恢复；本项目通过 MCP 提供校验后的工具。旧 `chat.py` HTTP 调度循环已删除。单次结构化任务分类与配置补丁解析仍用于界面操作准入，不是另一套实验循环。
+官方 `deepseek-harness-sdk==0.2.1rc2`（包含同版本 runtime）拥有多轮模型/工具循环、上下文、JSONL 会话和恢复；本项目通过 MCP 提供校验后的工具。旧 `chat.py` HTTP 调度循环已删除。独立任务分类和配置解析已移出聊天链路，配置提案由同一 Agent 调用结构化工具产生。
 
-快速模式总计最多 7 次模型请求，思考模式最多 14 次（包含已用的分类请求）；默认时间预算 300 秒，可通过 `AGENT_TIME_LIMIT_S` 设置，硬上限 900 秒。成本默认上限 0.50 USD，按配置的输入/输出 1/5 USD 每百万 token 保守预留。Harness 的重试、压缩请求也通过预算网关，不绕过限额。每组 PLECS 为基线加至多两个单因素值，单次求解 12 秒；不再设每次回答最多两组的固定限制。相同参数干预只返回已保存结果，断线或不确定执行状态不自动重跑。达到预算会保留证据并显示英文错误，不生成备用分析。
+快速模式总计最多 7 次模型请求，思考模式最多 14 次（不再包含独立分类请求）；默认时间预算 300 秒，可通过 `AGENT_TIME_LIMIT_S` 设置，硬上限 900 秒。成本默认上限 0.50 USD，按配置的输入/输出 1/5 USD 每百万 token 保守预留。Harness 的重试、压缩请求也通过预算网关，不绕过限额。每组 PLECS 为基线加至多两个单因素值，单次求解 12 秒；不再设每次回答最多两组的固定限制。相同参数干预只返回已保存结果，断线或不确定执行状态不自动重跑。达到预算会保留证据并显示英文错误，不生成备用分析。
 
 使用本机后端打开连接设置，填写 PLECS.exe 路径及电路模型文件夹。设置按后端在浏览器记住，并随新会话同步至本机后端。PLECS 需预先在 Preferences 中启用 RPC 1080；助手可检查端口并启动已配置程序，许可或 RPC 未就绪会返回具体错误。
 
-助手可调用 connect_plecs → search_plecs_models → get_plecs_models → run_plecs_experiment。搜索递归进入子目录，跳过链接及 Windows junction，扫描有数量和时间限制。CSV/上传电路图片的文件名或用户明确指定的模型名，与 .plecs 文件名去扩展名后唯一精确匹配才自动登记；多候选、扫描不完整、截图无有效模型名时询问用户，绝不静默选相似电路。用户可在聊天中提供完整 .plecs 路径。模型选择按会话隔离。
+助手自主选择独立工具：check_plecs_connection 只检查连接；connect_plecs 必要时启动程序；search_plecs_models 按 Agent 提供的 hints 搜索并返回路径，通过 offset/limit 和 next_offset 翻页，candidate_count 表示已扫描的候选数量，search_complete 标记是否扫描完整，递归跳过链接及 Windows junction，扫描有数量和时间限制，不读取/自动登记模型。select_plecs_model 才读取并登记配置目录内的文件，get_plecs_models 返回已登记参数，open_plecs_model 打开副本，run_plecs_experiment 执行仿真。模型选择按会话与数据上下文隔离；名称匹配不证明电路一致，Agent 根据指令和证据处理歧义。
 
 当前支持顶层数值型 L/C/R、电源电压、初始状态、载波频率/延迟和常量参数，默认限定在标称值附近；表达式参数和子系统内部参数不自动修改。模型须有顶层 Output 才能取得波形。输出按端口编号，未核实映射时不冒充电流/电压。没有上传 .plecs 文件的通用自动建模或任意脚本执行能力。
 
@@ -426,7 +417,7 @@ DeepSeek 会收到真实计算的四组误差及成对变化（替换组减基�
 
 新增功能验证：`python -m pytest tests/test_agent_plecs.py -q`；真实 RPC 手动验证：`python -m tests.smoke_plecs_local`（使用独立 Case17 副本）。
 
-审阅补齐：普通 PLECS 连接、打开与模型选择由独立任务分类支持，快速模式也可使用工具。RPC 就绪需实际校验 PLECS 方法列表，不能仅凭 1080 端口开放。可只配置文件夹并连接已启动的 PLECS；程序路径仅用于自动启动。递归搜索支持空格路径及同名备份的完整路径精确匹配，目录或数据上下文变化后须重新选模型。打开模型使用独立副本，无顶层 Output 的模型可以打开，但不能执行依赖输出端口的实验。原始电路不改写。
+审阅补齐：普通 PLECS 连接、打开与模型选择由同一 Harness Agent 自主选择工具，快速模式也可使用工具。RPC 就绪需实际校验 PLECS 方法列表，不能仅凭 1080 端口开放。可只配置文件夹并连接已启动的 PLECS；程序路径仅用于自动启动。递归搜索支持空格路径及同名备份的完整路径精确匹配，目录或数据上下文变化后须重新选模型。打开模型使用独立副本，无顶层 Output 的模型可以打开，但不能执行依赖输出端口的实验。原始电路不改写。
 本地规则答案生成器（含残差/对照文字摘要）已删除；保留数值计算、权限及参数校验。缺 Key、服务失败、预算耗尽均返回空答案与英文提醒，不生成备用分析。PLECS 配置同步失败不阻断无关聊天。
 真实 RPC 检查命令：`python -m tests.smoke_plecs_local --model <完整模型路径> --executable <PLECS.exe路径> --parameter <已登记参数> --value <对照值>`。会检查启动、搜索、打开副本、数值对照及原文件哈希。RPC 需在本机 PLECS 偏好设置开启，接口依据：https://docs.plexim.com/plecs/latest/scripting/ 。
 
@@ -435,7 +426,9 @@ DeepSeek 会收到真实计算的四组误差及成对变化（替换组减基�
 
 安装：`python -m pip install -r requirements-lock.txt`。官方 SDK 自带运行时，无需额外运行 `dsh web`，也无需给模型开放 Shell。使用 `sdk-minimal` 官方 profile，加本项目启动 patch，禁用通用 Shell、文件和工作目录工具，只注册 Buck MCP 工具。
 
-Harness 使用 **DeepSeek Messages API**。`DEEPSEEK_BASE_URL` 继续用于单次分类/配置解析的 Chat Completions；Harness 默认使用该根地址下的 `/anthropic/v1/messages`。如果使用代理，单独设置 `HARNESS_BASE_URL` 为支持 Messages 的根地址（例如 `https://api.deepseek.com/anthropic`）；只有 Chat Completions 的代理不能直接替代。
+Windows 会话恢复：`0.2.1rc2` 打包运行时在本机从 D/E 盘工作目录启动时，关闭阶段会因 `koffi.node` 加载失败而无法写入会话，下一次恢复报 `session … not found`（上游讨论 [#11313](https://github.com/deepseek-ai/deepseek-harness/discussions/11313)）。适配器通过 `runtime_cwd` 从系统盘启动子进程，逻辑工作目录与会话数据仍保留在原 `runtime/harness` 位置。回归测试检查 JSONL 实际落盘、逻辑工作目录和跨进程恢复；此前从未写入磁盘的会话无法凭启动标记还原，不应删除标记并自动重做实验。
+
+Harness 使用 **DeepSeek Messages API**。聊天不再单独调用分类/配置 Chat Completions；Harness 默认使用 `DEEPSEEK_BASE_URL` 根地址下的 `/anthropic/v1/messages`。如果使用代理，单独设置 `HARNESS_BASE_URL` 为支持 Messages 的根地址（例如 `https://api.deepseek.com/anthropic`）；只有 Chat Completions 的代理不能直接替代。
 
 1. 打开云端网页的连接设置，填写本机 PLECS.exe 和模型文件夹，点击“生成本机连接器配对码”。每份配对绑定当前会话。
 2. 在安装了本项目依赖的 Windows 电脑运行页面给出的命令：
@@ -460,3 +453,21 @@ Harness 使用 **DeepSeek Messages API**。`DEEPSEEK_BASE_URL` 继续用于单�
 2026-11-06 另完成本机真实 PLECS RPC 检查：使用 `case17 originalplecs.plecs` 的独立副本，将 C1 从 0.001 F 改为 0.0011 F，基线与干预均返回两个通道、2001 个采样点，原文件 SHA-256 不变。该次只验证真实仿真链路，没有验证自动参数重辨识：此模型的 L 使用 `varL` 表达式，而当前登记仅支持数值常量，且输出端口尚未作物理量绑定。现有常量模型的自动误差比较通过本地桥接集成测试；真实 DeepSeek + Render + 本机连接器的完整链路仍待部署后验收。
 
 官方参考：[Python SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/README.md)、[MCP 工具接入](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md)。
+
+
+## 当前运行结构
+
+- 前端收集原始问题、图片、最近对话、完整可检索会话、实验摘要和界面状态；显示中的结果配置与待编辑表单分别传递。普通消息不做关键词分类，图片不关闭工具。只有结果分析按钮显式设置 `current_result_analysis` 范围。
+- `/api/agent/tasks` 管理任务、流式事件、停止和恢复；`chat.py` 组装上下文、工具目录及结构化调用结果。已删除独立 `task_router.py`、旧配置解析 API 和本地自然语言二次校验。
+- `harness_runtime.py` 接入官方 DeepSeek Harness，由 Agent 理解意图与限制、选择检索/计算/配置工具并生成回答。快速、思考使用同一工具链，区别是思考开关及步骤预算；auto 当前使用思考模式。
+- 知识与会话检索工具执行 Agent 提供的查询及分页参数，返回原文与来源；本地词项索引负责匹配排序，不决定是否应检索，不生成兜底答案。配置工具仅输出待应用动作，前端校验数据/配置版本、范围、文件归属和幂等性后执行。取消等待确认或后续辨识也是 Agent 的显式工具动作。
+- 数值工具使用确定性算法及经过约束的实验执行器；类型、数值范围、归属、资源预算、上下文绑定与防重放仍由代码强制检查。这些检查不解析用户的自然语言。
+- PLECS 工具分离副作用：`check_plecs_connection` 只探测 RPC，`connect_plecs` 必要时启动，`search_plecs_models` 只列文件名/路径，`select_plecs_model` 才读取并登记文件，`open_plecs_model` 打开副本，`run_plecs_experiment` 才仿真。搜索词由 Agent 提供；选择路径限于配置的模型目录，允许引用搜索结果或先前上下文，不要求本条消息重复路径。
+- 本地后端可直接调用本机执行器；Render 经已配对的出站连接器队列调用同一执行器，再通过本机 PLECS RPC 通信。云端本身不能访问本机磁盘。
+
+`node tests/browser-agent-adapter.cjs` 验证前端不依措辞删上下文、附图保留配置能力、Agent 取消、结果/表单分离和显式分析范围。`tests/test_chat_adapter.py` 验证同一工具集覆盖快速/思考模式、结构化参数校验、按需证据读取和 PLECS 只读操作无附带启动/读取。测试使用模拟模型，不代表真实模型对所有表达都能理解正确。当前 Windows 运行时启动目录修复已通过快速/思考两种模式的真实 SDK 会话落盘与跨进程恢复测试；测试遍历使用 Windows 长路径前缀，避免将超长路径下已存在的会话误报为缺失。模型上游仍使用本地模拟服务，旧的未落盘会话不因此恢复。
+
+目录与打开链路回归：`tests/test_plecs_open_routes.py` 覆盖 fast/thinking/auto × 本地 API/连接器队列，验证超过 30 个模型的分页、选择路径、打开独立副本及不仿真。真实本机只打开检查可运行 `python -m tests.smoke_plecs_local --open-only --model <完整路径>`，检查后关闭测试副本，核对原文件 SHA-256；此模式不执行仿真。
+
+
+本轮循环审查补充：任务找回优先返回正在运行的任务（包括恢复的较早任务）；浏览器缓存任务 ID 返回 404 时改查后端最新任务，浏览器存储不可用不阻断已提交任务的流式跟踪。波形工具读取失败返回工具错误，Agent 可以说明缺失并继续检索。PLECS 登记保留模型真实 TimeSpan，超过 0.1 秒仅阻止自动实验，不静默缩短时段，仍允许打开副本。实验去重同时核对已登记模型的源文件 SHA-256；同路径重新登记的新电路不会复用已知旧版本的实验结果，未完成实验仍保留防重跑记录。

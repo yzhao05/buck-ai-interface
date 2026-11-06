@@ -43,7 +43,7 @@ def read(owner,identifier,after=0):
 
 def latest(owner):
     with database() as db:
-        row = db.execute('SELECT id FROM tasks WHERE owner=? ORDER BY created DESC LIMIT 1',(owner,)).fetchone()
+        row = db.execute("SELECT id FROM tasks WHERE owner=? ORDER BY CASE WHEN state='running' THEN 0 ELSE 1 END, created DESC LIMIT 1",(owner,)).fetchone()
     return read(owner,row['id']) if row else None
 
 

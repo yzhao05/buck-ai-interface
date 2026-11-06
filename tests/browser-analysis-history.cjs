@@ -16,13 +16,6 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   ]}));
   assert.deepEqual(interleaved.map(m=>m.id),['analysis-a']);
   assert.equal(interleaved[0].request_id,'analysis-q');
-  assert(await page.evaluate(()=>wantsConversationRetrieval('总结当前会话的所有讨论')));
-  assert.deepEqual(await page.evaluate(()=>[
-   requestsIdentificationExecution('先辨识参数，再比较之前的结果'),
-   requestsIdentificationExecution('First run identification, then compare previous results'),
-   requestsIdentificationExecution('总结之前“开始辨识”的回答'),
-   requestsIdentificationExecution('不要辨识，只比较之前的结果')
-  ]),[true,true,false,false]);
   const ids=await page.evaluate(()=>{
    clearTimeout(archiveTimer);archiveEnabled=false;
    const q=rememberMessage('user','GitHub 部署选哪个分支？');
@@ -48,7 +41,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#compare-analyses').click();
   assert.equal(await page.locator('#chat-input').inputValue(),'保留正在输入的问题');
   await page.evaluate(()=>sendMessage('总结之前关于 GitHub 部署的讨论'));await ready();
-  assert.equal(sent.conversation_messages.length,before);assert(sent.conversation_retrieval_requested);
+  assert.equal(sent.conversation_messages.length,before);assert.equal(sent.conversation_retrieval_requested,undefined);
   assert.equal(sent.experiments.length,0);assert(!sent.history.some(m=>m.content.includes('GitHub')));
   assert(sent.conversation_messages.find(m=>m.id===ids.longA).content.length>8000);
   assert(!sent.conversation_messages.some(m=>m.content==='网络失败'));
@@ -85,7 +78,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await require('./harness-browser-fixture.cjs').install(page);
   await page.route('**/api/chat',route=>{sent=route.request().postDataJSON();return route.fulfill({json:{answer:'mixed request received',mode:'local'}});});
   await page.evaluate(()=>sendMessage('先辨识参数，再比较之前的结果'));await ready();
-  assert(csvReads>0,'Explicit execution must check/restore the CSV');
+  assert.equal(csvReads,0,'Only an applied execution action should restore the CSV and invalidate a displayed result');
   assert(sent.result_id && sent.options && sent.identification_enabled);
   await page.evaluate(()=>{archiveEnabled=true;return synchronizeArchive();});await ready();
   const archived=await page.evaluate(async()=> (await archiveRequest('/conversations/'+activeConversation.id)).record.messages);

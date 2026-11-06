@@ -10,12 +10,6 @@ ENGLISH_COUNT = (r"\b([1-9]\d*|" + "|".join(NUMBER_WORDS) +
                  r")(?=\s+(?:[a-z][\w-]*\s+){0,4}(?:replies|answers|messages|analyses)\b)")
 
 
-def history_requested(text):
-    return bool(re.search(r"历史|之前|前面|此前|上次|早先|最早|最近|当时|刚才|刚刚|(?:本|当前|整个|这次)会话|这段对话|聊天记录|我们.*(?:聊|讨论|说过)|"
-                          r"横向|纵向|(?:总结|回顾|汇总).*(?:对话|讨论|聊天)|"
-                          r"\b(?:previous|earlier|history|historical|last|latest|oldest|conversation|chat|discussed|said before)\b", text, re.I))
-
-
 def terms(text, query=False):
     text = text.lower()
     if query:
@@ -191,33 +185,6 @@ class ConversationIndex:
                 "excerpts": excerpts, "offset": offset,
                 "next_offset": offset+consumed if offset+consumed < len(ids) and consumed else None,
                 "budget_exhausted": self.remaining <= 0}
-
-    def initial(self, query):
-        order = "oldest" if re.search(r"最早|起初|\bfirst\b|\boldest\b", query, re.I) else (
-            "newest" if re.search(r"最近|上次|最后|\blast\b|\blatest\b", query, re.I) else "relevance")
-        match = re.search(r"([1-9]\d*|[一二三四五六七八九十两]+)\s*(?:次|条|份|个)", query) or re.search(ENGLISH_COUNT, query, re.I)
-        count = 8
-        if match:
-            value = match[1].lower()
-            if value.isdigit():
-                count = min(20, int(value[:3]))
-            elif value in NUMBER_WORDS:
-                count = NUMBER_WORDS[value]
-            else:
-                digits = {c: i for i, c in enumerate("零一二三四五六七八九", 0)} | {"两": 2}
-                if "十" in value:
-                    tens, _, units = value.partition("十")
-                    count = min(20, digits.get(tens, 1)*10+digits.get(units, 0))
-                else:
-                    count = digits.get(value, 8)
-        role = "assistant" if re.search(r"(?:次|份)\s*(?:ai\s*)?分析|回答|回复|\b(?:replies|answers|analyses)\b", query, re.I) else "all"
-        # Only use result-analysis markers when the question specifically asks
-        # for analyses and such markers exist. Ordinary topics search all roles.
-        specifically_results = re.search(r"(?:辨识|参数).*分析|(?:identification|parameter).*analys", query, re.I)
-        unqualified_analyses = terms(query, query=True) <= {"结果"} and re.search(r"(?:次|份)\s*(?:ai\s*)?分析|结果分析|\banalyses\b", query, re.I)
-        kind = "identification_analysis" if ((specifically_results or unqualified_analyses)
-            and any(m.get("analysis") for m in self.messages.values())) else "all"
-        return self.search(query, limit=count, order=order, role=role, kind=kind)
 
     def invoke(self, name, arguments):
         if not isinstance(arguments, dict):

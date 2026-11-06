@@ -6,10 +6,6 @@ import hashlib
 import statistics
 
 
-def comparison_requested(message):
-    return bool(re.search(r"对比|比较|横向|纵向|\b(?:compare|comparison|versus)\b", message, re.I))
-
-
 def summarize_experiments(experiments):
     records = []
     for run in experiments:

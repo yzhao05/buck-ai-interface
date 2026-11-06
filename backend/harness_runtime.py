@@ -200,7 +200,12 @@ async def run(messages, tools, invoke, budget):
                 content = '\n'.join(text)
             history.append({'role':message['role'],'content':content})
         prompt = [{'type':'text','text':json.dumps(history,ensure_ascii=False)},*images]
-        harness = DeepSeekHarness(dsh_home=str(home),cwd=str(home),profile='sdk-minimal',patches=(str(path),),
+        # Windows runtime 0.2.1rc2 resolves its packaged Koffi module against
+        # the process drive (upstream #11313). Launch on the system drive;
+        # the SDK's logical cwd and all durable data stay in this session home.
+        runtime_cwd = os.environ.get('SystemDrive', 'C:') + '\\' if os.name == 'nt' else str(home)
+        harness = DeepSeekHarness(dsh_home=str(home),cwd=str(home),runtime_cwd=runtime_cwd,
+            profile='sdk-minimal',patches=(str(path),),
             model=os.getenv('DEEPSEEK_MODEL','deepseek-flash'),base_url=gateway.url,
             api_key=gateway.secret,max_tokens=8000 if budget.thinking else 3000,
             reasoning_effort='high' if budget.thinking else 'off',

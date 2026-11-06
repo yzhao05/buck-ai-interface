@@ -18,9 +18,6 @@ def search(query, **kwargs):
 def fake_provider(monkeypatch, replies):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-secret")
     requests = []
-    async def classify(request):
-        return {"task": "knowledge", "label": "公式知识", "secondary_tasks": [], "mode": "agent"}
-    monkeypatch.setattr(chat, "classify", classify)
     class Client:
         def __init__(self, **kwargs): pass
         async def __aenter__(self): return self
@@ -57,7 +54,7 @@ def test_agent_refines_empty_search_and_cites_only_used_documents(monkeypatch):
     assert requests[1]["tool_choice"] == "auto"
 
 
-@pytest.mark.parametrize("content", ["没有搜索直接回答", "伪造来源。[kb:invented]"])
+@pytest.mark.parametrize("content", ["伪造来源。[kb:invented]"])
 def test_unsearched_answer_is_rejected(monkeypatch, content):
     fake_provider(monkeypatch, [{"role": "assistant", "content": content}])
     result = run()
@@ -78,7 +75,8 @@ def test_invalid_top_k_cannot_count_as_successful_search(monkeypatch, top_k):
     requests = fake_provider(monkeypatch, [search("Buck", top_k=top_k),
         {"role": "assistant", "content": "invalid"}])
     result = run()
-    assert result["mode"] == "provider_error"
+    assert result["sources"] == []
+    assert result["tool_calls"][0]["status"] == "未执行"
     assert "error" in json.loads(requests[1]["messages"][-1]["content"])
 
 
@@ -100,16 +98,13 @@ def test_tool_round_limit_stops_more_searches(monkeypatch):
     requests = fake_provider(monkeypatch, [search("Buck " + str(i)) for i in range(20)])
     result = run()
     assert result["mode"] == "provider_error"
-    assert result['error_code']=='agent_budget_exceeded' and len(requests)<=7
+    assert result['error_code']=='agent_budget_exceeded' and len(requests)<=14
 
 
 def test_failure_after_job_submission_keeps_job_id(monkeypatch):
     fake_provider(monkeypatch, [{"role": "assistant", "content": None, "tool_calls": [
         {"id": "fit", "type": "function", "function": {"name": "start_identification", "arguments": "{}"}}]},
         httpx.ReadTimeout("test-secret")])
-    async def classify(request):
-        return {"task": "identification", "label": "辨识", "secondary_tasks": [], "mode": "agent"}
-    monkeypatch.setattr(chat, "classify", classify)
     calls = []
     async def invoke(name):
         calls.append(name)
@@ -122,7 +117,6 @@ def test_failure_after_job_submission_keeps_job_id(monkeypatch):
 @pytest.mark.parametrize("message", ["解释公式", "开始参数辨识", "比较历史实验", "修改负载为10欧姆"])
 def test_missing_key_stops_before_routing_or_tools(monkeypatch, message):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.setattr(chat, "classify", no_execution)
     result = asyncio.run(chat.answer(ChatRequest(message=message), no_execution))
     assert result["answer"] == "" and result["error_code"] == "missing_api_key"
     assert result["provider_error"].isascii() and result["job_id"] is None

@@ -27,9 +27,25 @@ EVIDENCE = json.loads((ROOT / "backend/knowledge_base/model_evidence.json").read
     ("闭环目标为什么不是12V", "buck-control-dc"),
     ("负载跳变并联电阻", "buck-load-step"),
     ("电容还有多少寿命", "capacitor-life"),
+    ("ESR 输出纹波是三角波还是开关尖峰", "buck-ripple-sizing"),
+    ("Buck CCM ESR ESL ripple waveform spikes", "buck-ripple-sizing"),
+    ("负载阶跃 电容 ESR 电压跳变", "buck-ripple-sizing"),
 ])
 def test_topic_retrieval(query, expected):
     assert expected in [d["id"] for d in retrieve(query)[:3]]
+
+
+def test_ripple_evidence_reaches_agent_with_primary_source(monkeypatch):
+    from test_agent_knowledge import fake_provider, search, no_execution
+    requests = fake_provider(monkeypatch, [search('Buck CCM ESR ESL ripple waveform'),
+        {'role':'assistant','content':'在 CCM 稳态近似三角电容电流下，ESR 压降也是三角波；不能与负载阶跃混淆。[kb:buck-ripple-sizing]'}])
+    response = asyncio.run(chat.answer(ChatRequest(message='ESR 纹波与负载阶跃有什么区别？'), no_execution))
+    delivered = json.loads(requests[-1]['messages'][-1]['content'])['documents']
+    evidence = next(d for d in delivered if d['id']=='buck-ripple-sizing')
+    assert 'vESR=rC iC' in evidence['content'] and 'vESL=ESL·diC/dt' in evidence['content']
+    assert '负载电流突然增加' in evidence['content']
+    assert any('SSZT293' in r['url'] for r in evidence['references'] if r.get('url'))
+    assert response['mode']=='deepseek' and response['sources'][0]['id']=='buck-ripple-sizing'
 
 
 def test_formula_reference_and_provenance():

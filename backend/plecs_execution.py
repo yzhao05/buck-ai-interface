@@ -9,21 +9,19 @@ def execute(owner, payload):
         state = plecs_local.settings(owner)
         state['model_context'] = context
         plecs_local.save(owner, state)
-    def search():
-        result = plecs_local.search_models(owner, payload.get('hints', []))
-        bind()
-        return result
+    if name == 'check_plecs_connection':
+        return {'status':'ready' if plecs_local.listening() else 'unavailable', 'port':1080, 'started':False}
     if name == 'connect_plecs':
-        result = plecs_local.ensure_running(owner)
-        if result.get('status') == 'ready':
-            result['model_search'] = search()
-        return result
+        return plecs_local.ensure_running(owner)
     if name == 'search_plecs_models':
-        return search()
+        return plecs_local.search_models(owner, args.get('hints', []), args.get('offset',0), args.get('limit',30))
     if name == 'select_plecs_model':
         path = args.get('path', '')
-        if not path or path not in payload.get('message', ''):
-            raise ValueError('只能选择用户明确提供的模型路径。')
+        # Enforce the configured filesystem boundary, not a substring of a chat turn.
+        from pathlib import Path
+        root = plecs_local.settings(owner).get('model_directory')
+        if not path or not root or not Path(path).is_absolute() or not Path(path).resolve().is_relative_to(Path(root).resolve()):
+            raise ValueError('模型必须位于连接设置中的电路模型文件夹内。')
         result = plecs_local.register(owner, path)
         bind()
         return result

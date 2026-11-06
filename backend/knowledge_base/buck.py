@@ -11,6 +11,7 @@ SOURCES = {
     "plecs-opamp": {"title": "Plexim: finite-gain Op-Amp", "url": "https://docs.plexim.com/plecs/latest/components-by-category/opamp/"},
     "ti-buck": {"title": "TI SLVA057: Understanding Buck Power Stages", "url": "https://www.ti.com/lit/an/slva057/slva057.pdf"},
     "ti-sizing": {"title": "TI SLVA477: Basic Calculation of a Buck Converter's Power Stage", "url": "https://www.ti.com/lit/an/slva477b/slva477b.pdf"},
+    "ti-ripple": {"title": "TI SSZT293: Understanding and Managing Buck Regulator Output Ripple", "url": "https://www.ti.com/document-viewer/lit/html/SSZT293/GUID-40660B2C-4732-478A-ACA5-867F055B0D09"},
     "infineon-loss": {"title": "Infineon: Designing with power MOSFETs", "url": "https://www.infineon.com/assets/row/public/documents/24/42/infineon-designing-with-power-mosfets-applicationnotes-en.pdf"},
     "pe-gpt": {"title": "PE-GPT：文档分块、检索与工具协作参考", "url": "https://github.com/XinzeLee/PE-GPT"},
 }
@@ -92,7 +93,7 @@ Iin≈d IL，Pin=Vin Iin，Pout=Vo^2/Rload。
       "Vo=dVin 不适用于未稳态启动波形或 DCM。闭环 d 随输出误差变化；不能用初始 12 V 当稳态目标。反馈取电和控制器辅助电源需明确功率边界，不能无条件把总效率设为 100%。",
       ["local-plecs", "ti-buck"]),
 entry("buck-ripple-sizing", "电感、电容纹波与选值 / Ripple and sizing",
-      "纹波 选型 选值 电感 电容 容量 ripple sizing delta inductance capacitance",
+      "纹波 选型 选值 电感 电容 容量 ESR ESL 尖峰 三角波 方波 阶跃 ripple sizing delta inductance capacitance spikes triangular waveform",
       "理想 CCM 周期稳态、近似三角电感电流，忽略控制支路的高频负载变化。",
       """ΔiL,pp=(Vin-Vo)d/(L fs)=Vo(1-d)/(L fs)。
 IL,pk=Io+ΔiL,pp/2；IL,min=Io-ΔiL,pp/2。
@@ -101,8 +102,11 @@ L≥(Vin-Vo)d/(fs ΔiL,allowed)，需对输入范围逐点检查最大纹波。
 保守纹波预算：Δvo,pp≲ΔiL,pp/(8 fs C)+rC ΔiL,pp。
 C≥ΔiL,pp/[8 fs(Δvo,allowed-rC ΔiL,pp)]，分母必须>0。
 负载阶跃初期 Δvo≈-ΔIo Δt/C；ESR 引起额外瞬时端电压变化约 -rC ΔIo。""",
-      "电容和 ESR 纹波一般不同时达到峰值，直接相加是预算近似，不是精确波形等式。还需容差、直流偏置、温度、饱和及纹波额定值；阶跃近似仅适用于控制器尚未补偿、iL 近似不变的短时间。",
-      ["ti-sizing", "local-plecs"]),
+      """稳态纹波与负载阶跃必须分开分析。CCM、负载电流近似恒定时，iC≈iL-Io 是连续三角波；vESR=rC iC 因而也是连续三角波，不在每个开关沿产生方波或瞬时跳变。
+储能电容分量满足 dvC/dt=iC/C，三角电流积分得到分段抛物线（外观近似正弦）；ESL 分量 vESL=ESL·diC/dt 在理想分段恒定电流斜率下呈方波。开关边沿尖峰还可能来自寄生电容耦合的快速电流与 ESL，不能凭尖峰判定 ESR 增大。以上分量区分参考 TI SSZT293。
+负载电流突然增加 ΔIo 时，iL 瞬间连续而 iC 跳变，才会产生约 -rC ΔIo 的 ESR 电压阶跃；随后短时间的容性压降约 -ΔIo Δt/C。不要将这一瞬态结论搬到周期稳态开关纹波。
+电容和 ESR 纹波一般不同时达到峰值，直接相加是预算近似，不是精确波形等式。还需容差、直流偏置、温度、饱和及纹波额定值；阶跃近似仅适用于控制器尚未补偿、iL 近似不变的短时间。波形诊断需核对测量带宽与探头接地，不能仅凭一个峰峰值识别 C 或 ESR。""",
+      ["ti-sizing", "ti-ripple", "local-plecs"]),
 entry("buck-dcm", "DCM 变换比与 CCM 边界 / Discontinuous conduction",
       "dcm ccm bcm 断续 连续 临界 边界 轻载 conduction boundary critical",
       "理想非同步 Buck、固定 d、周期稳态、输出近似恒压、无反馈支路负载。",

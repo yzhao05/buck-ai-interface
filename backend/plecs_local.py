@@ -54,12 +54,15 @@ def configure(owner, executable, model_directory=''):
     return {'status':'configured', 'executable':state['executable']}
 
 
-def search_models(owner, hints):
+def search_models(owner, hints, offset=0, limit=30):
+    """List paths only. Reading/registering a model is a separate Agent action."""
+    if not isinstance(hints, list) or len(hints)>30 or any(not isinstance(h,str) or len(h)>1000 for h in hints):
+        raise ValueError('hints must be an array of at most 30 names or paths')
+    if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100:
+        raise ValueError('offset must be nonnegative and limit must be 1–100')
     state = settings(owner)
     root = state.get('model_directory')
     if not root or not Path(root).is_dir():
-        state['profiles'] = {}
-        save(owner, state)
         return {'status':'unconfigured','error':'请在连接设置中填写电路模型文件夹。'}
     def stem(value):
         return Path(value.replace('\\','/')).stem.casefold().strip()
@@ -67,35 +70,38 @@ def search_models(owner, hints):
     names = {stem(s) for s in hints if isinstance(s,str) and s.strip()}
     names -= {'circuit','image','截图','电路图'}
     matches, candidates = [], []
+    candidate_count = 0
     count = 0
     complete = True
     started = time.monotonic()
     errors = []
     for directory, dirs, files in os.walk(root, followlinks=False, onerror=lambda exc: errors.append(str(exc))):
-        dirs[:] = [d for d in dirs if not Path(directory,d).is_symlink() and not Path(directory,d).is_junction()]
+        dirs[:] = sorted(d for d in dirs if not Path(directory,d).is_symlink() and not Path(directory,d).is_junction())
         count += len(files) + len(dirs)
         if count > 10000 or time.monotonic()-started > 4:
             complete = False
             break
-        for file in files:
+        for file in sorted(files):
             path = Path(directory,file)
             if path.suffix.lower() != '.plecs' or path.is_symlink():
                 continue
             entry = {'name':path.stem,'path':str(path)}
-            if len(candidates)<30:
+            if offset <= candidate_count < offset+limit:
                 candidates.append(entry)
+            candidate_count += 1
             if (str(path.resolve()).casefold() in explicit_paths if explicit_paths else stem(file) in names):
                 matches.append(entry)
     if errors:
         complete = False
+    page = {'candidates':candidates, 'candidate_count':candidate_count, 'offset':offset,
+            'next_offset':offset+len(candidates) if offset+len(candidates)<candidate_count else None,
+            'search_complete':complete}
     if len(matches)==1 and complete:
-        selected = register(owner,matches[0]['path'])
-        return {'status':'selected','match':matches[0],'selection':selected,'search_complete':True}
-    state['profiles'] = {}
-    save(owner,state)
-    return {'status':'ambiguous' if len(matches)>1 else 'not_found' if complete else 'incomplete',
-            'matches':matches,'candidates':candidates,'search_complete':complete,
-            'note':'未自动选择。请用户确认模型名称或完整路径；不能按相似名称推断电路。'}
+        return {'status':'matched','match':matches[0],'matches':matches,**page}
+    return {'status':('incomplete' if not complete else 'listed' if not names else
+                      'ambiguous' if len(matches)>1 else 'not_found'),
+            'matches':matches,**page,
+            'note':'仅列出文件名与路径，未读取或登记模型。由 Agent 根据用户指令选择；匹配名称不是电路一致性证明。'}
 
 
 class ProbeTransport(xmlrpc.client.Transport):
@@ -176,12 +182,13 @@ def register(owner, filename):
         duration = float(match[1])
         if not math.isfinite(duration):
             raise ValueError("Non-finite TimeSpan")
-        duration = min(.1, duration)
     except (ValueError, TypeError):
         duration = None
-    if duration is None or not 0 < duration <= .1:
+    if duration is None or duration <= 0:
         issues.append('TimeSpan 必须是有限正数。')
         duration = None
+    elif duration > .1:
+        issues.append('TimeSpan 超过自动实验支持的 0.1 秒；未截短原时段。可打开模型，但不能直接执行此自动实验。')
     key = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:12]
     profile = {'path':str(path.resolve()),'description':path.stem,'parameters':parameters,
                'source_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),

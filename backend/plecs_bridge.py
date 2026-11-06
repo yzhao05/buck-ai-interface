@@ -11,7 +11,7 @@ import time
 import uuid
 
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'bridge'
-TOOLS = {'connect_plecs', 'search_plecs_models', 'select_plecs_model',
+TOOLS = {'check_plecs_connection', 'connect_plecs', 'search_plecs_models', 'select_plecs_model',
          'get_plecs_models', 'open_plecs_model', 'run_plecs_experiment'}
 
 

@@ -2,6 +2,10 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "任务状态": "Task status",
+    "任务已停止，可恢复。": "Task stopped. You can resume it.",
+    "任务已中断，可恢复。": "Task interrupted. You can resume it.",
+    "连接中断，后台任务可能仍在运行。请点击“找回 / 恢复任务”重新连接。": "Connection interrupted. The task may still be running on the backend. Use Find / Resume task to reconnect.",
     "列映射已应用": "Column mapping applied", "默认接线图": "Default circuit diagram",
     "本机 PLECS 程序路径": "Local PLECS executable", "电路模型文件夹": "Circuit model folder",
     "连接本机后端后可保存。助手需要仿真时会启动 PLECS，优先搜索下方模型文件夹；找不到唯一匹配时再询问。请预先启用 RPC，端口 1080。": "Save these settings on the local backend. When simulation is needed, the assistant starts PLECS and searches the model folder first, asking only if no unique match is found. Enable RPC on port 1080 beforehand.",

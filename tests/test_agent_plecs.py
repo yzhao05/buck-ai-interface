@@ -36,8 +36,10 @@ def test_recursive_unique_and_ambiguous(tmp_path, monkeypatch):
     source=nested/'buck.plecs';source.write_text(MODEL)
     plecs_local.save('a',{'executable':'','model_directory':str(root),'profiles':{}})
     result=plecs_local.search_models('a',['buck.csv'])
-    assert result['status']=='selected'
-    assert 'C1.C' in result['selection']['parameters']
+    assert result['status']=='matched'
+    assert plecs_local.settings('a')['profiles']=={}
+    selected=plecs_local.register('a',result['match']['path'])
+    assert 'C1.C' in selected['parameters']
     (root/'buck.plecs').write_text(MODEL)
     assert plecs_local.search_models('a',['buck.csv'])['status']=='ambiguous'
     assert plecs_local.search_models('a',['unrelated.csv'])['status']=='not_found'
@@ -71,6 +73,19 @@ def test_simulation_copy_and_bounds(tmp_path, monkeypatch):
     with pytest.raises(ValueError):rpc.experiment(args,'other-owner')
 
 
+def test_registration_never_silently_shortens_simulation(tmp_path,monkeypatch):
+    monkeypatch.setattr(plecs_local,'ROOT',tmp_path/'settings')
+    source=tmp_path/'long.plecs';source.write_text(MODEL.replace('TimeSpan "0.001"','TimeSpan "2"'))
+    selected=plecs_local.register('owner',str(source))
+    profile=plecs_local.settings('owner')['profiles'][selected['model']]
+    assert profile['duration_s']==2 and selected['experiment_issues']
+    def forbidden():pytest.fail('Unsupported duration must not reach RPC')
+    monkeypatch.setattr(rpc,'proxy',forbidden)
+    result=rpc.experiment({'model':selected['model'],'parameter':'C1.C','values':[.0011],
+        'hypothesis':'sensitivity','expected_observation':'change'},'owner')
+    assert result['status']=='unavailable'
+
+
 def test_budget_and_missing_evidence(monkeypatch):
     monkeypatch.setenv('AGENT_COST_LIMIT_USD','0.00001')
     with pytest.raises(BudgetExceeded):Budget(True).reserve({'messages':[{'content':'hello'}]})
@@ -82,12 +97,9 @@ def test_budget_and_missing_evidence(monkeypatch):
     assert len(out['trajectory'])<=81
 
 
-@pytest.mark.parametrize('message,thinking',[('怎么上传 CSV',False),('为什么 C 误差很大',True),('比较两次实验',True)])
+@pytest.mark.parametrize('message,thinking',[('怎么上传 CSV',True),('为什么 C 误差很大',True),('比较两次实验',True)])
 def test_thinking_and_reasoning_replay(monkeypatch,message,thinking):
     monkeypatch.setenv('DEEPSEEK_API_KEY','mock')
-    async def classify(request):
-        return {'task':'diagnosis' if thinking else 'guidance','label':'test','secondary_tasks':[],'mode':'agent'}
-    monkeypatch.setattr(chat,'classify',classify)
     captured=[]
     class Client:
         def __init__(self,**kw):pass
@@ -137,8 +149,6 @@ def test_settings_search_experiment_chat_flow(tmp_path,monkeypatch):
     owner=str(uuid.uuid4());client=TestClient(main.app);client.headers['X-Session-ID']=owner
     assert client.post('/api/plecs/settings',json={'executable':str(exe),'model_directory':str(root)}).status_code==200
     monkeypatch.setattr(plecs_local,'ensure_running',lambda owner:{'status':'ready'})
-    async def classify(request):return {'task':'diagnosis','label':'diagnosis','secondary_tasks':[],'mode':'agent'}
-    monkeypatch.setattr(chat,'classify',classify)
     def simulate(args,who,result_id):
         assert who==owner and args['model'] in plecs_local.settings(who)['profiles']
         identifier='agent_'+'a'*32
@@ -158,8 +168,9 @@ def test_settings_search_experiment_chat_flow(tmp_path,monkeypatch):
             self.round+=1
             if self.round==1:
                 steps=[('connect_plecs',{}),('search_plecs_models',{})]
-            elif self.round==2:steps=[('get_plecs_models',{})]
-            elif self.round==3:
+            elif self.round==2:steps=[('select_plecs_model',{'path':str(root/'nested'/'buck.plecs')})]
+            elif self.round==3:steps=[('get_plecs_models',{})]
+            elif self.round==4:
                 model=next(iter(plecs_local.settings(owner)['profiles']))
                 steps=[('run_plecs_experiment',{'model':model,'parameter':'C1.C','values':[.0011],
                     'hypothesis':'sensitivity','expected_observation':'waveform change'})]
@@ -172,6 +183,6 @@ def test_settings_search_experiment_chat_flow(tmp_path,monkeypatch):
     assert response.status_code==200
     data=response.json()
     assert data['answer']=='完成数值对照' and data['plecs_experiments'][0].get('status')=='completed',data['plecs_experiments']
-    assert [t['name'] for t in data['tool_calls']]==['connect_plecs','search_plecs_models','get_plecs_models','run_plecs_experiment']
+    assert [t['name'] for t in data['tool_calls']]==['connect_plecs','search_plecs_models','select_plecs_model','get_plecs_models','run_plecs_experiment']
     monkeypatch.setenv('APP_ENV','production')
     assert client.get('/api/plecs/settings').status_code==403

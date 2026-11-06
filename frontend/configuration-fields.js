@@ -9,15 +9,6 @@ const configurationFields={
 };
 const mappingFields={time:'map-time',current:'map-current',voltage:'map-voltage',pwm:'map-pwm',time_unit:'time-unit',current_unit:'current-unit',voltage_unit:'voltage-unit'};
 let pendingConfigurationStart=null;
-function revokePendingConfigurationStart(text){
-  if(!pendingConfigurationStart)return;
-  if(!/^(?:取消|停止|暂停|不用了|算了|cancel|stop|pause)[。！!.\s]*$|(?:不要|不用|先不|暂不|取消|停止|暂停).{0,12}(?:开始|运行|启动|辨识|实验|计划)|\b(?:cancel|stop|pause|do not|don't)\b.{0,20}\b(?:start|run|identification|experiment|plan)\b/i.test(text))return;
-  const plan=currentIdentificationPlan();
-  if(pendingConfigurationStart.fingerprint===configurationFingerprint()&&plan?.status==='paused'&&!plan.done.length&&!plan.jobId){
-    plan.status='cancelled';plan.note='已取消后续任务；已提交的计算仍会完成并保存。';saveIdentificationPlan(plan);renderIdentificationPlan();
-  }
-  pendingConfigurationStart=null;
-}
 const convertedField=(value,scale)=>value===null?'':typeof value==='number'?String(Number((value*scale).toPrecision(15))):String(value);
 function validConfigurationChanges(c){
   if(!c || Array.isArray(c) || typeof c!=='object')return false;

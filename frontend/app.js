@@ -783,6 +783,18 @@ function validTuningInterval(changes){
 async function applyIdentificationAction(action, context) {
   const stale="会话、数据或设置已变化，本次操作未应用。请按当前界面重新发送指令。";
   if (!context || action.id!==context.request_id || configurationFingerprint()!==context.fingerprint) return tr(stale);
+  if(action.type==="cancel_pending_identification"){
+    const key=`buck-ui-action:${sessionId}:${action.id}`;
+    if(sessionStorage.getItem(key))return tr("此操作已处理，未重复应用或启动。");
+    sessionStorage.setItem(key,"processed");
+    pendingConfigurationStart=null;
+    const plan=currentIdentificationPlan();
+    if(plan&&!['complete','cancelled'].includes(plan.status)){
+      plan.status='cancelled';plan.note="已取消后续任务；已提交的计算仍会完成并保存。";
+      saveIdentificationPlan(plan);renderIdentificationPlan();
+    }
+    return tr("已取消后续任务；已提交的计算仍会完成并保存。");
+  }
   if(action.type==="identification_plan")return acceptIdentificationPlan(action,context);
   if (action.type!=="configure_identification" || typeof action.open_panel!=="boolean" || typeof action.start_after_apply!=="boolean") throw new Error("配置操作格式无效。");
   const changes=action.changes;
@@ -834,25 +846,17 @@ async function applyIdentificationAction(action, context) {
 async function sendMessage(value, {analysisRequest=false}={}) {
   const images=chatImages();
   const text = value.trim() || (images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
-  revokePendingConfigurationStart(text);
   if (!state.connected) { window.alert("Backend is not connected. Please connect to the backend and try again."); return; }
-  const currentOnly=analysisRequest || resultAnalysisPrompts.has(text);
-  const controlRequest=!currentOnly && !images.length && /进入|打开|展开|选择|选用|改用|切换|设为|改成|改为|设置|固定|调整|完成|开始|启动|执行|运行|\b(?:open|enter|select|use|switch|set|fix|change|start|run|perform|identify)\b/i.test(text);
+  const currentOnly=analysisRequest;
   const targetResultId=state.resultId;
   if(currentOnly && (!state.result || !targetResultId)){notice("当前结果已失效，请重新辨识后再分析。");return;}
   const corpus=currentOnly ? [] : conversationMessages(readConversation(activeConversation.id));
-  const resultFollowup=!currentOnly && continuesResultAnalysis(text,corpus);
-  const useConversation=!currentOnly && !resultFollowup && (wantsConversationRetrieval(text) || (comparingExperiments(text) && corpus.length>0 && chatExperiments().length===0));
-  const compareSaved=!requestsIdentificationExecution(text) && (useConversation || (comparingExperiments(text) && chatExperiments().length>0));
-  const imageQuestion=images.length>0;
   const analysisMeta=currentOnly ? analysisDescriptor() : null;
   // Read-only analysis belongs to the displayed completed run, not unsubmitted form edits.
-  const analyzeResult = Boolean(state.result) && !requestsIdentificationExecution(text) && !compareSaved;
+  const analyzeResult = Boolean(state.result);
   const analysisMapping = analyzeResult ? state.result.mapping : state.mapping;
   let fitOptions;
-  try { fitOptions = analyzeResult ? structuredClone(state.result.options) : options(); } catch (error) {
-    if (state.identificationOpen && !compareSaved && !imageQuestion) { notice(error.message); return; }
-  }
+  try { fitOptions = analyzeResult ? structuredClone(state.result.options) : options(); } catch { /* Invalid form drafts do not block chat. */ }
   state.chatBusy = true; controls();
   $("conversation-panel").classList.remove("is-empty");
   $("chat-input").value = "";
@@ -865,13 +869,17 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   userArticle.dataset.messageId=requestMessage.id;
   const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
   try {
-    if (state.mapping && !controlRequest && !compareSaved && !imageQuestion && !(analyzeResult && state.savedRun)) await ensureDatasetAvailable();
+    // Restore unanalysed input from UI state. A chat must not discard a displayed
+    // result because its source cache expired; execution restores inputs in startFit.
+    let datasetAvailable=Boolean(state.dataset);
+    if (state.mapping && !analyzeResult) {
+      try { await ensureDatasetAvailable(); } catch (error) { datasetAvailable=false;notice(error.message); }
+    }
     if(currentOnly && (!state.result || state.resultId!==targetResultId))throw new Error("当前结果已失效，请重新辨识后再分析。");
-    const comparison=fitOptions && !compareSaved ? parameterComparison() : null;
-    const imageResult=imageQuestion && analyzeResult ? readConversation(activeConversation.id)?.experiments?.find(run=>run.id===state.resultId) : null;
-    const savedResult=analyzeResult ? state.savedRun || imageResult : null;
+    const comparison=fitOptions ? parameterComparison() : null;
+    const savedResult=analyzeResult ? state.savedRun : null;
     let actionContext=null;
-    if (!currentOnly && !imageQuestion) {
+    if (!currentOnly) {
       try {
         const draftOptions=options(), epochInput=$("pann-epochs");
         // Integral mode does not use the hidden epoch field. An unfinished
@@ -880,7 +888,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
         draftOptions.pwm_denoise=$('pwm-denoise').value;
         if(validNumericInput($('pwm-filter-cycles')))draftOptions.pwm_filter_cycles=Number($('pwm-filter-cycles').value);
         draftOptions.controller=BuckCircuit.read();
-        const catalog=await configurationCatalog({includeRemote:/csv|文件|上传|切换|更换|换成|file|dataset/i.test(text)});
+        const catalog=await configurationCatalog({includeRemote:true});
         actionContext={request_id:requestMessage.id,options:draftOptions,fingerprint:configurationFingerprint(),catalog};
       } catch { /* Invalid drafts remain a form validation error. */ }
     }
@@ -890,16 +898,15 @@ async function sendMessage(value, {analysisRequest=false}={}) {
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
         pending_start:pendingConfigurationStart?.fingerprint===actionContext.fingerprint,
         pending_reference_confirmation:Boolean(selectedDiagnosticReference()&&!$('diagnostic-reference-confirm').checked)} : undefined,
-      dataset_id:savedResult || imageQuestion ? null : state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
+      dataset_id:savedResult || !datasetAvailable ? null : state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
       saved_result:savedResult ? {...savedResult,result:experimentSnapshot(state.result)} : undefined,
-      options:fitOptions,result_id:fitOptions && !compareSaved ? state.resultId : null,
-      enable_diagnostic_controls:Boolean(analyzeResult && !imageQuestion),
-      diagnostic_reference:analyzeResult && !imageQuestion && selectedDiagnosticReference() && $("diagnostic-reference-confirm").checked ? {dataset_id:diagnosticReference.dataset_id,result_id:state.resultId,confirmed_same_experiment:true} : undefined,
+      options:fitOptions,result_id:fitOptions ? state.resultId : null,
+      enable_diagnostic_controls:analyzeResult,
+      diagnostic_reference:analyzeResult && selectedDiagnosticReference() && $("diagnostic-reference-confirm").checked ? {dataset_id:diagnosticReference.dataset_id,result_id:state.resultId,confirmed_same_experiment:true} : undefined,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
-      conversation_messages:corpus,conversation_retrieval_requested:useConversation,
-      // Keep execution context for explicit mixed requests (run, then compare).
-      // The backend classifier enforces read-only tools for comparison alone.
-      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult && !imageQuestion});
+      conversation_messages:corpus,
+      // Displayed result and editable form are separate contexts. The Agent chooses tools.
+      experiments:currentOnly ? [] : chatExperiments(),identification_enabled:!currentOnly && !savedResult && state.identificationOpen && Boolean(fitOptions)});
     pending.remove();
     if (response.mode === "provider_error") {
       window.alert(response.provider_error);
@@ -933,7 +940,12 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       ...(analysisMeta && !response.job_id ? {analysis:{...analysisMeta,request_id:requestMessage.id}} : {})}, replyMode);
     article.dataset.messageId=savedReply.id;
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
-  } catch (error) { pending.remove(); window.alert("Chat request failed. Please check the backend connection and try again."); message("assistant", error.message, "请求未完成"); rememberMessage("assistant",error.message,null,"请求未完成"); }
+  } catch (error) {
+    pending.remove();
+    const note=window.BuckHarness.taskNotice(error);
+    if(note){message('assistant',note.text,'任务状态');rememberMessage('assistant',note.text,note.response,'任务状态');}
+    else{window.alert("Chat request failed. Please check the backend connection and try again.");message("assistant",error.message,"请求未完成");rememberMessage("assistant",error.message,null,"请求未完成");}
+  }
   finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; startQueuedIdentificationPlan(); }
 }
 function svgNode(name, attrs = {}, text = null) {

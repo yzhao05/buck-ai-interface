@@ -9,8 +9,6 @@ from fastapi.testclient import TestClient
 from backend import chat, main, archive
 from backend.schemas import HistoricalAnalysis
 from backend.historical_analyses import analysis_context, explicit_label
-from backend.task_router import make_route
-from provider_stub import rule_selection
 
 
 def replies():
@@ -24,9 +22,6 @@ def replies():
 def client(monkeypatch):
     monkeypatch.setattr(main,"TOKEN","")
     monkeypatch.delenv("DEEPSEEK_API_KEY",raising=False)
-    async def classify(request):
-        return make_route(rule_selection(request.message),request.message,"rules")
-    monkeypatch.setattr(chat,"classify",classify)
     return TestClient(main.app,headers={"X-Session-ID":str(uuid.uuid4())})
 
 

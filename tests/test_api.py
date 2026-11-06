@@ -146,8 +146,9 @@ def test_identification_route_preserves_entry_and_data_checks(client, monkeypatc
     from provider_stub import install
     captured = install(monkeypatch, execute=True)
     blocked = client.post("/api/chat", json={"message": "开始参数辨识"}).json()
-    assert blocked["route"]["task"] == "identification" and blocked["job_id"] is None
-    assert "进入参数辨识" in captured[-1]["messages"][-1]["content"]
+    assert blocked["route"]["mode"] == "agent" and blocked["job_id"] is None
+    assert "start_identification" not in {t['function']['name'] for t in captured[0]['tools']}
+    assert "not admitted" in captured[-1]["messages"][-1]["content"]
     missing = client.post("/api/chat", json={"message": "开始参数辨识", "identification_enabled": True}).json()
     assert missing["job_id"] is None and "CSV" in captured[-1]["messages"][-1]["content"]
 

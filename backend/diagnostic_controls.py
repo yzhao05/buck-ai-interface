@@ -1,23 +1,10 @@
 """Bounded, deterministic parameter/state ablations. No training or generated code."""
 import numpy as np
-import re
 
 from .data import extract
 from .schemas import FitOptions, Mapping
 from .identification import rollout, metric
 from .controller import closed_loop_rollout, profile_for, validate_profile
-
-
-def controls_declined(message):
-    return bool(re.search(r"(?:不要|不用|别|无需|不需要|先不|暂不)[^，。；,;\n]{0,12}(?:对照|交换|运行|计算)|\b(?:do not|don't|no)\s+(?:run|compute|execute|controls|ablations)",message,re.I))
-
-
-def controls_requested(message):
-    if controls_declined(message) or re.search(r'是什么|什么是|原理|公式|\b(?:what|how)\b',message,re.I):
-        return False
-    return bool(re.search(r"(?:参数|初值|参考)[^。；\n]{0,35}(?:交换|对照)|(?:运行|执行|做).{0,8}(?:这些|这几个|上述|诊断)?对照|\b(?:ablation|swap|run (?:the )?(?:diagnostic )?controls)\b",message,re.I))
-
-
 
 
 def compatible(current, candidate):

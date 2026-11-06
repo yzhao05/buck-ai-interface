@@ -147,7 +147,7 @@ class IdentificationPlanProposal(ConfigurationExtras):
     clarification: str = Field(max_length=500)
     filename: str | None = Field(max_length=255)
     pwm_source: Literal['measured', 'controller', 'both', 'unchanged', 'unclear']
-    pwm_evidence: str = Field(max_length=500)
+    pwm_evidence: str = Field(default='', max_length=500)
     mode: Literal['LC', 'LCR'] | None
     resistance_ohm: float | None = Field(strict=True, gt=0.01, le=100000)
 

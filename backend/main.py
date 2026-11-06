@@ -402,19 +402,6 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
     throttle(owner, "chat", 10)
     control_cache = None
     model_context = json.dumps([body.dataset_id, body.result_id if body.saved_result else None, body.circuit_filename], ensure_ascii=False)
-    def model_hints():
-        import re
-        hints = [image.name for image in body.images]
-        if body.circuit_filename:
-            hints.insert(0,body.circuit_filename)
-        hints.extend(next((v for v in pair if v),'') for pair in re.findall(r'"([^"\n]+\.plecs)"|([^\s"<>]+\.plecs)',body.message,re.I))
-        if len(body.message)<100:
-            hints.append(body.message.strip())
-        if body.dataset_id:
-            hints.append(get_dataset(body.dataset_id,owner).name)
-        if body.saved_result:
-            hints.append(body.saved_result.result.get('filename',''))
-        return hints
     async def invoke(name, arguments=None):
         nonlocal control_cache
         try:
@@ -427,8 +414,6 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                     return evidence({**with_ground_truth(job['result'],body.ground_truth),'result_id':body.result_id})
                 return evidence(await invoke('get_identification_result'))
             if name == 'evaluate_plecs_experiment':
-                if body.images:
-                    return {'error':'Image analysis does not authorize numerical execution'}
                 with lock:
                     if any(job['status'] in {'queued','running'} for job in jobs.values()):
                         return {'status':'unavailable','error':'等待正在运行的辨识任务完成后再评价仿真对照。'}
@@ -449,10 +434,8 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                         source.get('settings',{}).get('analysis_binding'),await invoke('get_identification_result'))
                 return {k:v for k,v in received.items() if k not in {'payload','result'}}
             if name in plecs_bridge.TOOLS:
-                if body.images:
-                    return {'error':'图片分析不执行仿真。'}
                 payload = {'tool':name,'arguments':arguments or {},'context':model_context,
-                           'hints':model_hints(),'message':body.message,'result_id':body.result_id,'fit_options':body.options.model_dump()}
+                           'result_id':body.result_id,'fit_options':body.options.model_dump()}
                 remote = plecs_bridge.status(owner)['paired']
                 if remote:
                     settings = plecs_bridge.settings(owner)
@@ -468,7 +451,7 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
             if name == 'run_diagnostic_controls':
                 if control_cache is not None:
                     return control_cache
-                if not body.enable_diagnostic_controls or body.images:
+                if not body.enable_diagnostic_controls:
                     return {'status':'unavailable','error':'本次未启用数值诊断对照。'}
                 current = await invoke('get_identification_result')
                 if not current or current.get('error'):
@@ -539,8 +522,6 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                 existing = active_job(owner)["job"]
                 if existing:
                     return {**existing, "resumed": True, "configuration_changed": True}
-            if name == "get_waveform_summary":
-                raise HTTPException(422, exc.detail if isinstance(exc, HTTPException) else str(exc))
             return {"error": exc.detail if isinstance(exc, HTTPException) else str(exc)}
         return None
     return await chat.answer(body, invoke)

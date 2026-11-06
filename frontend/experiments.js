@@ -32,7 +32,6 @@ function chatExperiments() {
       ? {options:run.result.options,mapping:run.result.mapping,start_s:run.result.train_start_s,end_s:run.result.validation_end_s} : null
   }));
 }
-function comparingExperiments(text) {return /对比|比较|横向|纵向|\b(?:compare|comparison|versus)\b/i.test(text);}
 function captureExperiment({updateTruth=false}={}) {
   if (!activeConversation || !state.resultId || !state.result) return;
   const runs=mergeExperiments(activeConversation.experiments,storedExperiments(activeConversation.id));

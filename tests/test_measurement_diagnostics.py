@@ -119,7 +119,7 @@ def test_model_receives_diagnostics_and_scoped_spread_without_old_result(monkeyp
     async def invoke(name):
         assert name == 'get_identification_result'
         return copy.deepcopy(result)
-    request = ChatRequest(message='请分析当前辨识结果的误差，并给出有依据的修改计划。', result_id='a',
+    request = ChatRequest(message='请分析当前辨识结果的误差，并给出有依据的修改计划。', result_id='a', current_result_analysis=True,
         experiments=[run(), run('b', sha='b'), run('OLD_LCR', sha='c', vin=30)])
     response = asyncio.run(chat.answer(request, invoke))
     assert response['answer'] == 'diagnostic analysis'

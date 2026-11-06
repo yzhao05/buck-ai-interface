@@ -117,7 +117,9 @@ def test_api_selected_source_ownership_reference_cache_and_no_training(experimen
     assert output['control_checks']['status'] == 'completed'
     assert set(main.jobs)==before and output['job_id'] is None
     other=TestClient(main.app,headers={'X-Session-ID':str(uuid.uuid4())})
-    assert other.post('/api/chat',json=body).status_code==422
+    rejected=other.post('/api/chat',json=body)
+    assert rejected.status_code==200 and rejected.json()['mode']=='validation_error'
+    assert rejected.json()['tool_calls']==[]
     other_ref=other.post('/api/datasets?reference=true',files={'file':('reference.csv',raw)}).json()
     body['diagnostic_reference']={'dataset_id':other_ref['dataset_id'],'result_id':current_id,'confirmed_same_experiment':True}
     output=client.post('/api/chat',json=body).json()['control_checks']

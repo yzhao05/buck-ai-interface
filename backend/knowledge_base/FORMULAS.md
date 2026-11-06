@@ -181,11 +181,15 @@ C≥ΔiL,pp/[8 fs(Δvo,allowed-rC ΔiL,pp)]，分母必须>0。
 负载阶跃初期 Δvo≈-ΔIo Δt/C；ESR 引起额外瞬时端电压变化约 -rC ΔIo。
 ```
 
-电容和 ESR 纹波一般不同时达到峰值，直接相加是预算近似，不是精确波形等式。还需容差、直流偏置、温度、饱和及纹波额定值；阶跃近似仅适用于控制器尚未补偿、iL 近似不变的短时间。
+稳态纹波与负载阶跃必须分开分析。CCM、负载电流近似恒定时，iC≈iL-Io 是连续三角波；vESR=rC iC 因而也是连续三角波，不在每个开关沿产生方波或瞬时跳变。
+储能电容分量满足 dvC/dt=iC/C，三角电流积分得到分段抛物线（外观近似正弦）；ESL 分量 vESL=ESL·diC/dt 在理想分段恒定电流斜率下呈方波。开关边沿尖峰还可能来自寄生电容耦合的快速电流与 ESL，不能凭尖峰判定 ESR 增大。以上分量区分参考 TI SSZT293。
+负载电流突然增加 ΔIo 时，iL 瞬间连续而 iC 跳变，才会产生约 -rC ΔIo 的 ESR 电压阶跃；随后短时间的容性压降约 -ΔIo Δt/C。不要将这一瞬态结论搬到周期稳态开关纹波。
+电容和 ESR 纹波一般不同时达到峰值，直接相加是预算近似，不是精确波形等式。还需容差、直流偏置、温度、饱和及纹波额定值；阶跃近似仅适用于控制器尚未补偿、iL 近似不变的短时间。波形诊断需核对测量带宽与探头接地，不能仅凭一个峰峰值识别 C 或 ESR。
 
 参考与核对依据：
 
 - [TI SLVA477: Basic Calculation of a Buck Converter's Power Stage](https://www.ti.com/lit/an/slva477b/slva477b.pdf)
+- [TI SSZT293: Understanding and Managing Buck Regulator Output Ripple](https://www.ti.com/document-viewer/lit/html/SSZT293/GUID-40660B2C-4732-478A-ACA5-867F055B0D09)
 - [本地 PLECS 模型连接与参数证据](model_evidence.json)
 
 <a id="buck-dcm"></a>

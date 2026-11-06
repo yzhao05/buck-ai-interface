@@ -44,11 +44,6 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.match(await page.locator('#plan-note').innerText(),/同名但内容不同/);assert.equal(fits.length,2);
   await page.locator('#language-toggle').click();
   assert(!/[\u3400-\u9fff]/.test(await page.locator('#identification-plan').innerText()));
-  const intents=await page.evaluate(()=>[
-    '请比较已运行的两种方法结果','I have run both methods. Compare their results.',
-    '两种方法运行了吗？','请运行两种方法，然后比较结果',
-  ].map(requestsIdentificationExecution));
-  assert.deepEqual(intents,[false,false,false,true]);
   await page.locator('#plan-cancel').click();
   // A malformed saved plan must not crash controls()/page restoration.
   assert.equal(await page.evaluate(()=>{

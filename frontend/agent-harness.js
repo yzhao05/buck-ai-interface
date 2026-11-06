@@ -2,9 +2,28 @@
 "use strict";
 window.BuckHarness = (()=>{
   const key=()=>`buck-agent:${base}:${sessionId}`;
+  const savedTask=()=>{try{return localStorage.getItem(key());}catch{return null;}};
+  function rememberTask(id,storageKey=key()){
+    try{if(id)localStorage.setItem(storageKey,id);else localStorage.removeItem(storageKey);}
+    catch{try{localStorage.removeItem(storageKey);}catch{/* Backend latest-task lookup remains available. */}}
+  }
   const status=text=>{document.getElementById('agent-status').textContent=text;};
   const headers=()=>({'X-Session-ID':sessionId,...(accessToken?{Authorization:`Bearer ${accessToken}`}:{})});
+  function taskError(taskState,id){
+    return Object.assign(new Error(taskState),{taskState,agentTaskId:id});
+  }
+  function taskNotice(error){
+    const text=({cancelled:'任务已停止，可恢复。',interrupted:'任务已中断，可恢复。',disconnected:'连接中断，后台任务可能仍在运行。请点击“找回 / 恢复任务”重新连接。'})[error.taskState];
+    return text?{text:tr(text),response:{agent_task_id:error.agentTaskId,task_state:error.taskState}}:null;
+  }
   async function follow(id){
+    try{return await followEvents(id);}
+    catch(error){
+      if(error.taskState)throw error;
+      throw taskError('disconnected',id);
+    }
+  }
+  async function followEvents(id){
     state.agentTask=id;
     document.getElementById('agent-progress').hidden=false;
     document.getElementById('agent-progress').open=true;
@@ -33,9 +52,10 @@ window.BuckHarness = (()=>{
           // The final task snapshot is authoritative, including a null result.
           // Old result events belong to previous attempts after a resume.
           result=item.data.result;
-          status(({completed:'任务已完成',failed:'任务未完成，可查看已保存证据',interrupted:'任务已中断，可恢复',cancelled:'任务已停止'})[item.data.state]||item.data.state);
-          if(item.data.state==='completed')localStorage.removeItem(storageKey);
-          if(!result)throw new Error('Agent task stopped; progress is saved. Use Resume to continue.');
+          status(({completed:'任务已完成',failed:'任务未完成，可查看已保存证据',interrupted:'任务已中断，可恢复',cancelled:'任务已停止，可恢复。'})[item.data.state]||item.data.state);
+          if(item.data.state==='completed')rememberTask(null,storageKey);
+          if(['cancelled','interrupted'].includes(item.data.state))throw taskError(item.data.state,id);
+          if(!result)throw taskError('failed',id);
         }
       }
     }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
@@ -44,17 +64,24 @@ window.BuckHarness = (()=>{
   }
   async function request(body){
     const task=await api('/api/agent/tasks',{method:'POST',body,timeout:30000});
-    localStorage.setItem(key(),task.id);
+    rememberTask(task.id);
     return follow(task.id);
   }
   async function recover(){
     if(historyLocked())return;
     state.chatBusy=true;controls();
     try{
-    const saved=localStorage.getItem(key());
-    const latest=saved?await api(`/api/agent/tasks/${saved}`):(await api('/api/agent/tasks/latest')).task;
+    const saved=savedTask();
+    let latest=null;
+    if(saved){
+      try{latest=await api(`/api/agent/tasks/${saved}`);}
+      catch(error){if(error.status!==404)throw error;rememberTask(null);}
+    }
+    if(!latest)latest=(await api('/api/agent/tasks/latest')).task;
     if(!latest){status('没有可恢复的 Agent 任务');return;}
-    if(latest.state==='completed' && readConversation(activeConversation.id)?.messages?.some(m=>m.response?.agent_task_id===latest.id)){
+    rememberTask(latest.id);
+    if(latest.state==='completed' && readConversation(activeConversation.id)?.messages?.some(m=>m.response?.agent_task_id===latest.id&&!m.response.task_state)){
+      rememberTask(null);
       status('此任务已完成，回答已在当前会话中');return;
     }
     if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
@@ -63,6 +90,11 @@ window.BuckHarness = (()=>{
       const text=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
       const article=message('assistant',text,'Harness 恢复');decorateResponse(article,response);
       rememberMessage('assistant',text,{...response,agent_task_id:latest.id},'Harness 恢复');
+    }catch(error){
+      const note=taskNotice(error);
+      if(!note)throw error;
+      status(note.text);message('assistant',note.text,'任务状态');
+      rememberMessage('assistant',note.text,note.response,'任务状态');
     }finally{state.chatBusy=false;controls();}
   }
   function bind(){
@@ -85,5 +117,5 @@ window.BuckHarness = (()=>{
     document.getElementById('bridge-check').onclick=async()=>{try{const result=await api('/api/bridge/status');document.getElementById('settings-status').textContent=result.online?'本机连接器在线':result.paired?'已配对，连接器离线':'尚未配对';}catch(error){document.getElementById('settings-status').textContent=error.message;}};
   }
   function reset(){state.agentTask=null;document.getElementById('bridge-instructions').textContent='';document.getElementById('agent-progress').open=false;document.getElementById('agent-preview').textContent='';document.getElementById('agent-instruction').value='';status('Agent 任务进度与恢复');}
-  return {request,recover,bind,reset};
+  return {request,recover,bind,reset,taskNotice};
 })();

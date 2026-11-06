@@ -40,12 +40,6 @@ assert(['complete','failure','cancel'].includes(scenario));
  try{
   await page.goto('http://127.0.0.1:8001');await ready();
   await page.locator('#csv-file').setInputFiles({name:'CASE16A_noise03_seed13.csv',mimeType:'text/csv',buffer:fs.readFileSync('examples/plecs_buck_case16a.csv')});await ready();
-  assert.equal(await page.evaluate(()=>requestsIdentificationExecution('根据我的CASE16A_noise03_seed13.csv，完成rebuild pwm和实际pwm；pann和加权积分四个仿真')),true);
-  assert.deepEqual(await page.evaluate(()=>[
-   'Please run four experiments with actual and reconstructed PWM',
-   'Complete 4 simulations using actual and rebuilt PWM',
-   'Compare four experiments','Do not run four experiments',
-  ].map(requestsIdentificationExecution)),[true,true,false,false]);
   const pwm=await page.evaluate(()=>{const pwm=state.mapping.pwm;state.mapping={...state.mapping,pwm:null};return pwm;});
   await page.locator('#chat-input').fill(requestText);await page.locator('#send-chat').click();await paused();
   assert.equal(chatBody.identification_enabled,false,'Closed panel must still permit a parsed plan');

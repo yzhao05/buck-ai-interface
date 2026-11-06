@@ -93,7 +93,3 @@ def retrieve(query, count=4):
         if score > 0:
             ranked.append((score, doc))
     return [dict(doc) for _, doc in sorted(ranked, key=lambda item: item[0], reverse=True)[:max(0, min(count, 8))]]
-
-
-def formula_question(query):
-    return bool(re.search(r"公式|方程|推导|传递函数|状态空间|零点|极点|控制电路|补偿器|运放|equation|formula|derive|transfer function|state.space|compensator|op.?amp|kcl|kvl", query.lower()))

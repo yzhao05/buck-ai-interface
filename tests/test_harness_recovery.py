@@ -30,6 +30,7 @@ def test_resuming_older_task_still_blocks_new_task(tmp_path, monkeypatch):
         agent_tasks.launch('owner', None, wait, older, resume=True)
         running = agent_tasks.running[older]
         await asyncio.sleep(0)
+        assert agent_tasks.latest('owner')['id']==older
         with pytest.raises(ValueError, match='active Agent task'):
             agent_tasks.launch('owner', ChatRequest(message='another'), succeed)
         agent_tasks.cancel('owner', older)
