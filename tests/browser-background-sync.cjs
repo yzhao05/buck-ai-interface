@@ -4,7 +4,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
  const page=await browser.newPage({viewport:{width:1500,height:1050}}),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
- await page.route('**/api/chat',route=>route.fulfill({json:{answer:'原会话回答\n\n'+'保留滚动位置。\n\n'.repeat(40),mode:'local'}}));
+ await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat',route=>route.fulfill({json:{answer:'原会话回答\n\n'+'保留滚动位置。\n\n'.repeat(40),mode:'local'}}));
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();await ready();};
  try{

@@ -199,6 +199,7 @@ function rememberMessage(role, content, response = null, mode = "", images = [])
   return item;
 }
 function resetExperiment() {
+  window.BuckHarness?.reset();
   closeCsvLibrary();
   pendingAttachment=null;
   state.csvFile=null; csvWarning();

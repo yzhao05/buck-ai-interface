@@ -53,7 +53,7 @@ def test_agent_refines_empty_search_and_cites_only_used_documents(monkeypatch):
     assert result["tool_calls"][0]["count"] == 0
     assert result["tool_calls"][1]["query"] == "Buck 模型"
     assert "retrieved_documents" not in requests[0]["messages"][1]["content"]
-    assert requests[0]["tool_choice"]["function"]["name"] == "search_knowledge"
+    assert requests[0]["tool_choice"] == "auto"  # Harness chooses the retrieval plan.
     assert requests[1]["tool_choice"] == "auto"
 
 
@@ -69,8 +69,8 @@ def test_duplicate_query_is_not_reexecuted(monkeypatch):
         {"role": "assistant", "content": "知识库未找到相关依据。"}])
     result = run()
     assert result["mode"] == "deepseek" and result["sources"] == []
-    assert result["tool_calls"][1]["status"] == "未执行"
-    assert "already searched" in requests[2]["messages"][-1]["content"]
+    assert result["tool_calls"][1]["status"] == "已执行"
+    assert json.loads(requests[2]["messages"][-1]["content"])["cached"]
 
 
 @pytest.mark.parametrize("top_k", [0, 9, True, "4"])
@@ -97,10 +97,10 @@ def test_unknown_citation_after_search_is_rejected(monkeypatch):
 
 
 def test_tool_round_limit_stops_more_searches(monkeypatch):
-    requests = fake_provider(monkeypatch, [search("Buck " + str(i)) for i in range(5)])
+    requests = fake_provider(monkeypatch, [search("Buck " + str(i)) for i in range(20)])
     result = run()
-    assert requests[-1]["tool_choice"] == "none"
-    assert result["mode"] == "provider_error" and len(result["tool_calls"]) == 4
+    assert result["mode"] == "provider_error"
+    assert result['error_code']=='agent_budget_exceeded' and len(requests)<=7
 
 
 def test_failure_after_job_submission_keeps_job_id(monkeypatch):

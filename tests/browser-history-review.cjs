@@ -9,7 +9,8 @@ const assert=require('node:assert/strict');
     await context.route('**/api/health',async route=>{
       const response=await route.fetch(),body=await response.json();body.archive_enabled=false;await route.fulfill({json:body});
     });
-    await context.route('**/api/chat',route=>route.fulfill({json:{answer:'回答 '+route.request().postDataJSON().message,mode:'deepseek'}}));
+    await require('./harness-browser-fixture.cjs').install(context);
+  await context.route('**/api/chat',route=>route.fulfill({json:{answer:'回答 '+route.request().postDataJSON().message,mode:'deepseek'}}));
     let a=await context.newPage();await a.goto('http://127.0.0.1:8001');
     const ready=p=>p.locator('#send-chat:not([disabled])').waitFor();
     const send=async(p,text)=>{await ready(p);await p.locator('#chat-input').fill(text);await p.locator('#send-chat').click();await ready(p);};

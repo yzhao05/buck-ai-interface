@@ -9,7 +9,7 @@ from backend.knowledge import formula_question
 from backend.configuration import configuration_requested
 
 
-def install(monkeypatch, *, execute=False):
+def install(monkeypatch, *, execute=False, controls=False):
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-only')
     captured = []
     async def classify(request):
@@ -22,7 +22,10 @@ def install(monkeypatch, *, execute=False):
         async def post(self, url, **kwargs):
             payload = copy.deepcopy(kwargs['json'])
             captured.append(payload)
-            if execute and payload['messages'][-1]['role'] != 'tool':
+            if controls and payload['messages'][-1]['role'] != 'tool' and any(t['function']['name']=='run_diagnostic_controls' for t in payload['tools']):
+                msg = {'role':'assistant','content':None,'tool_calls':[{'id':'controls','type':'function',
+                    'function':{'name':'run_diagnostic_controls','arguments':'{}'}}]}
+            elif execute and payload['messages'][-1]['role'] != 'tool':
                 msg = {'role':'assistant', 'content':None, 'tool_calls':[{'id':'fit', 'type':'function',
                     'function':{'name':'start_identification', 'arguments':'{}'}}]}
             else:

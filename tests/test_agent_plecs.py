@@ -141,7 +141,14 @@ def test_settings_search_experiment_chat_flow(tmp_path,monkeypatch):
     monkeypatch.setattr(chat,'classify',classify)
     def simulate(args,who,result_id):
         assert who==owner and args['model'] in plecs_local.settings(who)['profiles']
-        return {'status':'completed','experiment_id':'test','cases':[]}
+        identifier='agent_'+'a'*32
+        folder=tmp_path/'runtime/plecs'/__import__('hashlib').sha256(owner.encode()).hexdigest()[:20]/identifier
+        folder.mkdir(parents=True)
+        for i in range(2):
+            (folder/f'case_{i}.csv').write_text('time_s,output_1\n'+''.join(f'{j*1e-6},1\n' for j in range(200)))
+        return {'status':'completed','experiment_id':identifier,'source_result_id':result_id,'cases':[{},{}]}
+    monkeypatch.setattr(rpc,'ROOT',tmp_path)
+    monkeypatch.setattr(main.simulation_analysis,'ROOT',tmp_path/'analysis')
     monkeypatch.setattr(rpc,'experiment',simulate)
     class Provider:
         def __init__(self,**kw):self.round=0
@@ -164,7 +171,7 @@ def test_settings_search_experiment_chat_flow(tmp_path,monkeypatch):
     response=client.post('/api/chat',json={'message':'请用 buck.plecs 做对比实验'})
     assert response.status_code==200
     data=response.json()
-    assert data['answer']=='完成数值对照' and data['plecs_experiments'][0]['status']=='completed'
+    assert data['answer']=='完成数值对照' and data['plecs_experiments'][0].get('status')=='completed',data['plecs_experiments']
     assert [t['name'] for t in data['tool_calls']]==['connect_plecs','search_plecs_models','get_plecs_models','run_plecs_experiment']
     monkeypatch.setenv('APP_ENV','production')
     assert client.get('/api/plecs/settings').status_code==403

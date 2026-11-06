@@ -10,6 +10,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   const page=await browser.newPage(),errors=[],fits=[],chats=[];let action={};
   page.on('pageerror',e=>errors.push(e.message));
   page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits.push(r.postDataJSON());});
+  await require('./harness-browser-fixture.cjs').install(page);
   await page.route('**/api/chat',async route=>{
    const body=route.request().postDataJSON();chats.push(body);
    await route.fulfill({json:{mode:'deepseek',answer:'Validated',sources:[],tool_calls:[],job_id:null,ui_action:{id:body.ui_context.request_id,type:'configure_identification',open_panel:false,changes:{},start_after_apply:false,...action}}});

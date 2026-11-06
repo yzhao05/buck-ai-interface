@@ -94,6 +94,7 @@ def test_provider_reads_full_replies_outside_recent_messages(client,monkeypatch,
                     "function":{"name":"get_analysis_history","arguments":"{}"}}]}
             else:
                 data=json.loads(messages[-1]["content"])
+                assert data.pop('evidence_id')
                 assert data==context["analysis_history"]
                 message={"role":"assistant","content":"依据本会话历史分析回答：按同一 PWM 与同一种方法分别对比四组。"}
             return httpx.Response(200,request=httpx.Request("POST",url),json={"choices":[{"message":message}]})

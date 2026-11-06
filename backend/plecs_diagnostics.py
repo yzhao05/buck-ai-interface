@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 import uuid
 import xmlrpc.client
 
@@ -60,7 +61,7 @@ def arrays(raw, channels):
 
 def experiment(arguments, owner, result_id=None):
     allowed = {'model', 'parameter', 'values', 'hypothesis', 'expected_observation'}
-    if not isinstance(arguments, dict) or set(arguments) != allowed:
+    if not isinstance(arguments, dict) or set(arguments)-{'output_points'} != allowed:
         raise ValueError('实验需要 model、parameter、values、hypothesis、expected_observation')
     p = profiles(owner).get(arguments['model'])
     if not p:
@@ -78,9 +79,13 @@ def experiment(arguments, owner, result_id=None):
     for key in ('hypothesis', 'expected_observation'):
         if not isinstance(arguments[key], str) or not 1 <= len(arguments[key]) <= 1000:
             raise ValueError('需要简短假设和可区分原因的预期观测')
+    points = arguments.get('output_points',2001)
+    if type(points) is not int or not 201<=points<=20001:
+        raise ValueError('输出网格应为 201–20001 个点')
     if not SLOT.acquire(blocking=False):
         return {'status': 'unavailable', 'error': 'PLECS 实验正在运行'}
     name = 'agent_' + uuid.uuid4().hex
+    deadline = time.monotonic()+120
     directory = ROOT / 'runtime/plecs' / hashlib.sha256(owner.encode()).hexdigest()[:20] / name
     client = None
     loaded = False
@@ -100,15 +105,30 @@ def experiment(arguments, owner, result_id=None):
         loaded = True
         component = name + '/' + parameter['component']
         original = client.plecs.get(component, parameter['field'])
+        resolved_parameters = {}
+        for key, spec in p['parameters'].items():
+            if time.monotonic()>deadline:
+                raise ValueError('PLECS execution time budget reached')
+            if spec['field'] in {'L','C'}:
+                try:
+                    actual = float(client.plecs.get(name+'/'+spec['component'],spec['field']))
+                    if math.isfinite(actual) and actual>0:
+                        resolved_parameters[key] = actual
+                except (ValueError,TypeError):
+                    pass
+                except xmlrpc.client.Error:
+                    break
         duration = float(p['duration_s'])
         if not 0 < duration <= .1:
             raise ValueError('仿真时段必须在 0–0.1 秒内')
-        times = np.linspace(0, duration, 2001).tolist()
+        times = np.linspace(0, duration, points).tolist()
         options = {'SolverOpts': {'StartTime': 0., 'TimeSpan': duration, 'Timeout': 12.,
                                   'OutputTimes': times, 'OutputTimesOption': 'specified'}}
         cases = []
         baseline = None
         for i, value in enumerate([None, *values]):
+            if time.monotonic()>deadline:
+                raise ValueError('PLECS execution time budget reached')
             if value is not None:
                 client.plecs.set(component, parameter['field'], str(value))
             t, y = arrays(client.plecs.simulate(name, options), len(p['signals']))
@@ -128,7 +148,8 @@ def experiment(arguments, owner, result_id=None):
         report = {'status': 'completed', 'experiment_id': name, 'source_result_id': result_id,
                   'source_sha256': hashlib.sha256(source).hexdigest(), 'design': arguments,
                   'cases': cases, 'sample_count': len(times),
-                  'output_step_s': duration/2000, 'duration_s':duration,
+                  'resolved_base_parameters':resolved_parameters,
+                  'output_step_s': duration/(points-1), 'duration_s':duration,
                   'sampling_note':'固定输出网格用于对照；未验证其足以解析开关边沿，不据此判断高频纹波或延迟。',
                   'scope': '单因素仿真干预，仅验证登记模型内的数值效应；未证明实测误差的物理原因，也未重新辨识。'}
         (directory/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -174,6 +195,7 @@ def open_model(owner, model):
 
 
 TOOLS = [
+    {'type':'function','function':{'name':'get_plecs_job_result','description':'读取已发出的云端 PLECS 任务结果，包括预算结束后迟到的真实结果；不会重新执行实验。','parameters':{'type':'object','properties':{'job_id':{'type':'string'}},'required':['job_id'],'additionalProperties':False}}},
     {"type":"function","function":{"name":"open_plecs_model","description":"在 PLECS 打开已选择电路的独立副本，不执行仿真、不修改原文件。","parameters":{"type":"object","properties":{"model":{"type":"string"}},"required":["model"],"additionalProperties":False}}},
     {'type':'function','function':{'name':'search_plecs_models','description':'递归搜索用户设置的模型文件夹及子文件夹，按当前上传文件或用户明确给出的模型名精确匹配，唯一匹配自动登记；未找到或有歧义返回候选供用户确认。','parameters':{'type':'object','properties':{},'additionalProperties':False}}},
     {'type':'function','function':{'name':'connect_plecs','description':'检查本机 RPC 1080，必要时启动用户在连接设置保存的 PLECS 程序。','parameters':{'type':'object','properties':{},'additionalProperties':False}}},
@@ -182,6 +204,7 @@ TOOLS = [
     {'type':'function','function':{'name':'run_plecs_experiment','description':'在登记电路的独立副本上运行基线及最多两个单因素对照，返回实际数值差异。先读取目录、说明假设及预期观测。','parameters':{
         'type':'object','properties':{'model':{'type':'string'},'parameter':{'type':'string'},
         'values':{'type':'array','items':{'type':'number'},'minItems':1,'maxItems':2},
-        'hypothesis':{'type':'string','maxLength':1000},'expected_observation':{'type':'string','maxLength':1000}},
+        'hypothesis':{'type':'string','maxLength':1000},'expected_observation':{'type':'string','maxLength':1000},
+        'output_points':{'type':'integer','minimum':201,'maximum':20001,'description':'可选输出采样点数，默认 2001；可提高分辨率检查数值/采样误差，所有对照共享网格。'}},
         'required':['model','parameter','values','hypothesis','expected_observation'],'additionalProperties':False}}}
 ]

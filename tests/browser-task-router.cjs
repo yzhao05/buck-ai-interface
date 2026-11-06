@@ -34,7 +34,8 @@ const fs = require('node:fs/promises');
     assert.equal(await page.locator('.message-task').last().innerText(), 'Task: Parameter identification · Local rule routing');
     // Exercise fallback/agent badges without contacting a model provider.
     for (const mode of ['fallback', 'agent']) {
-      await page.route('**/api/chat', route => route.fulfill({json:{mode:'deepseek', answer:'Mock task response',
+      await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat', route => route.fulfill({json:{mode:'deepseek', answer:'Mock task response',
         route:{task:'knowledge',label:'公式知识',secondary_tasks:[],mode},sources:[],tool_calls:[],job_id:null}}));
       await ask('Explain this formula');
       assert.equal(await page.locator('.message-task').last().innerText(), mode === 'agent'

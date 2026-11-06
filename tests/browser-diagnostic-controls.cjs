@@ -7,7 +7,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits++;});
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning,{},{timeout:90000});
  const analyze=async()=>{
-  const response=page.waitForResponse(r=>r.url().endsWith('/api/chat'),{timeout:90000});
+  const response=require('./harness-browser-fixture.cjs').waitForResponse(page);
   await page.locator('#ask-error').click();await page.locator('#analyze-here').click();
   const data=await (await response).json();await ready();return data;
  };

@@ -7,7 +7,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  await context.route('**/api/health',async route=>{
   const response=await route.fetch(),body=await response.json();body.archive_enabled=false;await route.fulfill({json:body});
  });
- await context.route('**/api/chat',route=>route.fulfill({json:{answer:'保存测试回答：'+route.request().postDataJSON().message,mode:'local'}}));
+ await require('./harness-browser-fixture.cjs').install(context);
+  await context.route('**/api/chat',route=>route.fulfill({json:{answer:'保存测试回答：'+route.request().postDataJSON().message,mode:'local'}}));
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked());
  const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();await ready();};

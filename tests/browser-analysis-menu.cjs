@@ -4,7 +4,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
  const page=await browser.newPage({viewport:{width:1500,height:1050}}),errors=[],chats=[];let fits=0;
  page.on('pageerror',e=>errors.push(e.message));
- page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits++;if(r.url().endsWith('/api/chat'))chats.push({owner:r.headers()['x-session-id'],body:r.postDataJSON()});});
+ page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits++;if(r.url().endsWith('/api/agent/tasks'))chats.push({owner:r.headers()['x-session-id'],body:r.postDataJSON()});});
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  const openMenu=()=>page.locator('#ask-error').click();
  try{

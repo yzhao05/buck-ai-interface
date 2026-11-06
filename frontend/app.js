@@ -30,12 +30,16 @@ const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPreci
 const tools = {search_conversation:"检索会话记录", read_conversation_message:"读取历史消息", get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", get_analysis_history:"读取历史分析", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
 tools.run_diagnostic_controls="运行参数与初值对照";
 Object.assign(tools,{get_diagnostic_evidence:'读取训练与残差证据',connect_plecs:'连接或唤醒 PLECS',
-  open_plecs_model:'打开电路模型',search_plecs_models:'搜索电路模型文件夹',select_plecs_model:'选择实验电路',get_plecs_models:'读取电路参数',run_plecs_experiment:'运行 PLECS 对比实验'});
+  open_plecs_model:'打开电路模型',search_plecs_models:'搜索电路模型文件夹',select_plecs_model:'选择实验电路',get_plecs_models:'读取电路参数',run_plecs_experiment:'运行 PLECS 对比实验',
+  get_plecs_job_result:'接回仿真结果',evaluate_plecs_experiment:'比较仿真辨识误差',read_diagnosis:'读取诊断记录',record_diagnosis:'更新诊断证据'});
 function localPlecsConfig(){try{return JSON.parse(savedValue(`buck-plecs:${base}`)||'null');}catch{return null;}}
 async function syncPlecsConfig(){
   const config=localPlecsConfig();
-  if(config && ['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname))
-    await api('/api/plecs/settings',{method:'POST',body:config,timeout:5000});
+  if(config){
+    const localBackend=['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname);
+    if(localBackend)await api('/api/plecs/settings',{method:'POST',body:config,timeout:5000});
+    else if((await api('/api/bridge/status')).paired)await api('/api/bridge/settings',{method:'POST',body:config,timeout:5000});
+  }
 }
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
@@ -684,6 +688,20 @@ $("diagnostic-reference-file").addEventListener('change',async event=>{
   }catch(error){notice(error.message);}
 });
 function decorateResponse(article, response) {
+    if(response.diagnosis?.hypotheses?.length){
+      const box=document.createElement('details');box.className='message-tools';
+      const heading=document.createElement('summary');heading.textContent='误差假设与证据';box.append(heading);
+      const statuses={open:'待检查',supported:'有证据支持',rejected:'已排除',unresolved:'尚不能区分',systematic_floor:'系统性误差下限'};
+      for(const hypothesis of response.diagnosis.hypotheses){
+        const p=document.createElement('p');p.textContent=`${hypothesis.cause} · ${statuses[hypothesis.status]||hypothesis.status}：${hypothesis.assessment}`;box.append(p);
+      }
+      const next=document.createElement('p');next.textContent=response.diagnosis.rationale||response.diagnosis.next_step||'';box.append(next);article.append(box);
+    }
+    if(response.simulation_evaluations?.length){
+      const box=document.createElement('details');box.className='message-tools';
+      const heading=document.createElement('summary');heading.textContent='仿真重新辨识与误差比较';box.append(heading);
+      const pre=document.createElement('pre');pre.textContent=JSON.stringify(response.simulation_evaluations,null,2);box.append(pre);article.append(box);
+    }
     if(response.agent_budget){
       const note=document.createElement('div');note.className='message-tools';
       note.textContent=`${tr(response.agent_budget.thinking?'思考模式':'快速模式')} · ${response.agent_budget.model_calls} 次模型请求 · 成本预算占用上界 $${response.agent_budget.reserved_cost_usd}`;
@@ -867,7 +885,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       } catch { /* Invalid drafts remain a form validation error. */ }
     }
     try { await syncPlecsConfig(); } catch (error) { notice(error.message); }
-    const response = await api("/api/chat", {method:"POST", timeout:220000, body:{message:text,reasoning_mode:$("reasoning-mode").value,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
+    const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
       ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options,pwm_source_setting:$('pwm-source').value,
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
         pending_start:pendingConfigurationStart?.fingerprint===actionContext.fingerprint,
@@ -881,7 +899,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       conversation_messages:corpus,conversation_retrieval_requested:useConversation,
       // Keep execution context for explicit mixed requests (run, then compare).
       // The backend classifier enforces read-only tools for comparison alone.
-      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult && !imageQuestion}});
+      experiments:chatExperiments(),identification_enabled:state.identificationOpen && Boolean(fitOptions) && !analyzeResult && !imageQuestion});
     pending.remove();
     if (response.mode === "provider_error") {
       window.alert(response.provider_error);
@@ -889,7 +907,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       decorateResponse(article, response);
       const failedReply = rememberMessage("assistant", response.provider_error, {
         request_message_id:requestMessage.id, tool_calls:response.tool_calls,
-        agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,
+        agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,diagnosis:response.diagnosis,simulation_evaluations:response.simulation_evaluations,
         control_checks:response.control_checks, retrieved_sources:response.retrieved_sources,
         error_code:response.error_code
       }, "请求未完成");
@@ -907,10 +925,10 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
     const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
-      request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
+      agent_task_id:response.agent_task_id,diagnosis:response.diagnosis,request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
       repeatability:response.repeatability,
       control_checks:response.control_checks,
-      agent_budget:response.agent_budget,plecs_experiments:response.plecs_experiments,
+      agent_budget:response.agent_budget,plecs_experiments:response.plecs_experiments,simulation_evaluations:response.simulation_evaluations,
       ...(response.ui_action ? {ui_action:response.ui_action,ui_action_status:response.ui_action_status} : {}),
       ...(analysisMeta && !response.job_id ? {analysis:{...analysisMeta,request_id:requestMessage.id}} : {})}, replyMode);
     article.dataset.messageId=savedReply.id;
@@ -1201,6 +1219,7 @@ $("clear-data").onclick=async()=>{
 $("open-settings").onclick=async()=>{$("api-url").value=base;$("access-token").value=accessToken;$("sync-code").value=archiveKey;$("plecs-executable").value='';ui($("settings-status"), "");$("settings-dialog").showModal();
   $("plecs-model-directory").value='';
   const rememberedPlecs=localPlecsConfig();
+  fillPlecsBinding(rememberedPlecs?.analysis_binding);
   if(rememberedPlecs){$("plecs-executable").value=rememberedPlecs.executable;$("plecs-model-directory").value=rememberedPlecs.model_directory||'';}
   try{if(['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)){
     const selectedBase=base;const p=await api('/api/plecs/settings',{timeout:5000});
@@ -1216,6 +1235,8 @@ $("copy-sync-code").onclick=async()=>{
 $("api-url").oninput=()=>{
   $("plecs-executable").value='';
   $("plecs-model-directory").value='';
+  fillPlecsBinding(null);
+  $('bridge-instructions').textContent='';
   // Never carry the previous backend's credential into a different connection.
   $("access-token").value=tokenKey($("api-url").value.trim())===tokenKey(base) ? accessToken : savedToken($("api-url").value.trim());
 };
@@ -1255,12 +1276,9 @@ $("settings-form").onsubmit=async event=>{
     ui($("settings-status"), "正在连接…");
     if(backendChanged || codeChanged){state.connected=false;resetExperiment();await initializeHistory();}
     if(await connect()){
-      if(['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)){
-        if(!['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname))throw new Error('PLECS 自动启动需要连接本机后端。');
-        const plecsConfig={executable:$("plecs-executable").value.trim(),model_directory:$("plecs-model-directory").value.trim()};
-        await api('/api/plecs/settings',{method:'POST',body:plecsConfig});
-        localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(plecsConfig));
-      }
+      const plecsConfig=readPlecsSettings();
+      localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(plecsConfig));
+      await syncPlecsConfig();
       await synchronizeArchive({preferRemote:true});
       if(!state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
       scheduleArchiveSync();
@@ -1289,3 +1307,22 @@ controls();void (async()=>{await initializeHistory();if(await connect()){
   await recoverExperiments();
   scheduleArchiveSync();
 }})();
+
+function readPlecsSettings(){
+  const model=$('plecs-binding-model').value.trim();
+  return {executable:$('plecs-executable').value.trim(),model_directory:$('plecs-model-directory').value.trim(),
+    analysis_binding:model?{model_name:model,current_port:Number($('plecs-binding-current').value),voltage_port:Number($('plecs-binding-voltage').value),
+      pwm_port:$('plecs-binding-pwm').value?Number($('plecs-binding-pwm').value):null,L_parameter:$('plecs-binding-l').value.trim(),C_parameter:$('plecs-binding-c').value.trim(),
+      confirmed:$('plecs-binding-confirmed').checked,same_circuit_and_conditions:$('plecs-binding-same').checked}:null};
+}
+function fillPlecsBinding(binding){
+  for(const [id,key] of [['model','model_name'],['current','current_port'],['voltage','voltage_port'],['pwm','pwm_port'],['l','L_parameter'],['c','C_parameter']])$('plecs-binding-'+id).value=binding?.[key]??'';
+  $('plecs-binding-confirmed').checked=Boolean(binding?.confirmed);$('plecs-binding-same').checked=Boolean(binding?.same_circuit_and_conditions);
+}
+for(const id of ['plecs-model-directory','plecs-binding-model','plecs-binding-current','plecs-binding-voltage','plecs-binding-pwm','plecs-binding-l','plecs-binding-c']){
+  $(id).addEventListener('input',()=>{
+    $('plecs-binding-confirmed').checked=false;
+    $('plecs-binding-same').checked=false;
+  });
+}
+window.BuckHarness.bind();

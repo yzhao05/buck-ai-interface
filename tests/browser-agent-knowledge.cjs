@@ -18,7 +18,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
   const browser = await chromium.launch({executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless:true});
   try {
     const page = await browser.newPage(), dialogs = [], errors = [], requests = [];
-    page.on('request', r => {if(r.url().endsWith('/api/chat')) requests.push(r.postDataJSON());});
+    page.on('request', r => {if(r.url().endsWith('/api/agent/tasks')) requests.push(r.postDataJSON());});
     page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.accept(); });
     page.on('pageerror', error => errors.push(error.message));
     let response = {mode:'provider_error',answer:'',error_code:'missing_api_key',provider_error:'AI service is not configured. Please set DEEPSEEK_API_KEY on the backend and try again.',sources:[],tool_calls:[],job_id:null};

@@ -33,3 +33,5 @@ uvicorn==0.54.0
 reportlab==4.5.1
 pillow==13.0.0
 charset-normalizer==3.5.2
+deepseek-harness-sdk==0.2.1rc2
+deepseek-harness-runtime-bin==0.2.1rc2

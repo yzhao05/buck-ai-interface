@@ -6,7 +6,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
  const page=await browser.newPage({viewport:{width:1650,height:1100}}),errors=[],chats=[],reports=[];
  page.on('pageerror',e=>errors.push(e.message));
- page.on('request',r=>{if(r.url().endsWith('/api/chat'))chats.push(r.postDataJSON());if(r.url().endsWith('/api/reports/pdf'))reports.push(r.postDataJSON());});
+ page.on('request',r=>{if(r.url().endsWith('/api/agent/tasks'))chats.push(r.postDataJSON());if(r.url().endsWith('/api/reports/pdf'))reports.push(r.postDataJSON());});
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  try{
   await page.goto('http://127.0.0.1:8001');await ready();

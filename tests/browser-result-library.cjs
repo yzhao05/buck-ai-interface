@@ -6,7 +6,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
  const page=await browser.newPage({viewport:{width:1600,height:1100}}),errors=[],chats=[];let fits=0;
  page.on('pageerror',e=>errors.push(e.message));
- page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits++;if(r.url().endsWith('/api/chat'))chats.push(r.postDataJSON());});
+ page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits++;if(r.url().endsWith('/api/agent/tasks'))chats.push(r.postDataJSON());});
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  const choose=async id=>{await page.locator('#toggle-result-library').click();await page.locator(`[data-result-id="${id}"]`).click();await ready();};
  try{

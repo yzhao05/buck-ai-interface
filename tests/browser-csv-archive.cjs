@@ -25,7 +25,8 @@ async function send(p,text){await p.locator('#chat-input').fill(text);await p.lo
   async function launch(){
     context=await chromium.launchPersistentContext(profile,{...chrome,viewport:{width:1450,height:1000}});
     context.on('page',p=>p.on('pageerror',e=>errors.push(e.message)));
-    await context.route('**/api/chat',route=>{chats.push(route.request().postDataJSON());return route.fulfill({json:{answer:'Archive test response',mode:'local'}});});
+    await require('./harness-browser-fixture.cjs').install(context);
+  await context.route('**/api/chat',route=>{chats.push(route.request().postDataJSON());return route.fulfill({json:{answer:'Archive test response',mode:'local'}});});
     const p=await context.newPage();await p.goto(origin);await ready(p);return p;
   }
   try {

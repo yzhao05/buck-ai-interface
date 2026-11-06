@@ -12,9 +12,9 @@ class BudgetExceeded(ValueError):
 class Budget:
     def __init__(self, thinking):
         self.thinking = thinking
-        self.rounds = 6 if thinking else 5
+        self.rounds = 14 if thinking else 7
         self.started = time.monotonic()
-        self.seconds = min(180, float(os.getenv('AGENT_TIME_LIMIT_S', '180')))
+        self.seconds = min(900, float(os.getenv('AGENT_TIME_LIMIT_S', '300')))
         self.limit = float(os.getenv('AGENT_COST_LIMIT_USD', '0.50'))
         self.input_price = float(os.getenv('AGENT_INPUT_USD_PER_M', '1'))
         self.output_price = float(os.getenv('AGENT_OUTPUT_USD_PER_M', '5'))
@@ -31,6 +31,8 @@ class Budget:
 
     def reserve(self, payload):
         self.remaining()
+        if self.calls >= self.rounds:
+            raise BudgetExceeded('model step budget reached')
         # UTF-8 bytes upper-bound normal text token counts; include protocol overhead.
         inputs = len(json.dumps(payload, ensure_ascii=False).encode('utf-8')) + 4096
         available = self.limit - self.reserved - inputs * self.input_price / 1e6

@@ -8,7 +8,11 @@
 
 `backend/assets/fonts/BuckReportSans-Regular.ttf` 由 Google Fonts 提供的 Noto Sans SC 可变字体固定到 `wght=400` 后生成，并将字体名称改为 Buck Report Sans。来源：`https://github.com/google/fonts/tree/main/ofl/notosanssc`，上游文件 `NotoSansSC[wght].ttf`。版权为 Adobe，使用 SIL Open Font License 1.1；完整许可证保存在同目录 `OFL-NotoSansSC.txt`。报告嵌入所用字形子集，不依赖读者电脑安装中文字体。
 
-本项目的界面、数据接入、积分辨识、验证、DeepSeek 工具调用和部署代码为此次新实现。
+本项目的界面、数据接入、积分辨识、验证、工具适配和部署代码由本项目实现；Agent 多轮运行时使用下述官方 Harness。
+
+## DeepSeek Harness
+
+使用官方 `deepseek-harness-sdk==0.2.1rc2` 与 `deepseek-harness-runtime-bin==0.2.1rc2`，通过 Python 依赖安装，未将上游仓库复制进本项目。来源：https://github.com/deepseek-ai/deepseek-harness 。上游采用 MIT 许可证，版权为 Copyright (c) 2026 DeepSeek；完整许可随上游发行包提供。本项目的 `backend/harness_runtime.py` 是 MCP 工具与预算网关适配层。
 
 ## PE-GPT
 

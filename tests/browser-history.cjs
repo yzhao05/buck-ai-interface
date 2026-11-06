@@ -7,7 +7,8 @@ const assert=require('node:assert/strict');
   let hold=false, release, reached;
   async function setup(context) {
     context.on('page',page=>page.on('pageerror',e=>errors.push(e.message)));
-    await context.route('**/api/chat',async route=>{
+    await require('./harness-browser-fixture.cjs').install(context);
+  await context.route('**/api/chat',async route=>{
       requests.push({body:route.request().postDataJSON(),owner:route.request().headers()['x-session-id']});
       if(hold){reached();await new Promise(resolve=>release=resolve);}
       await route.fulfill({json:{answer:'测试回答：'+requests.at(-1).body.message,mode:'deepseek',route:{label:'公式知识',mode:'agent'},sources:[{title:'安全来源',url:'https://example.com'},{title:'不安全地址',url:'javascript:alert(1)'}],tool_calls:[{name:'search_knowledge',status:'已执行'}]}});

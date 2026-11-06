@@ -14,6 +14,7 @@ const snapshot=p=>p.evaluate(()=>({key:archiveKey,scope:csvScope(),id:activeConv
  const errors=[];
  async function open(){
   const c=await browser.newContext({viewport:{width:1450,height:1000}});
+  await require('./harness-browser-fixture.cjs').install(c);
   await c.route('**/api/chat',route=>route.fulfill({json:{answer:'同步回答',mode:'local'}}));
   const p=await c.newPage();p.on('pageerror',e=>errors.push(e.message));await p.goto(origin);await ready(p);return {c,p};
  }

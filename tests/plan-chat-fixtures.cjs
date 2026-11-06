@@ -9,7 +9,8 @@ const fixtures=new Map([
 ]);
 module.exports=async function installPlanChatFixtures(page){
  if(process.env.TEST_LIVE_DEEPSEEK==='1'){page.setDefaultTimeout(90000);return;}
- await page.route('**/api/chat',route=>{
+ await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat',route=>{
   const body=route.request().postDataJSON(),fixture=fixtures.get(body.message);
   assert(fixture,`Missing plan fixture for: ${body.message}`);
   return route.fulfill({json:{mode:'deepseek',answer:'计划已解析。',job_id:null,sources:[],tool_calls:[],

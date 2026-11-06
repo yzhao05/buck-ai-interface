@@ -4,6 +4,10 @@ import os
 import re
 import asyncio
 from .agent_policy import Budget, BudgetExceeded, evidence
+from . import harness_runtime
+from .diagnosis_notebook import Notebook, TOOLS as DIAGNOSIS_TOOLS
+import hashlib
+import secrets
 from .plecs_diagnostics import TOOLS as PLECS_TOOLS
 
 import httpx
@@ -208,9 +212,9 @@ async def _answer(request, invoke):
     selected_tasks = {route['task'], *route['secondary_tasks']}
     budget.thinking = (request.reasoning_mode == 'thinking' or
                        request.reasoning_mode == 'auto' and (bool(selected_tasks & {'diagnosis', 'plecs'}) or compare_saved))
-    budget.rounds = 6 if budget.thinking else 5
+    budget.rounds = 14 if budget.thinking else 7
     if selected_tasks & {'diagnosis', 'plecs'} and not request.images and not compare_saved:
-        allowed_tools.update({'get_diagnostic_evidence', 'get_plecs_models', 'run_plecs_experiment', 'connect_plecs','select_plecs_model','search_plecs_models','open_plecs_model'})
+        allowed_tools.update({'get_diagnostic_evidence', 'get_plecs_models', 'run_plecs_experiment', 'connect_plecs','select_plecs_model','search_plecs_models','open_plecs_model','get_plecs_job_result'})
         if re.search(r'(?:不要|不用|别|停止|取消).{0,15}(?:仿真|实验|PLECS)|do not.*(?:simulate|experiment|plecs)', request.message, re.I):
             allowed_tools.difference_update({'run_plecs_experiment','connect_plecs','select_plecs_model','search_plecs_models','open_plecs_model'})
     task_tools = [t for t in TOOLS + HISTORY_TOOLS + PLECS_TOOLS if t["function"]["name"] in allowed_tools]
@@ -229,12 +233,6 @@ async def _answer(request, invoke):
     if "get_diagnostic_evidence" in allowed_tools and request.result_id and raw_result and raw_result.get('result_source') == 'saved_conversation_snapshot':
         diagnostic_evidence = await asyncio.wait_for(invoke('get_diagnostic_evidence'), timeout=budget.remaining()) or diagnostic_evidence
     control_checks = None
-    if controls_enabled and result and not result.get('error'):
-        try:
-            control_checks = await asyncio.wait_for(invoke('run_diagnostic_controls'), timeout=min(40,budget.remaining()))
-        except TimeoutError:
-            control_checks = {'status':'unavailable','error':'数值诊断对照超时'}
-        traces.append({'name':'run_diagnostic_controls','status':'已执行' if control_checks and control_checks.get('status')=='completed' else '未执行'})
     if result_scoped and (not result or result.get("error")):
         # Never let a missing/expired current result fall back to old AI numbers.
         return {"mode": "validation_error", "answer": "当前结果已失效或与所选数据、配置不匹配，无法分析。请重新辨识后再试；本次没有使用历史结果。",
@@ -271,119 +269,143 @@ async def _answer(request, invoke):
                 *[provider_message(m["role"], m["content"], m.get("images", [])) for m in recent_history],
                 provider_message("user", request.message, request.images)]
     messages[0]['content'] += '\n误差诊断先检查轨迹、条件数、残差和已有对照，再选择能区分假设的实验，根据实际结果更新判断。只给简短证据与结论，不输出内部思考过程。PLECS 实验先读取模型目录，只有电路和工况匹配已明确时才将结果关联当前 CSV；否则先说明参考模型范围或询问用户。单因素实验不等于实测原因已确定。用户拒绝仿真时不得运行。预算不足时总结已完成证据，明确尚未执行的检查。仿真不修改界面辨识配置。'
-    messages[0]['content'] += '\n需要 PLECS 排查时先 connect_plecs 唤醒程序，再 get_plecs_models。尚未选择模型时询问用户要使用的 .plecs 文件完整路径，不替用户挑选。用户回复路径后调用 select_plecs_model，然后重新读取目录，在独立副本中设计单因素实验。output_1 等仅是端口顺序，未核对信号映射不能称为电流或电压。'
-    messages[0]['content'] += '\n打开模型使用 open_plecs_model，打开仅加载独立副本，不执行仿真。模型选择补充：唤醒后优先 search_plecs_models 递归搜索已配置文件夹。唯一精确匹配会自动登记，随后读取目录；未找到、多候选或扫描不完整时再询问用户。更换上传文件后必须重新匹配，不沿用上次电路。'
-    plecs_count = 0
+    messages[0]['content'] += '\n需要 PLECS 排查时用 connect_plecs 检查连接并在必要时唤醒程序；它会自动搜索已配置文件夹及子目录。唯一精确匹配会自动登记，随后 get_plecs_models 读取参数目录；需要重新匹配时用 search_plecs_models。未找到、多候选或扫描不完整时才询问用户，用户提供完整路径后用 select_plecs_model 登记。更换上传文件后必须重新匹配。open_plecs_model 仅打开独立副本，不执行仿真。output_1 等仅是端口顺序，未核对映射不能称为电流或电压。'
+    state = harness_runtime.scope.get() or {}
+    if state.get('owner'):
+        identity = [state['owner'],'result' if result_scoped else 'conversation',request.result_id,
+                    request.dataset_id,request.circuit_filename,request.options.model_dump(),
+                    request.mapping.model_dump() if request.mapping else None]
+        state['session_id'] = hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()[:32]
+    notebook = Notebook(harness_runtime.ROOT / (state.get('session_id') or state.get('id') or secrets.token_hex(16)) / 'diagnosis.json', request.result_id)
+    emit = state.get('emit', lambda *_:None)
+    if selected_tasks & {'diagnosis','plecs'} and not request.images and not compare_saved:
+        task_tools.extend(DIAGNOSIS_TOOLS)
+        allowed_tools.update({'record_diagnosis','read_diagnosis'})
+        if 'run_plecs_experiment' in allowed_tools:
+            allowed_tools.add('evaluate_plecs_experiment')
+            from .simulation_analysis import TOOL as EVALUATE_TOOL
+            task_tools.append(EVALUATE_TOOL)
+    messages[0]['content'] += "\n你在官方 DeepSeek Harness 中工作。自由选择检索、计算、实验顺序，可以跳过无帮助步骤或随新证据修改计划。针对某次误差维护可审阅的假设摘要：支持证据、反证、尚缺信息和下一步，可使用 read_diagnosis/record_diagnosis 保存。工具失败不是反证。承认模型简化、测量分辨率、不可辨识性等系统性误差下限；证据足够或对照信息增益很低时停止并说明剩余误差，不为追求零误差重复实验。新证据可重新打开假设。需要重辨识仿真结果时调用 evaluate_plecs_experiment，沿用用户原方法；缺少明确端口映射或元件真值绑定时先询问，不猜测。输出为证据摘要，不是内部思维链。"
     plecs_catalog_read = False
     experiment_reports = []
+    simulation_evaluations = []
+
+    async def execute_tool(name, arguments):
+        nonlocal control_checks, active_job, knowledge_searched, plecs_catalog_read
+        budget.remaining()
+        if name not in allowed_tools:
+            traces.append({'name':name,'status':'未执行'})
+            return {'error':'Tool is not admitted for this request'}
+        emit('tool_start', {'name':name})
+        try:
+            if not isinstance(arguments,dict):
+                raise ValueError('Tool arguments must be an object')
+            if name == 'read_diagnosis':
+                output = notebook.data
+            elif name == 'record_diagnosis':
+                output = notebook.update(arguments)
+            elif name in {'search_conversation','read_conversation_message'}:
+                output = conversation.invoke(name, arguments)
+            elif name == 'search_knowledge':
+                query, top_k = arguments.get('query'), arguments.get('top_k',4)
+                if not isinstance(query,str) or not query.strip() or len(query)>1000 or type(top_k) is not int or not 1<=top_k<=8 or set(arguments)-{'query','top_k'}:
+                    raise ValueError('Knowledge search requires query and optional top_k (1–8)')
+                cache_key = (query.strip().casefold(),top_k)
+                if cache_key in knowledge_queries:
+                    output = {'query':query,'count':len(knowledge_queries[cache_key]),'documents':knowledge_queries[cache_key],'cached':True}
+                else:
+                    found = retrieve(query.strip(),top_k)
+                    knowledge_queries[cache_key] = found
+                    knowledge_searched = True
+                    output = {'query':query,'count':len(found),'documents':found}
+                    seen = {d['id'] for d in docs}
+                    docs.extend(d for d in found if d['id'] not in seen)
+            elif name == 'get_experiment_history':
+                output = {'count':len(experiments),'experiments':experiments,'repeatability':repeatability,'control_checks':control_checks}
+            elif name == 'get_analysis_history':
+                output = analyses
+            elif name == 'run_diagnostic_controls':
+                if control_checks is None:
+                    control_checks = await invoke(name)
+                output = control_checks
+            elif name == 'get_diagnostic_evidence':
+                output = diagnostic_evidence
+            elif name == 'run_plecs_experiment':
+                if not plecs_catalog_read:
+                    raise ValueError('Read the registered model catalog before running an experiment')
+                fingerprint = hashlib.sha256(json.dumps({k:v for k,v in arguments.items() if k not in {'hypothesis','expected_observation'}},sort_keys=True).encode()).hexdigest()
+                previous = notebook.data['experiments'].get(fingerprint)
+                if previous is not None:
+                    if previous.get('bridge_job_id'):
+                        previous = await invoke('get_plecs_job_result',{'job_id':previous['bridge_job_id']})
+                        notebook.data['experiments'][fingerprint] = previous
+                        notebook.save()
+                    output = {**previous,'deduplicated':True,'note':'Identical intervention already attempted; inspect the previous evidence or change the design.'}
+                else:
+                    # Persist admission before dispatch: interruption cannot repeat it.
+                    notebook.data['experiments'][fingerprint] = {'status':'uncertain','error':'Previous execution interrupted; inspect artifacts before another experiment.'}
+                    notebook.save()
+                    output = await invoke(name,arguments)
+                    notebook.data['experiments'][fingerprint] = output
+                    notebook.save()
+                experiment_reports.append(output)
+            elif name == 'evaluate_plecs_experiment':
+                identifier = arguments.get('experiment_id','')
+                saved = notebook.data.setdefault('evaluations',{})
+                if identifier in saved and saved[identifier].get('status') == 'uncertain':
+                    output = await invoke('read_plecs_evaluation',arguments)
+                    saved[identifier] = output
+                    notebook.save()
+                elif identifier in saved and not saved[identifier].get('error'):
+                    output = {**saved[identifier],'cached':True}
+                else:
+                    saved[identifier] = {'status':'uncertain','error':'Evaluation was admitted; do not repeat it after an interruption without checking saved results.'}
+                    notebook.save()
+                    output = await invoke(name,arguments)
+                    saved[identifier] = output
+                    notebook.save()
+                simulation_evaluations.append(output)
+            elif name in {'connect_plecs','search_plecs_models','select_plecs_model','get_plecs_models','open_plecs_model','get_plecs_job_result'}:
+                output = await invoke(name,arguments)
+                if name == 'get_plecs_models':
+                    plecs_catalog_read = bool(output.get('models')) and not output.get('error')
+                elif name in {'connect_plecs','search_plecs_models','select_plecs_model'}:
+                    plecs_catalog_read = False
+            elif name == 'start_identification' and intent == 'explain':
+                output = {'error':'Explanation requests do not authorize identification'}
+            elif name == 'start_identification' and active_job:
+                output = active_job
+            else:
+                output = await invoke(name)
+                if name == 'get_identification_result':
+                    output = analysis_result(output)
+                if name == 'start_identification' and output and output.get('job_id'):
+                    active_job = output
+            if name not in {'read_diagnosis','record_diagnosis'} and isinstance(output,dict):
+                output = {**output,'evidence_id':notebook.evidence(name,output)}
+            detail = {'query':output['query'],'count':output['count']} if name=='search_knowledge' and 'query' in output else {}
+            traces.append({**detail,'name':name,'status':'未执行' if isinstance(output,dict) and output.get('error') else '已执行'})
+            emit('tool_end',{'name':name,'status':traces[-1]['status']})
+            return output
+        except (ValueError,TypeError,KeyError) as exc:
+            traces.append({'name':name,'status':'未执行'})
+            emit('tool_end',{'name':name,'status':'未执行'})
+            return {'error':str(exc)}
+
+    def metadata():
+        return dict(agent_budget=budget.metadata(),plecs_experiments=experiment_reports,
+                    simulation_evaluations=simulation_evaluations,
+                    retrieved_sources=docs,tool_calls=traces,job_id=active_job.get('job_id') if active_job else None,
+                    route=route,conversation_retrieval=conversation.metadata(),repeatability=repeatability,
+                    control_checks=control_checks,diagnosis={k:v for k,v in notebook.data.items() if k!='evidence'},
+                    harness={'framework':'deepseek-ai/deepseek-harness','sdk_version':'0.2.1rc2','session_id':state.get('session_id') or state.get('id')})
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(65, connect=10)) as client:
-            for round_index in range(budget.rounds):
-                payload = {"model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "messages": messages,
-                           "tools": task_tools, "tool_choice": ("none" if round_index == budget.rounds-1 else
-                               {"type": "function", "function": {"name": "search_knowledge"}}
-                               if knowledge_required and not knowledge_searched else "auto"),
-                           "thinking": {"type": "enabled" if budget.thinking else "disabled"}, "stream": False}
-                payload['max_tokens'] = budget.reserve(payload)
-                response = await asyncio.wait_for(client.post(os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/") + "/chat/completions",
-                    headers={"Authorization": "Bearer " + key},
-                    json=payload), timeout=budget.remaining())
-                response.raise_for_status()
-                msg = response.json()["choices"][0]["message"]
-                calls = msg.get("tool_calls") or []
-                if not calls:
-                    content = msg.get("content")
-                    if not isinstance(content, str) or not content.strip():
-                        raise ValueError("empty response")
-                    if knowledge_required and not knowledge_searched:
-                        raise ValueError("Knowledge answer requires a completed search")
-                    cited_ids = set(re.findall(r"\[kb:([^\]\s]+)\]", content))
-                    if cited_ids - {d["id"] for d in docs}:
-                        raise ValueError("Unknown knowledge citation")
-                    return {"mode": "deepseek", "answer": content, "sources": [d for d in docs if d["id"] in cited_ids],
-                            "retrieved_sources": docs,
-                            "agent_budget": budget.metadata(), "plecs_experiments": experiment_reports,
-                            "tool_calls": traces, "job_id": active_job.get("job_id") if active_job else None, "route": route,
-                            "conversation_retrieval": conversation.metadata(), "repeatability": repeatability, "control_checks": control_checks}
-                if len(calls) > 4:
-                    raise ValueError("too many tool calls")
-                if round_index == budget.rounds-1:
-                    raise BudgetExceeded('tool round budget reached')
-                messages.append({k: msg[k] for k in ("role", "content", "tool_calls", "reasoning_content") if k in msg})
-                for call in calls:
-                    budget.remaining()
-                    name = call["function"]["name"]
-                    if name not in allowed_tools:
-                        output = {"error": "当前任务不允许调用此工具，请按当前分类处理用户问题。"}
-                    elif name in {"search_conversation", "read_conversation_message"}:
-                        try:
-                            output = conversation.invoke(name, json.loads(call["function"].get("arguments") or "{}"))
-                        except (ValueError, TypeError):
-                            output = {"error": "会话检索参数不是有效 JSON。"}
-                    elif name == "search_knowledge":
-                        try:
-                            arguments = json.loads(call["function"].get("arguments") or "{}")
-                            query = arguments.get("query") if isinstance(arguments, dict) else None
-                            if not isinstance(query, str) or not query.strip() or len(query) > 1000:
-                                raise ValueError("invalid query")
-                            top_k = arguments.get("top_k", 4)
-                            if type(top_k) is not int or not 1 <= top_k <= 8 or set(arguments) - {"query", "top_k"}:
-                                raise ValueError("invalid search arguments")
-                            query = query.strip()
-                            cache_key = (query.casefold(), top_k)
-                            if cache_key in knowledge_queries:
-                                output = {"error": "This query was already searched. Use the previous results or try different terms."}
-                            else:
-                                found = retrieve(query, top_k)
-                                knowledge_queries[cache_key] = found
-                                knowledge_searched = True
-                                output = {"query": query, "count": len(found), "documents": found,
-                                          "hint": "Assess relevance; refine the query if evidence is insufficient. Cite used entries as [kb:id]."}
-                                seen = {d["id"] for d in docs}
-                                docs.extend(d for d in found if d["id"] not in seen)
-                        except (ValueError, TypeError):
-                            output = {"error": "Knowledge search requires query (1-1000 characters) and optional top_k (integer, 1-8)."}
-                    elif name == "get_experiment_history":
-                        output = {"count": len(experiments), "experiments": experiments, "repeatability": repeatability, "control_checks": control_checks}
-                    elif name == "get_analysis_history":
-                        output = analyses
-                    elif name == 'run_diagnostic_controls':
-                        output = control_checks or {'status':'unavailable','error':'当前无可执行的匹配结果。'}
-                    elif name == 'get_diagnostic_evidence':
-                        output = diagnostic_evidence
-                    elif name in {'get_plecs_models', 'run_plecs_experiment', 'connect_plecs','select_plecs_model','search_plecs_models','open_plecs_model'}:
-                        try:
-                            arguments = json.loads(call['function'].get('arguments') or '{}')
-                            if name == 'run_plecs_experiment':
-                                if not plecs_catalog_read or plecs_count >= 2 or budget.remaining() < 50:
-                                    raise ValueError('需要先读取电路目录，且每次回答最多两组实验、须保留至少 50 秒预算')
-                                plecs_count += 1
-                            output = await asyncio.wait_for(invoke(name, arguments), timeout=budget.remaining())
-                            if name == 'get_plecs_models':
-                                plecs_catalog_read = bool(output.get('models')) and not output.get('error')
-                            elif name == 'run_plecs_experiment':
-                                experiment_reports.append(output)
-                            elif name in {'connect_plecs','search_plecs_models','select_plecs_model'}:
-                                plecs_catalog_read = False
-                        except (ValueError, TypeError) as exc:
-                            output = {'error': str(exc)}
-                    elif name == "start_identification" and intent == "explain":
-                        output = {"error": "当前问题询问公式或原理，不启动数值辨识；请使用 search_knowledge。"}
-                    elif name == "start_identification" and active_job:
-                        output = active_job
-                    else:
-                        output = await asyncio.wait_for(invoke(name), timeout=budget.remaining())
-                        if name == "get_identification_result":
-                            output = analysis_result(output)
-                        if name == "start_identification" and output.get("job_id"):
-                            active_job = output
-                    trace_detail = {"query": output["query"], "count": output["count"]} if name == "search_knowledge" and isinstance(output, dict) and "query" in output else {}
-                    traces.append({**trace_detail, "name": name, "status": "未执行" if isinstance(output, dict) and output.get("error") else "已执行"})
-                    messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(output, ensure_ascii=False)})
-        raise ValueError("tool round limit")
-    except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError, TimeoutError) as exc:
-        return provider_failure(exc, agent_budget=budget.metadata(), plecs_experiments=experiment_reports,
-                                retrieved_sources=docs, tool_calls=traces,
-                                job_id=active_job.get("job_id") if active_job else None, route=route,
-                                conversation_retrieval=conversation.metadata(), repeatability=repeatability,
-                                control_checks=control_checks)
+        content = await harness_runtime.run(messages,task_tools,execute_tool,budget)
+        if knowledge_required and not knowledge_searched:
+            raise ValueError('Knowledge answer requires a completed search')
+        cited_ids = set(re.findall(r"\[kb:([^\]\s]+)\]",content))
+        if cited_ids - {d['id'] for d in docs}:
+            raise ValueError('Unknown knowledge citation')
+        return {'mode':'deepseek','answer':content,'sources':[d for d in docs if d['id'] in cited_ids],**metadata()}
+    except Exception as exc:
+        return provider_failure(exc,**metadata())

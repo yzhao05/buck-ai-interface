@@ -32,7 +32,7 @@ const assert=require('node:assert/strict'), fs=require('node:fs');
   assert.match(await page.locator('#accuracy-assessment').innerText(),/已对照/);
   assert(!/未计算参数真值误差/.test(await page.locator('#result-notes').innerText()));
   const ask=async()=>{
-   const pending=page.waitForRequest(r=>r.url().endsWith('/api/chat'));
+   const pending=page.waitForRequest(r=>r.url().endsWith('/api/agent/tasks'));
    await page.locator('#ask-error').click();
    await page.locator('#analyze-here').click();
    const request=await pending;

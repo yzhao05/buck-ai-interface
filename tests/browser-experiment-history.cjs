@@ -66,6 +66,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   let sent;
   let csvRequests=0;
   await page.route('**/api/datasets/**',route=>{csvRequests++;return route.fulfill({status:404,json:{detail:'expired'}});});
+  await require('./harness-browser-fixture.cjs').install(page);
   await page.route('**/api/chat',route=>{sent=route.request().postDataJSON();return route.continue();});
   await page.locator('#enter-identification').click();
   await page.evaluate(()=>sendMessage('对比这四次实验'));
@@ -79,6 +80,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert(sent.dataset_id && sent.mapping,'Retain current context for explicit mixed requests');
   // The pure comparison above reached the real backend and returned no job.
   // Check that an explicit mixed command is not disabled in the frontend.
+  await require('./harness-browser-fixture.cjs').install(page);
   await page.route('**/api/chat',route=>{sent=route.request().postDataJSON();return route.fulfill({json:{answer:'mixed request received',mode:'local',job_id:null}});});
   await page.evaluate(()=>sendMessage('先辨识参数，再比较这四次实验'));
   assert.equal(sent.identification_enabled,true);

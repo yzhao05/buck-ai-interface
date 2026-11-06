@@ -9,7 +9,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   if(response.url().endsWith('/api/chat'))chatResponses.push(await response.json());
  });
  if(process.env.TEST_LIVE_DEEPSEEK==='1')page.setDefaultTimeout(90000);
- if(process.env.TEST_LIVE_DEEPSEEK!=='1')await page.route('**/api/chat',route=>{
+ if(process.env.TEST_LIVE_DEEPSEEK!=='1')await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat',route=>{
   const body=route.request().postDataJSON();
   assert.equal(body.message,'请对于CASE16A_noise03_seed14.csv根据已有pwm完成两种方式参数识别');
   assert.equal(body.ui_context.options.pwm_source,'controller');

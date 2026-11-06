@@ -11,14 +11,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
 from .diagnostic_controls import compatible, run_controls
 
 from . import chat
-from . import plecs_diagnostics
 from . import plecs_local
+from . import plecs_bridge, plecs_execution
+from . import simulation_analysis
+from . import agent_tasks, harness_runtime
 from pydantic import BaseModel, Field
 from .data import MAX_BYTES, analyze, read_csv, suggest_mapping
 from .identification import identify
@@ -27,8 +31,6 @@ from .parameter_comparison import with_ground_truth
 from .schemas import AnalysisRequest, ChatRequest, FitRequest
 from .report import ReportRequest, build_pdf
 
-ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
 from . import archive
 archive.store = archive.ArchiveStore(os.getenv("ARCHIVE_DIR") or ROOT / "runtime" / "archive")
 TOKEN = os.getenv("APP_ACCESS_TOKEN", "")
@@ -51,12 +53,13 @@ async def size_limit(request: Request, call_next):
     if length and (not length.isdigit() or int(length) > MAX_BYTES + 1024 * 1024):
         return JSONResponse(status_code=413, content={"detail": "请求过大，CSV 上限为 32 MB。"})
     # Reject missing/incorrect credentials before parsing an upload body.
-    if TOKEN and request.url.path.startswith("/api/") and request.url.path != "/api/health" and request.method != "OPTIONS":
+    bridge_worker = request.url.path in {'/api/bridge/claim', '/api/bridge/heartbeat'} or request.url.path.startswith('/api/bridge/complete/')
+    if TOKEN and request.url.path.startswith("/api/") and request.url.path != "/api/health" and not bridge_worker and request.method != "OPTIONS":
         if not hmac.compare_digest(request.headers.get("authorization", ""), "Bearer " + TOKEN):
             return JSONResponse(status_code=401, content={"detail": "访问口令不正确，请在连接设置中输入后端 APP_ACCESS_TOKEN。"})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    if request.url.path.startswith(("/api/archive", "/api/jobs")):
+    if request.url.path.startswith(("/api/archive", "/api/jobs", "/api/agent", "/api/bridge")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -318,6 +321,61 @@ def local_plecs_access(request):
 class PlecsSettings(BaseModel):
     executable: str = Field(default="", max_length=1000)
     model_directory: str = Field(default='', max_length=1000)
+    analysis_binding: simulation_analysis.Binding | None = None
+
+
+@app.post('/api/bridge/pair')
+def pair_bridge(body: PlecsSettings | None = None, owner: str = Depends(session)):
+    throttle(owner, 'bridge-pair', 3)
+    return plecs_bridge.pair(owner,body.model_dump() if body else None)
+
+
+@app.get('/api/bridge/status')
+def bridge_status(owner: str = Depends(session)):
+    return plecs_bridge.status(owner)
+
+
+@app.post('/api/bridge/settings')
+def bridge_settings(body: PlecsSettings, owner: str = Depends(session)):
+    try:
+        return plecs_bridge.settings(owner, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@app.post('/api/bridge/claim')
+def bridge_claim(owner: str = Depends(session), x_bridge_token: str = Header(...)):
+    try:
+        return plecs_bridge.claim(owner, x_bridge_token)
+    except ValueError:
+        raise HTTPException(401, 'Invalid bridge credential')
+
+
+@app.post('/api/bridge/heartbeat')
+def bridge_heartbeat(owner: str = Depends(session), x_bridge_token: str = Header(...)):
+    try:
+        plecs_bridge.authenticate(owner, x_bridge_token)
+        with plecs_bridge.database() as db:
+            db.execute('UPDATE peers SET seen=? WHERE owner=?', (time.time(), owner))
+        return {'status':'online'}
+    except ValueError:
+        raise HTTPException(401, 'Invalid bridge credential')
+
+
+class BridgeResult(BaseModel):
+    result: dict
+
+
+@app.post('/api/bridge/complete/{identifier}')
+def bridge_complete(identifier: str, body: BridgeResult, owner: str = Depends(session), x_bridge_token: str = Header(...)):
+    try:
+        plecs_bridge.authenticate(owner, x_bridge_token)
+    except ValueError:
+        raise HTTPException(401, 'Invalid bridge credential')
+    try:
+        return plecs_bridge.complete(owner, x_bridge_token, identifier, body.result)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
 
 
 @app.get('/api/plecs/settings')
@@ -330,7 +388,11 @@ def get_plecs_settings(request: Request, owner: str = Depends(session)):
 def set_plecs_settings(body: PlecsSettings, request: Request, owner: str = Depends(session)):
     local_plecs_access(request)
     try:
-        return plecs_local.configure(owner, body.executable, body.model_directory)
+        plecs_local.configure(owner, body.executable, body.model_directory)
+        state = plecs_local.settings(owner)
+        state['analysis_binding'] = body.analysis_binding.model_dump() if body.analysis_binding else None
+        plecs_local.save(owner,state)
+        return state
     except ValueError as exc:
         raise HTTPException(422, str(exc))
 
@@ -340,26 +402,19 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
     throttle(owner, "chat", 10)
     control_cache = None
     model_context = json.dumps([body.dataset_id, body.result_id if body.saved_result else None, body.circuit_filename], ensure_ascii=False)
-    def bind_model_context():
-        state = plecs_local.settings(owner)
-        state['model_context'] = model_context
-        plecs_local.save(owner, state)
-    async def search_current_model():
+    def model_hints():
         import re
         hints = [image.name for image in body.images]
         if body.circuit_filename:
             hints.insert(0,body.circuit_filename)
-        hints.extend(re.findall(r'"([^"]+\.plecs)"|([^\s"<>]+\.plecs)',body.message,re.I))
-        hints = [next((v for v in h if v), '') if isinstance(h, tuple) else h for h in hints]
+        hints.extend(next((v for v in pair if v),'') for pair in re.findall(r'"([^"\n]+\.plecs)"|([^\s"<>]+\.plecs)',body.message,re.I))
         if len(body.message)<100:
             hints.append(body.message.strip())
         if body.dataset_id:
             hints.append(get_dataset(body.dataset_id,owner).name)
         if body.saved_result:
             hints.append(body.saved_result.result.get('filename',''))
-        found = await run_in_threadpool(plecs_local.search_models, owner, hints)
-        bind_model_context()
-        return found
+        return hints
     async def invoke(name, arguments=None):
         nonlocal control_cache
         try:
@@ -371,33 +426,45 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                     and job['config']['mapping']==(body.mapping.model_dump() if body.mapping else None)):
                     return evidence({**with_ground_truth(job['result'],body.ground_truth),'result_id':body.result_id})
                 return evidence(await invoke('get_identification_result'))
-            if name in {'connect_plecs','select_plecs_model','get_plecs_models','run_plecs_experiment','search_plecs_models','open_plecs_model'}:
-                local_plecs_access(request)
-            if name == 'search_plecs_models':
-                return await search_current_model()
-            if name == 'connect_plecs':
-                connection = await run_in_threadpool(plecs_local.ensure_running, owner)
-                if connection.get('status')=='ready':
-                    connection['model_search'] = await search_current_model()
-                return connection
-            if name == 'select_plecs_model':
-                path = (arguments or {}).get('path', '')
-                if not path or path not in body.message:
-                    return {'error':'只能选择用户本条消息明确提供的模型路径。请询问用户电路文件完整路径。'}
-                selected = await run_in_threadpool(plecs_local.register, owner, path)
-                bind_model_context()
-                return selected
-            if name in {'get_plecs_models', 'open_plecs_model', 'run_plecs_experiment'} and plecs_local.settings(owner).get('model_context') != model_context:
-                return {'error':'当前数据或电路已改变，请重新搜索或选择模型。'}
-            if name == 'open_plecs_model':
-                return await run_in_threadpool(plecs_diagnostics.open_model, owner, (arguments or {}).get('model'))
-            if name == 'get_plecs_models':
-                return plecs_diagnostics.catalog(owner)
-            if name == 'run_plecs_experiment':
+            if name == 'evaluate_plecs_experiment':
                 if body.images:
-                    return {'error': '图片分析不执行仿真。'}
-                throttle(owner, 'plecs', 4)
-                return await run_in_threadpool(plecs_diagnostics.experiment, arguments, owner, body.result_id)
+                    return {'error':'Image analysis does not authorize numerical execution'}
+                with lock:
+                    if any(job['status'] in {'queued','running'} for job in jobs.values()):
+                        return {'status':'unavailable','error':'等待正在运行的辨识任务完成后再评价仿真对照。'}
+                identifier = (arguments or {}).get('experiment_id','')
+                settings = plecs_bridge.settings(owner) if plecs_bridge.status(owner)['paired'] else plecs_local.settings(owner)
+                simulation_analysis.confirm_binding(owner,identifier,body.result_id,settings.get('analysis_binding'))
+                return await simulation_analysis.evaluate_async(owner,identifier,body.result_id)
+            if name == 'read_plecs_evaluation':
+                return simulation_analysis.saved_evaluation(owner,(arguments or {}).get('experiment_id',''),body.result_id)
+            if name == 'get_plecs_job_result':
+                received = plecs_bridge.result(owner,(arguments or {}).get('job_id',''),model_context)
+                if received['status']=='completed':
+                    source = received['payload']
+                    if source.get('result_id') != body.result_id:
+                        raise ValueError('Simulation belongs to a different identification result')
+                    from .schemas import FitOptions
+                    return simulation_analysis.ingest(owner,received['result'],FitOptions.model_validate(source['fit_options']),
+                        source.get('settings',{}).get('analysis_binding'),await invoke('get_identification_result'))
+                return {k:v for k,v in received.items() if k not in {'payload','result'}}
+            if name in plecs_bridge.TOOLS:
+                if body.images:
+                    return {'error':'图片分析不执行仿真。'}
+                payload = {'tool':name,'arguments':arguments or {},'context':model_context,
+                           'hints':model_hints(),'message':body.message,'result_id':body.result_id,'fit_options':body.options.model_dump()}
+                remote = plecs_bridge.status(owner)['paired']
+                if remote:
+                    settings = plecs_bridge.settings(owner)
+                    payload['settings'] = settings
+                    output = await plecs_bridge.dispatch(owner,payload)
+                else:
+                    local_plecs_access(request)
+                    settings = plecs_local.settings(owner)
+                    output = await run_in_threadpool(plecs_execution.execute,owner,payload)
+                if name == 'run_plecs_experiment':
+                    output = simulation_analysis.ingest(owner,output,body.options,settings.get('analysis_binding'),await invoke('get_identification_result'))
+                return output
             if name == 'run_diagnostic_controls':
                 if control_cache is not None:
                     return control_cache
@@ -477,6 +544,78 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
             return {"error": exc.detail if isinstance(exc, HTTPException) else str(exc)}
         return None
     return await chat.answer(body, invoke)
+
+
+@app.post('/api/agent/tasks')
+async def start_agent_task(body: ChatRequest, request: Request, owner: str = Depends(session)):
+    try:
+        return agent_tasks.launch(owner,body,lambda value:chat_route(value,request,owner))
+    except ValueError as exc:
+        raise HTTPException(409,str(exc))
+
+
+@app.get('/api/agent/tasks/latest')
+def latest_agent_task(owner: str = Depends(session)):
+    return {'task':agent_tasks.latest(owner)}
+
+
+@app.get('/api/agent/tasks/{identifier}')
+def get_agent_task(identifier: str, after: int = 0, owner: str = Depends(session)):
+    try:
+        return agent_tasks.read(owner,identifier,after)
+    except ValueError as exc:
+        raise HTTPException(404,str(exc))
+
+
+@app.get('/api/agent/tasks/{identifier}/events')
+async def agent_events(identifier: str, after: int = 0, owner: str = Depends(session)):
+    import asyncio
+    get_agent_task(identifier,after,owner)
+    async def stream():
+        cursor = after
+        while True:
+            snapshot = agent_tasks.read(owner,identifier,cursor)
+            for item in snapshot['events']:
+                cursor = item['seq']
+                yield json.dumps(item,ensure_ascii=False)+'\n'
+            if snapshot['state'] != 'running' and len(snapshot['events'])<200:
+                yield json.dumps({'kind':'end','data':{'state':snapshot['state'],'result':snapshot['result']}},ensure_ascii=False)+'\n'
+                break
+            yield '{"kind":"heartbeat","data":{}}\n'
+            await asyncio.sleep(.5)
+    return StreamingResponse(stream(),media_type='application/x-ndjson',headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
+
+
+class AgentInstruction(BaseModel):
+    message: str = Field(min_length=1,max_length=4000)
+
+
+@app.post('/api/agent/tasks/{identifier}/steer')
+async def steer_agent(identifier: str, body: AgentInstruction, owner: str = Depends(session)):
+    get_agent_task(identifier,0,owner)
+    try:
+        await run_in_threadpool(harness_runtime.steer,identifier,body.message)
+        agent_tasks.event(identifier,'instruction',{'text':body.message})
+        return {'status':'queued'}
+    except ValueError as exc:
+        raise HTTPException(409,str(exc))
+
+
+@app.post('/api/agent/tasks/{identifier}/cancel')
+async def cancel_agent(identifier: str, owner: str = Depends(session)):
+    get_agent_task(identifier,0,owner)
+    return agent_tasks.cancel(owner,identifier)
+
+
+@app.post('/api/agent/tasks/{identifier}/resume')
+async def resume_agent(identifier: str, request: Request, owner: str = Depends(session)):
+    current = get_agent_task(identifier,0,owner)
+    if current['state'] not in {'interrupted','failed','cancelled'}:
+        raise HTTPException(409,'Only interrupted tasks may be resumed')
+    try:
+        return agent_tasks.launch(owner,None,lambda body:chat_route(body,request,owner),identifier,resume=True)
+    except ValueError as exc:
+        raise HTTPException(409,str(exc))
 
 
 @app.post("/api/jobs/{identifier}/analysis-copy")

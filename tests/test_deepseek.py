@@ -35,7 +35,7 @@ def test_deepseek_tool_roundtrip(monkeypatch, message):
             if len(requests) == 1:
                 message = {"role":"assistant", "content":None, "tool_calls":[
                     {"id":"fit-1", "type":"function", "function":{"name":"start_identification", "arguments":"{}"}}]}
-            elif len(requests) == 2 and requests[0]["tool_choice"] != "auto":
+            elif len(requests) == 2 and any(word in str(requests[0]['messages'][-1]) for word in ('公式','equations')):
                 message = {"role":"assistant", "content":None, "tool_calls":[
                     {"id":"search", "type":"function", "function":{"name":"search_knowledge", "arguments":'{"query":"Buck 模型"}'}}]}
             else:

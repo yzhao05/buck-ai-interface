@@ -312,7 +312,6 @@ window.BuckI18n = (() => {
     "现有 PANN 环境运行失败，请确认该环境可导入 NumPy 和 PyTorch。": "The PANN environment failed. Verify that it can import NumPy and PyTorch.",
     "此后端未安装 PyTorch。请选择积分辨识，或安装 requirements-pann.txt 后重启。": "PyTorch is not installed on this backend. Select integral estimation, or install requirements-pann.txt and restart.",
     "PANN 训练发散，请检查数据或先使用积分辨识。": "PANN training diverged. Check the data or try integral estimation first.",
-    "PANN 计算超过 180 秒，已停止；请选择更短区间或积分辨识。": "PANN exceeded 180 seconds and was stopped. Select a shorter interval or integral estimation.",
     "PANN 环境返回的结果格式异常。": "The PANN environment returned an invalid result format.",
     "PANN 梯度异常，请检查数据、区间或缩短窗口。": "Invalid PANN gradients. Check the data and interval, or shorten the windows.",
     "窗口状态仅从训练数据估计；不使用干净初值、参数真值或留出段选轮次。": "Window states are estimated from training data only; clean initial states, true parameters and held-out data are not used to select iterations.",

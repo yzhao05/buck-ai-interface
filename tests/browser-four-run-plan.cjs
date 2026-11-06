@@ -16,7 +16,8 @@ assert(['complete','failure','cancel'].includes(scenario));
    const body=await response.json();if(body.status==='complete')original=body.result;
   }
  });
- await page.route('**/api/chat',route=>{
+ await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat',route=>{
   chatBody=route.request().postDataJSON();assert.equal(chatBody.message,requestText);
   return route.fulfill({json:{mode:'deepseek',answer:'四组计划已解析。',job_id:null,sources:[],tool_calls:[],
    route:{task:'configuration',label:'辨识配置',mode:'rules',secondary_tasks:[]},

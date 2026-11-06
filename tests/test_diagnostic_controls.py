@@ -95,7 +95,7 @@ def test_mismatched_data_and_missing_states_are_not_replayed(experiment):
 
 def test_api_selected_source_ownership_reference_cache_and_no_training(experiment,monkeypatch):
     data,mapping,baseline,source=experiment
-    monkeypatch.setattr(main,'TOKEN','');__import__('provider_stub').install(monkeypatch)
+    monkeypatch.setattr(main,'TOKEN','');__import__('provider_stub').install(monkeypatch,controls=True)
     owner=str(uuid.uuid4());client=TestClient(main.app,headers={'X-Session-ID':owner})
     raw=(ROOT/'examples/plecs_buck_case16a.csv').read_bytes()
     d=client.post('/api/datasets',files={'file':('source.csv',raw)}).json()
@@ -134,7 +134,8 @@ def test_actual_control_evidence_reaches_model_before_answer(experiment,monkeypa
         async def __aexit__(self,*args):pass
         async def post(self,url,**kwargs):
             payloads.append(kwargs['json'])
-            return httpx.Response(200,request=httpx.Request('POST',url),json={'choices':[{'message':{'content':'已验证的数值效应在前，可能原因待验证。'}}]})
+            message = {'role':'assistant','content':None,'tool_calls':[{'id':'controls','type':'function','function':{'name':'run_diagnostic_controls','arguments':'{}'}}]} if len(payloads)==1 else {'role':'assistant','content':'已验证的数值效应在前，可能原因待验证。'}
+            return httpx.Response(200,request=httpx.Request('POST',url),json={'choices':[{'message':message}]})
     monkeypatch.setattr(chat.httpx,'AsyncClient',Provider)
     async def invoke(name):
         calls.append(name)
@@ -143,7 +144,10 @@ def test_actual_control_evidence_reaches_model_before_answer(experiment,monkeypa
         result_id='r',enable_diagnostic_controls=True),invoke))
     assert calls==['get_identification_result','run_diagnostic_controls']
     context=json.loads(payloads[0]['messages'][1]['content'].split('：',1)[1])
-    assert context['control_checks']==report and response['control_checks']==report
+    assert context['control_checks'] is None  # No fixed pre-run outside Harness.
+    tool_report=json.loads(payloads[-1]['messages'][-1]['content'])
+    tool_report.pop('evidence_id')
+    assert tool_report==report and response['control_checks']==report
     assert '物理原因已证实' in payloads[0]['messages'][0]['content']
 
 
@@ -166,7 +170,7 @@ def test_controller_controls_reproduce_closed_loop_without_heldout_drive():
     ('参数初值交换的原理是什么',False),
     ("Don't run controls, explain the current result",False)])
 def test_control_commands_never_change_live_settings_or_retrain(experiment,monkeypatch,message,execute):
-    __import__('provider_stub').install(monkeypatch)
+    __import__('provider_stub').install(monkeypatch,controls=execute)
     _,_,_,source=experiment;calls=[]
     async def invoke(name):
         calls.append(name)

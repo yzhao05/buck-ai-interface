@@ -19,7 +19,8 @@ const source=[
  page.on('pageerror',e=>errors.push(e.message));
  page.on('request',r=>requests.push(r.url()));
  const chats=[];
- await page.route('**/api/chat',async route=>{
+ await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat',async route=>{
   chats.push(route.request().postDataJSON());
   await route.fulfill({json:{answer:source,mode:'deepseek',tool_calls:[],sources:[]}});
  });

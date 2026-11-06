@@ -9,7 +9,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();await ready();};
  const answer=()=>page.locator('.message.assistant').last().locator('.message-content').innerText();
- await page.route('**/api/chat',async route=>{
+ await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat',async route=>{
    const body=route.request().postDataJSON();chats.push(body);
    if(body.message==='请解释 Buck 原理')return route.continue();
    await route.fulfill({json:{mode:'deepseek',answer:'Validated, not executed yet',sources:[],tool_calls:[],job_id:null,

@@ -22,7 +22,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   // Unsubmitted invalid fields must not clear results or block read-only analysis/export.
   await page.locator('#vin').fill('');assert.deepEqual(await snapshot(),original);
   assert(!(await page.locator('#identify').isDisabled()));
-  const chatWait=page.waitForRequest(r=>r.url().endsWith('/api/chat'));
+  const chatWait=page.waitForRequest(r=>r.url().endsWith('/api/agent/tasks'));
   await page.locator('#ask-error').click();await page.locator('#analyze-here').click();const chat=(await chatWait).postDataJSON();await ready();
   assert.equal(chat.result_id,original.id);assert.deepEqual(chat.options,original.result.options);
   assert.deepEqual(chat.mapping,original.result.mapping);

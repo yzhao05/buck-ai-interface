@@ -276,7 +276,9 @@ def test_current_lc_analysis_excludes_old_lcr_on_repeated_requests(context, monk
                 msg = {"role": "assistant", "content": None, "tool_calls": [{"id": "current", "type": "function",
                        "function": {"name": "get_identification_result", "arguments": "{}"}}]}
             else:
-                assert json.loads(messages[-1]["content"]) == result
+                returned = json.loads(messages[-1]["content"])
+                assert returned.pop('evidence_id')
+                assert returned == result
                 msg = {"role": "assistant", "content": "LC，R 固定为 6 Ω，C=493.6151 μF。"}
             return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"message": msg}]})
     monkeypatch.setattr(chat.httpx, "AsyncClient", Provider)
