@@ -7,7 +7,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  page.on('request',r=>{if(r.url().endsWith('/api/identify'))fits++;});
  const ready=()=>page.waitForFunction(()=>state.connected && activeConversation && !historyLocked() && !archiveRunning);
  try{
-  await page.goto('http://127.0.0.1:8001');await ready();
+  await page.goto(process.env.BUCK_TEST_URL || 'http://127.0.0.1:8001');await ready();
   const interleaved=await page.evaluate(()=>findHistoricalAnalyses({messages:[
    {id:'ordinary-q',role:'user',content:'普通问题'},
    {id:'analysis-q',role:'user',content:'请分析当前辨识结果的误差，并给出有依据的修改计划。'},
@@ -34,7 +34,15 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.equal(await page.locator('#experiment-count-number').textContent(),'0');
   const before=Number(await page.locator('#analysis-count').textContent());assert(before>20);
   await require('./harness-browser-fixture.cjs').install(page);
-  await page.route('**/api/chat',route=>{sent=route.request().postDataJSON();return route.continue();});
+  // Script the model response; backend search/read semantics have separate tests.
+  await page.route('**/api/chat',route=>{
+   sent=route.request().postDataJSON();
+   const long=sent.message.includes('散热'), corpus=sent.conversation_messages;
+   const selected=long?[ids.longA]:[corpus.find(m=>m.id===ids.a).request_message_id,ids.a];
+   const sources=selected.map(id=>({message_id:id,ordinal:corpus.findIndex(m=>m.id===id)+1,partial:long,role:corpus.find(m=>m.id===id).role}));
+   return route.fulfill({json:{mode:'deepseek',answer:long?'散热数据：2.73 K/W':'部署选择 main',
+    conversation_retrieval:{available_count:corpus.length,read_count:selected.length,searches:[{query:long?'散热':'GitHub 部署'}],sources}}});
+  });
   await page.locator('#analysis-history summary').click();await page.locator('#compare-analyses').click();
   assert.match(await page.locator('#chat-input').inputValue(),/本会话/);
   await page.locator('#chat-input').fill('保留正在输入的问题');
@@ -57,7 +65,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.match(await page.locator('.message.assistant').last().innerText(),/2\.73 K\/W/);
   await page.locator('.conversation-retrieval .retrieval-toggle').last().click();
   assert.match(await page.locator('.message.assistant').last().innerText(),/片段/);
-  assert.equal((await page.evaluate(()=>findHistoricalAnalyses(readConversation(activeConversation.id)))).length,4);
+  assert.equal((await page.evaluate(()=>findHistoricalAnalyses(readConversation(activeConversation.id)))).length,0);
   await page.locator('#language-toggle').click();
   assert(!/[\u3400-\u9fff]/.test(await page.locator('#analysis-history').innerText()));
   assert(!/[\u3400-\u9fff]/.test(await page.locator('.conversation-retrieval').last().innerText()));

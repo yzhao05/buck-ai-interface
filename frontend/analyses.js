@@ -1,10 +1,5 @@
-/* Searchable conversation material. Legacy prompt matching only labels old stored records; it never routes requests. */
+/* Searchable conversation material. Analysis types come only from stored metadata. */
 "use strict";
-const resultAnalysisPrompts=new Set([
-  "请分析当前辨识结果的误差，并给出有依据的修改计划。",
-  "Analyze errors in the current identification results and propose an evidence-based modification plan.",
-  "让助手分析结果"
-]);
 function analysisDescriptor() {
   return {kind:"identification_analysis",filename:state.savedRun?.dataset.filename || state.dataset?.filename || null,method:state.result?.method || state.result?.options?.method || null,
     pwm_source:state.result?.options?.pwm_source || null,result_id:state.resultId || null};
@@ -26,7 +21,7 @@ function findHistoricalAnalyses(record) {
     const paired=requestId ? requests.get(requestId) : request;
     if (!paired) continue;
     const explicit=marker?.request_id===paired.id;
-    const recognized=paired.response?.analysis_request || resultAnalysisPrompts.has(paired.content.trim());
+    const recognized=paired.response?.analysis_request;
     if ((explicit || recognized) && !seen.has(paired.id) && message.mode!=="请求未完成" && message.content.trim()) {
       const meta=explicit ? marker : paired.response?.analysis_request;
       seen.add(paired.id);

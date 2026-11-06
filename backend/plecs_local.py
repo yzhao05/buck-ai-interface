@@ -68,7 +68,6 @@ def search_models(owner, hints, offset=0, limit=30):
         return Path(value.replace('\\','/')).stem.casefold().strip()
     explicit_paths = {str(Path(h).resolve()).casefold() for h in hints if isinstance(h, str) and Path(h).is_absolute() and Path(h).suffix.lower() == '.plecs'}
     names = {stem(s) for s in hints if isinstance(s,str) and s.strip()}
-    names -= {'circuit','image','截图','电路图'}
     matches, candidates = [], []
     candidate_count = 0
     count = 0

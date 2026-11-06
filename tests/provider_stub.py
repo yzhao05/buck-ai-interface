@@ -26,6 +26,3 @@ def install(monkeypatch, *, execute=False, controls=False):
             return httpx.Response(200, request=httpx.Request('POST',url), json={'choices':[{'message':msg}]})
     monkeypatch.setattr(chat.httpx, 'AsyncClient', Provider)
     return captured
-
-
-# Deterministic classifier responses belong only to mocked-provider tests.

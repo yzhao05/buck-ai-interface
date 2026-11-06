@@ -13,3 +13,10 @@ jobs:
           cache: pip
       - run: pip install -r requirements-lock.txt -r requirements-dev.txt
       - run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check conversation metadata and frontend syntax
+        run: |
+          node tests/check-search-metadata.cjs
+          for file in frontend/*.js tests/*.cjs; do node --check "$file"; done

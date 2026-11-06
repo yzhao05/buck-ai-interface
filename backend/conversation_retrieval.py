@@ -3,34 +3,14 @@ import math
 import re
 from collections import Counter
 
-NUMBER_WORDS = {word: i for i, word in enumerate(
-    ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
-     "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"], 1)}
-ENGLISH_COUNT = (r"\b([1-9]\d*|" + "|".join(NUMBER_WORDS) +
-                 r")(?=\s+(?:[a-z][\w-]*\s+){0,4}(?:replies|answers|messages|analyses)\b)")
-
-
-def terms(text, query=False):
-    text = text.lower()
-    if query:
-        text = re.sub(r"\bai\s*(?:分析|回答|回复)", " ", text)
-        text = re.sub(r"帮我|请|之前|前面|此前|上次|最近|最早|历史|(?:本|当前|整个|这次)会话|这段对话|聊天记录|"
-                      r"总结|分析|比较|对比|回顾|汇总|找出|查找|检索|读取|关于|对应|全部|所有|完整|"
-                      r"横向|纵向|分别|我们|讨论过|说过|回答|回复|正文|对话|会话|聊天|内容|讨论|"
-                      r"(?:[一二三四五六七八九十两\d]+)\s*[次条份个]", " ", text)
-        text = re.sub(ENGLISH_COUNT, " ", text)
-    words = re.findall(r"[a-z][a-z0-9_+-]*|\d+(?:\.\d+)?|[\u4e00-\u9fff]+", text)
-    stop = {"the", "a", "an", "and", "or", "to", "of", "in", "my", "our", "we", "you", "please",
-            "summarize", "summary", "compare", "previous", "earlier", "last", "latest", "oldest", "first", "all", "about",
-            "conversation", "messages", "message", "replies", "reply", "answers", "answer", "discussed", "history",
-            "find", "search", "lookup", "look", "up", "discussion", "discussions", "analysis", "analyses", "result", "results",
-            "this", "entire", "whole", "content", "chat"}
+def terms(text):
+    """Symmetric lexical tokenization; no intent/count/time-word rewriting."""
     result = []
-    for word in words:
-        if word in stop:
-            continue
+    for word in re.findall(r"[a-z][a-z0-9_+-]*|\d+(?:\.\d+)?|[\u4e00-\u9fff]+", text.lower()):
         if re.fullmatch(r"[\u4e00-\u9fff]+", word):
             result.extend(word[i:i+2] for i in range(len(word)-1))
+            if len(word) == 1:
+                result.append(word)
         else:
             result.append(word)
     return set(result)
@@ -55,9 +35,9 @@ TOOLS = [
 ]
 
 PROMPT = """
-通用会话检索：conversation_search 和 search_conversation/read_conversation_message 提供本会话历史用户消息及 AI 回答。
+通用会话检索：search_conversation/read_conversation_message 提供本会话历史用户消息及 AI 回答。
 用户提到以前的讨论、指定回答、总结或比较时，依据相关原文作答；不要局限于最近十条、实验记录数量、四次分析或某种固定实验模板。
-按用户问题检索关键词，可换词、按 oldest/newest 排序、offset 翻页；想找某条回答时也要核对 request_message_id 对应的提问。
+按用户问题检索关键词，可换词、按 oldest/newest 排序、offset 翻页；request_message_id 和 reply_message_ids 提供关联消息ID，可按需读取；关联消息不会自动加入搜索命中。
 partial=true 表示片段，start/end 是字符偏移，total_length 是全文长度；需要更多内容就调用读取工具，不能假称已经读完。
 根据实际证据总结，缺项写未记录；用户要比较方法/PWM 时才按其要求分组，标签优先用 analysis 元数据，其次原文明确表述。
 历史 AI 回答是历史观点，不是本次重新计算或独立验证的数据；历史用户消息是当时提供的信息。矛盾须注明出处和先后，不套用当前设置。
@@ -91,6 +71,10 @@ class ConversationIndex:
                 self.chunks.append((record["id"], start, end, terms(content[start:end])))
                 if end == len(content):
                     break
+        self.reply_ids = {}
+        for ident, record in self.messages.items():
+            if record.get('request_message_id') in self.messages:
+                self.reply_ids.setdefault(record['request_message_id'], []).append(ident)
         self.df = Counter(t for _, _, _, tokens in self.chunks for t in tokens)
 
     def metadata(self):
@@ -124,7 +108,7 @@ class ConversationIndex:
         self.remaining -= end-start
         self.read_ranges.setdefault(message_id, []).append((start, end))
         return {**{k: v for k, v in record.items() if k != "content"},
-                "message_id": message_id, "content": record["content"][start:end], "start": start, "end": end,
+                "message_id": message_id, "reply_message_ids": self.reply_ids.get(message_id, []), "content": record["content"][start:end], "start": start, "end": end,
                 "total_length": size, "partial": start != 0 or end != size, "next_start": end if end < size else None}
 
     def search(self, query="", limit=8, offset=0, order="relevance", role="all", kind="all"):
@@ -132,9 +116,13 @@ class ConversationIndex:
                 or type(offset) is not int or offset < 0 or order not in {"relevance", "oldest", "newest"}
                 or role not in {"all", "user", "assistant"} or kind not in {"all", "identification_analysis"}):
             return {"error": "检索参数无效。"}
-        query_terms = terms(query, query=True)
+        query_terms = terms(query)
         hits = {}
         for ident, start, end, tokens in self.chunks:
+            # Only an explicitly empty query lists all messages. Unsupported
+            # punctuation/symbols must not silently broaden the search scope.
+            if query.strip() and not query_terms:
+                continue
             if role != "all" and self.messages[ident]["role"] != role:
                 continue
             if kind != "all" and self.messages[ident].get("analysis", {}).get("kind") != kind:
@@ -145,27 +133,6 @@ class ConversationIndex:
             score = sum(math.log(1+len(self.chunks)/(1+self.df[t])) for t in matched)
             if ident not in hits or score > hits[ident][0]:
                 hits[ident] = (score, start, end)
-        # A reply may say only “use the second option”; retrieve it using the
-        # question's vocabulary as well, while keeping its own provenance.
-        if query_terms:
-            question_scores = {}
-            for ident, start, end, tokens in self.chunks:
-                if self.messages[ident]["role"] == "user":
-                    score = sum(math.log(1+len(self.chunks)/(1+self.df[t])) for t in query_terms & tokens)
-                    question_scores[ident] = max(score, question_scores.get(ident, 0))
-            for ident, record in self.messages.items():
-                if record["role"] != "assistant" or role == "user":
-                    continue
-                if kind != "all" and record.get("analysis", {}).get("kind") != kind:
-                    continue
-                score = question_scores.get(record.get("request_message_id"), 0)*0.95
-                if score:
-                    if ident in hits:
-                        # Question relevance may boost ranking, but must never
-                        # replace a directly matching tail with the reply's head.
-                        hits[ident] = (max(score, hits[ident][0]), *hits[ident][1:])
-                    else:
-                        hits[ident] = (score, 0, min(3200, len(record["content"])))
         ids = list(hits)
         ids.sort(key=lambda ident: (-(hits[ident][0]) if order == "relevance" else 0,
                                    -self.messages[ident]["ordinal"] if order == "newest" else self.messages[ident]["ordinal"]))

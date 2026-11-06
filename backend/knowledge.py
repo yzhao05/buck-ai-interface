@@ -4,6 +4,7 @@ import re
 from collections import Counter
 
 from .knowledge_base.buck import FORMULA_DOCUMENTS
+from .knowledge_base.ui import UI_DOCUMENTS
 
 DOCUMENTS = [
     {"id": "offline-pwm-denoising", "title": "离线抗噪 PWM 重建与质量检查（本项目）", "url": None,
@@ -51,18 +52,11 @@ DOCUMENTS = [
 
 
 DOCUMENTS.extend(FORMULA_DOCUMENTS)
-
-_TOKEN_ALIASES = {"identify": "identification", "parameters": "parameter",
-                  "formulas": "formula", "equations": "equation",
-                  "poles": "pole", "zeros": "zero"}
-_STOP_WORDS = {"the", "and", "or", "is", "are", "of", "to", "in", "for",
-               "what", "how", "please", "explain", "only"}
-
+DOCUMENTS.extend(UI_DOCUMENTS)
 
 def _tokens(text):
     text = text.lower()
-    result = [_TOKEN_ALIASES.get(token, token) for token in re.findall(r"[a-z][a-z0-9_-]*", text)
-              if token not in _STOP_WORDS]
+    result = re.findall(r"[a-z][a-z0-9_-]*", text)
     for run in re.findall(r"[\u4e00-\u9fff]+", text):
         result.extend(run[i:i + 2] for i in range(len(run) - 1))
     return result
@@ -75,7 +69,7 @@ _DF = Counter(token for counts in _COUNTS for token in counts)
 
 
 def retrieve(query, count=4):
-    """BM25 over bilingual tokens plus exact topic matches; no model/API dependency."""
+    """BM25 over bilingual tokens; no query rewriting or hand-set topic boosts."""
     q = query.lower()[:1000]
     terms = set(_tokens(q))
     ranked = []
@@ -86,10 +80,6 @@ def retrieve(query, count=4):
             if tf:
                 idf = math.log(1 + (len(DOCUMENTS) - _DF[token] + .5) / (_DF[token] + .5))
                 score += idf * tf * 2.2 / (tf + 1.2 * (.25 + .75 * length / _AVERAGE_LENGTH))
-        for tag in doc["tags"].lower().split():
-            hit = tag in q if re.search(r"[\u4e00-\u9fff]", tag) else bool(re.search(r"(?<![a-z0-9])" + re.escape(tag) + r"(?![a-z0-9])", q))
-            if hit:
-                score += 3.5
         if score > 0:
             ranked.append((score, doc))
     return [dict(doc) for _, doc in sorted(ranked, key=lambda item: item[0], reverse=True)[:max(0, min(count, 8))]]

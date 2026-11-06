@@ -25,9 +25,6 @@ def provider(monkeypatch, arguments, *, fail=False, calls=None):
         async def __aenter__(self): return self
         async def __aexit__(self, *args): pass
         async def post(self, url, **kwargs):
-            if kwargs['json']['tools'][0]['function']['name'] == 'route_task':
-                return httpx.Response(200, request=httpx.Request('POST',url), json={'choices':[{'message':{'tool_calls':[
-                    {'function':{'name':'route_task','arguments':json.dumps({'task':'configuration','secondary_tasks':[]})}}]}}]})
             captured.append(kwargs['json'])
             if kwargs['json']['messages'][-1]['role']=='tool':
                 return httpx.Response(200,request=httpx.Request('POST',url),json={'choices':[{'message':{'role':'assistant','content':'Plan proposed.'}}]})

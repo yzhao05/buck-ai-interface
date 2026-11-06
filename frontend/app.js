@@ -750,8 +750,6 @@ function decorateResponse(article, response) {
       const task = document.createElement("div"); task.className = "message-tools message-task";
       task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
       if(response.ui_action?.parser==='deepseek')task.append(document.createTextNode(" · "),window.BuckI18n.node("DeepSeek 计划解析"));
-      else if (response.route.mode !== "agent") task.append(document.createTextNode(" · "), window.BuckI18n.node(
-        "上下文路由"));
       article.querySelector(".message-label").after(task);
     }
     if (response.tool_calls?.length) {

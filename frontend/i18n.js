@@ -358,7 +358,7 @@ window.BuckI18n = (() => {
     "未选择 PWM 列：可分析波形；固定 R 的 L/C 辨识可选择已知控制器重建，需确认电路配置。": "No PWM column selected: waveforms can be analyzed. For L/C identification with fixed R, select known-controller reconstruction and confirm the circuit configuration.",
     "任务：": "Task: ", "使用指导": "Usage guidance", "公式知识": "Circuit knowledge",
     "波形分析": "Waveform analysis", "误差诊断": "Error diagnosis", "硬件寿命": "Hardware & lifetime",
-    "一般问答": "General assistance", "上下文路由": "Context routing", "回答模式": "Answer mode", "自动模式": "Auto mode", "快速模式": "Fast mode", "思考模式": "Thinking mode",
+    "一般问答": "General assistance", "回答模式": "Answer mode", "自动模式": "Auto mode", "快速模式": "Fast mode", "思考模式": "Thinking mode",
     "未执行": "Not executed",
     "切换为英文": "Switch to Chinese", "测量": "Measured", "预测": "Predicted",
     "Buck Lab · AI 实验工作台": "Buck Lab · AI Workspace",

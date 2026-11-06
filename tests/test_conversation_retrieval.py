@@ -25,12 +25,14 @@ def index(records=None):
     return ConversationIndex([ConversationMessage.model_validate(m) for m in (records if records is not None else corpus())])
 
 
-def test_old_user_question_retrieves_answer_without_repeated_keywords():
-    found = index().search("GitHub 部署")
+def test_search_only_matches_original_text_and_exposes_reply_ids():
+    store = index()
+    found = store.search("GitHub 部署")
     ids = {m["message_id"] for m in found["excerpts"]}
-    assert ids == {"deploy-question", "deploy-answer"}
+    assert ids == {"deploy-question"}
     assert found["available_count"] == 23
-    assert next(m for m in found["excerpts"] if m["message_id"] == "deploy-answer")["request_message_id"] == "deploy-question"
+    assert found['excerpts'][0]['reply_message_ids'] == ['deploy-answer']
+    assert store.read('deploy-answer')['request_message_id'] == 'deploy-question'
 
 
 def test_long_tail_and_exact_offsets_with_continuation():
@@ -154,9 +156,13 @@ def test_provider_receives_selected_material_can_refine_and_read(client, monkeyp
                 function = {"name": "search_conversation", "arguments": json.dumps({"query": "GitHub 部署"})}
             elif len(calls) == 2:
                 result = json.loads(body['messages'][-1]['content'])
-                assert result['matched_count'] == 2
-                function = {"name":"search_conversation","arguments":json.dumps({"query":"散热"})}
+                assert result['matched_count'] == 1
+                function = {"name":"read_conversation_message","arguments":json.dumps({"message_id":result['excerpts'][0]['reply_message_ids'][0]})}
             elif len(calls) == 3:
+                result = json.loads(body['messages'][-1]['content'])
+                assert result['message_id'] == 'deploy-answer'
+                function = {"name":"search_conversation","arguments":json.dumps({"query":"散热"})}
+            elif len(calls) == 4:
                 result = json.loads(body["messages"][-1]["content"])
                 assert "2.73 K/W" in result["excerpts"][0]["content"]
                 function = {"name": "read_conversation_message", "arguments": json.dumps({"message_id": "long", "start": 8000})}
@@ -172,7 +178,7 @@ def test_provider_receives_selected_material_can_refine_and_read(client, monkeyp
         "history": [{"role": "assistant", "content": "recent-only "*600} for _ in range(10)]})
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["mode"] == "deepseek" and len(calls) == 4
+    assert data["mode"] == "deepseek" and len(calls) == 5
     assert data["conversation_retrieval"]["read_count"] == 3
     assert len(data["conversation_retrieval"]["searches"]) == 2
 

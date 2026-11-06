@@ -13,7 +13,9 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   const body=(await request).postDataJSON();analysisResponse=await (await response).json();await ready();return body;
  };
  try{
-  await page.goto('http://127.0.0.1:8001');await ready();
+  await page.goto(process.env.BUCK_TEST_URL || 'http://127.0.0.1:8001');await ready();
+  await require('./harness-browser-fixture.cjs').install(page);
+  await page.route('**/api/chat', route=>route.fulfill({json:{mode:'deepseek',answer:'R = 6 Ω（固定已知）',route:{task:'general',label:'自主 Agent',mode:'agent'},sources:[],tool_calls:[]}}));
   await page.locator('#load-demo').click();await page.waitForFunction(()=>state.mapping&&!historyLocked());
   await page.locator('#enter-identification').click();
   await page.locator('#fit-method').selectOption('weighted_integral');
@@ -36,35 +38,30 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    assert.equal(body.result_id,current.id);assert.equal(body.options.mode,'LC');assert.equal(body.options.resistance_ohm,6);
    assert.deepEqual(body.options,current.result.options);assert.deepEqual(body.ground_truth,{result_id:current.id,...current.truth.ground_truth});
    assert.deepEqual(body.history,[]);assert.deepEqual(body.conversation_messages,[]);
-   // Complete summaries reach the backend for grouping; only the current
-   // configuration's aggregate may enter the current-result model context.
-   assert.equal(body.experiments.length,2);
-   assert.equal(analysisResponse.repeatability.groups.length,1);
-   assert.equal(analysisResponse.repeatability.groups[0].mode,'LC');
-   assert.deepEqual(analysisResponse.repeatability.groups[0].representative_ids,[current.id]);
+   // Explicit result analysis sends only the selected result context.
+   assert.deepEqual(body.experiments,[]);
    assert.equal(body.identification_enabled,false);
    assert.match(await page.locator('.message.assistant').last().innerText(),/R = 6 Ω（固定已知）/);
   }
   assert(await page.evaluate(()=>activeConversation.messages.some(m=>m.content.includes('OLD_LCR_RESULT'))),'Old answers remain saved');
   assert(await page.evaluate(()=>activeConversation.experiments.some(r=>r.id===state.resultId)));
-  // A reference to the preceding conclusion is a result follow-up, not a search
-  // that drops the current result ID. Both Chinese and English stay anchored.
+  // Ordinary prose does not change scope or remove searchable history.
   for(const question of ['为什么？','请复查刚才的结论','Any other possible causes?']){
    const req=page.waitForRequest(r=>r.url().endsWith('/api/agent/tasks'));
    const response=require('./harness-browser-fixture.cjs').waitForResponse(page);
    await page.locator('#chat-input').fill(question);await page.locator('#send-chat').click();
    const body=(await req).postDataJSON();const answer=await (await response).json();await ready();
    assert.equal(body.current_result_analysis,false);assert.equal(body.result_id,current.id);
-   assert.equal(body.conversation_retrieval_requested,false);assert.equal(body.options.mode,'LC');
+   assert.equal(body.conversation_retrieval_requested,undefined);assert.equal(body.options.mode,'LC');
    assert(body.conversation_messages.some(m=>m.analysis?.result_id===current.id));
-   assert.equal(answer.route.task,'diagnosis');
+   assert.equal(answer.route.task,'general');
   }
   // General comparison still receives prior experiments and searchable messages.
   const pastRequest=page.waitForRequest(r=>r.url().endsWith('/api/agent/tasks'));
   await page.locator('#chat-input').fill('为什么上次的 LCR 结果不同？');await page.locator('#send-chat').click();
   const past=(await pastRequest).postDataJSON();await ready();
-  assert.equal(past.result_id,null,'An explicit earlier-run question must not be bound to the current LC result');
-  assert.equal(past.conversation_retrieval_requested,true);
+  assert.equal(past.result_id,current.id,'Prose does not remove displayed result context');
+  assert.equal(past.conversation_retrieval_requested,undefined);
   assert(past.conversation_messages.some(m=>m.content.includes('OLD_LCR_RESULT')));
   const compareRequest=page.waitForRequest(r=>r.url().endsWith('/api/agent/tasks'));
   await page.locator('#chat-input').fill('比较本会话的两次实验');await page.locator('#send-chat').click();

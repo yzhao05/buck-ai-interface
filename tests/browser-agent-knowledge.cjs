@@ -26,6 +26,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
       ? {chat_mode:'unavailable',archive_enabled:false,pann_available:false} : response}));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.waitForFunction(() => state.connected && activeConversation && !historyLocked());
+    await require('./harness-browser-fixture.cjs').install(page);
     async function ask() {
       await page.locator('#chat-input').fill('解释 Buck 公式');
       await page.locator('#send-chat').click();
@@ -54,6 +55,8 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     assert.equal(await page.locator("#reasoning-mode").inputValue(),"fast");
     assert.match(await page.locator('.message.assistant').last().innerText(), /Buck 模型/);
     assert.equal(await page.evaluate(() => activeConversation.messages.at(-1).mode), 'DeepSeek');
+    await page.locator('#language-toggle').click();
+    assert.deepEqual(await page.locator('#reasoning-mode option').allTextContents(), ['Auto mode','Fast mode','Thinking mode']);
     assert.deepEqual(errors, []);
     console.log('PASS: English missing-key/failure dialogs, retry, query trace, cited source, no page errors');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
