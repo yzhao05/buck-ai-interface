@@ -9,6 +9,14 @@ class HarnessTurnError(RuntimeError):
         super().__init__('Harness turn did not complete')
 
 
+class AgentCapacityError(RuntimeError):
+    pass
+
+
+class AgentMemoryError(RuntimeError):
+    pass
+
+
 class CitationValidationError(ValueError):
     pass
 
@@ -17,6 +25,12 @@ def provider_failure(exc=None, *, missing=False, **metadata):
     if missing:
         code = "missing_api_key"
         message = "AI service is not configured. Please set DEEPSEEK_API_KEY on the backend and try again."
+    elif isinstance(exc, AgentMemoryError):
+        code = 'agent_memory_pressure'
+        message = 'The backend has too little memory available for this analysis. The task can be resumed when memory is available.'
+    elif isinstance(exc, AgentCapacityError):
+        code = 'agent_capacity_busy'
+        message = 'The backend Agent capacity is busy. Wait for the active task to finish and retry.'
     elif isinstance(exc, HarnessTurnError):
         metadata['finish_reason'] = exc.reason
         code = 'output_token_limit' if exc.reason == 'max-tokens' else 'harness_incomplete'

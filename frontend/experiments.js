@@ -20,8 +20,29 @@ function experimentSnapshot(result) {
   // Keep numerical evidence and settings; raw curves/epoch traces remain in reports.
   return JSON.parse(JSON.stringify(result,(key,value)=>["chart","epoch_history","history"].includes(key) ? undefined : value));
 }
+function displayedExperiment() {
+  if(!state.resultId || !state.result?.parameters)return null;
+  const saved=state.savedRun?.id===state.resultId?state.savedRun:
+    readConversation(activeConversation.id)?.experiments?.find(run=>run.id===state.resultId);
+  const result=experimentSnapshot(state.result), comparison=parameterComparison(), now=Date.now();
+  // Never borrow metadata from another result or the editable input dataset.
+  return {id:state.resultId,created:saved?.created??now,updated:saved?.updated??now,
+    dataset:{filename:result.filename||saved?.dataset.filename||'',sha256:result.file_sha256||saved?.dataset.sha256||''},
+    result,ground_truth:comparison?{result_id:state.resultId,...comparison.ground_truth}:null};
+}
+function resultLibraryRuns(){
+  return mergeExperiments(activeConversation?.experiments,conversationCache.get(activeConversation?.id)?.experiments)
+    .sort((a,b)=>b.created-a.created || b.id.localeCompare(a.id));
+}
+function chatResultLibrary(){
+  const selected=displayedExperiment();
+  return resultLibraryRuns().map(run=>{
+    const snapshot=selected?.id===run.id?selected:{...run,result:experimentSnapshot(run.result)};
+    return {...snapshot,display_name:experimentReportName(run),display_time:experimentDisplayTime(run)};
+  });
+}
 function chatExperiments() {
-  // Explicit allowlist: never attach the saved result object or training traces.
+  // Small summary channel; detailed snapshots travel separately in result_library.
   return (readConversation(activeConversation.id)?.experiments || []).map(run=>({
     id:run.id,dataset:{filename:run.dataset.filename,sha256:run.dataset.sha256},
     method:run.result.method || run.result.options?.method || null,
@@ -82,12 +103,15 @@ function renderExperiments() {
 function experimentReportName(run) {
   return reportFilename({...run.result,filename:run.result.filename || run.dataset.filename},new Date(run.created));
 }
+function experimentDisplayTime(run){
+  return new Date(run.created).toLocaleString(window.BuckI18n.language==="en"?"en-GB":"zh-CN");
+}
 function closeResultLibrary() {
   $("result-library-menu").hidden=true;$("toggle-result-library").setAttribute("aria-expanded","false");
   $("toggle-result-library").disabled=historyLocked() || !activeConversation;
 }
 function renderResultLibrary() {
-  const runs=mergeExperiments(activeConversation?.experiments,conversationCache.get(activeConversation?.id)?.experiments).sort((a,b)=>b.created-a.created || b.id.localeCompare(a.id));
+  const runs=resultLibraryRuns();
   const list=$("result-library-list");list.replaceChildren();
   ui($("result-library-status"),runs.length ? "按完成时间从新到旧排列" : "本对话暂无已完成的辨识记录。");
   const selected=runs.find(run=>run.id===state.resultId);
@@ -98,7 +122,7 @@ function renderResultLibrary() {
     button.dataset.resultId=run.id;button.setAttribute("aria-current",String(run.id===state.resultId));button.disabled=historyLocked();
     const name=document.createElement("strong");name.textContent=experimentReportName(run);
     const detail=document.createElement("small"),opts=run.result.options || {};
-    detail.textContent=`${new Date(run.created).toLocaleString(window.BuckI18n.language==="en"?"en-GB":"zh-CN")} · ${opts.mode || "—"} · R ${fmt(run.result.parameters.R_ohm)} Ω (${tr(run.result.R_estimated?"估计":"固定已知")}) · ${run.id.slice(0,8)}`;
+    detail.textContent=`${experimentDisplayTime(run)} · ${opts.mode || "—"} · R ${fmt(run.result.parameters.R_ohm)} Ω (${tr(run.result.R_estimated?"估计":"固定已知")}) · ${run.id.slice(0,8)}`;
     button.append(name,detail);button.onclick=()=>void selectExperiment(run.id);list.append(button);
   }
 }

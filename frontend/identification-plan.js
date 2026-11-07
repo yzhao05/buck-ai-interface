@@ -8,12 +8,13 @@ function validFourRuns(plan){
 }
 function currentPlanParser(plan){return plan?.parser==='deepseek' && (plan.version===2 || (plan.version===3 && validFourRuns(plan)));}
 function planRuns(plan){
-  return plan.version===3 ? plan.runs : plan.methods.map(method=>({method,pwm_source:plan.changes?.pwm_source || plan.pwmSource}));
+  const source=plan.changes?.pwm_source;
+  return plan.version===3 ? plan.runs : plan.methods.map(method=>({method,pwm_source:source&&source!=='auto'?source:plan.pwmSource}));
 }
 function planRunLabel(run){return `${tr(run.pwm_source==='controller'?'重建 PWM':'实测 PWM')} · ${run.method==='pann'?'PANN':tr('抗噪加权积分')}`;}
 function identificationPlanSource(plan){
   if(plan.version===3)return tr("PWM 来源：实际 PWM 与控制器重建，共四组辨识");
-  const source=plan.changes.pwm_source || plan.pwmSource;
+  const source=planRuns(plan)[0]?.pwm_source;
   if(!source && !currentPlanParser(plan))return tr("PWM 来源：请查看已保存的实验结果");
   return tr(source==='measured' ? "PWM 来源：CSV 实际开关状态（已知 PWM）"
     : source==='controller' ? "PWM 来源：已知控制器重建" : "PWM 来源：沿用当前设置");
@@ -75,8 +76,13 @@ async function acceptIdentificationPlan(action,context){
   if(!Array.isArray(action.methods) || action.methods.length!==2 || new Set(action.methods).size!==2 || action.methods.some(m=>!["pann","weighted_integral"].includes(m))
       || !(action.filename===null || (typeof action.filename==='string' && action.filename.length<=255 && /\.csv$/i.test(action.filename) && !/[\\/]/.test(action.filename))))throw new Error("配置操作格式无效。");
   const c=action.changes;
+  if(!validConfigurationChanges(c) || !validConfigurationExtras(action))throw new Error("配置操作格式无效。");
+  const selectionQuestion=executionSelectionQuestion(action.execution_selection,action.methods,
+    action.version===3?['measured','controller']:[c.pwm_source==='auto'||!c.pwm_source?pwmSource():c.pwm_source],
+    {allowAuto:action.version!==3&&(c.pwm_source||$('pwm-source').value)==='auto'});
+  if(selectionQuestion)return selectionQuestion;
   if(action.assets?.result_id||Object.keys(action.analysis||{}).length)throw new Error('请在辨识完成后单独设置真值、诊断参考或选择历史结果。');
-  if(!validConfigurationChanges(c) || !validConfigurationExtras(action) || ('pwm_source' in c && !["auto","measured","controller"].includes(c.pwm_source))
+  if(('pwm_source' in c && !["auto","measured","controller"].includes(c.pwm_source))
       || (c.mode && !["LC","LCR"].includes(c.mode)) || (c.pwm_source==='controller' && c.mode!=='LC')
       || ('resistance_ohm' in c && !(typeof c.resistance_ohm==='number' && Number.isFinite(c.resistance_ohm) && c.resistance_ohm>.01 && c.resistance_ohm<=100000)))throw new Error("配置操作格式无效。");
   if(action.version===3 && (c.mode!=='LC' || 'pwm_source' in c))throw new Error("配置操作格式无效。");
@@ -140,8 +146,16 @@ async function continueIdentificationPlan(){
       if(plan.version===3)$('pwm-source').value=plan.runs[0].pwm_source;
     }
     if(!state.dataset){toggleSection('toggle-import','import-content','导入波形',true);throw new Error('请先上传 CSV；本次未启动实验。');}
+    // A paused, not-yet-started plan still owns its explicit PWM choice.
+    // Recheck prerequisites against that choice, not an unrelated form edit.
+    if(plan.version!==3 && c.pwm_source)$('pwm-source').value=c.pwm_source;
     if(plan.version!==3)plan.pwmSource=pwmSource();
     const runs=planRuns(plan);
+    const selectionQuestion=executionSelectionQuestion(plan.execution_selection,runs.map(run=>run.method),runs.map(run=>run.pwm_source),
+      {allowAuto:plan.version!==3&&$('pwm-source').value==='auto'});
+    if(selectionQuestion)throw new Error(selectionQuestion);
+    const executionSelection=plan.execution_selection.pwm_sources.includes('auto')
+      ? {...plan.execution_selection,pwm_sources:[...new Set(runs.map(run=>run.pwm_source))]} : plan.execution_selection;
     if(!state.mapping){$('mapping-details').open=true;throw new Error("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
     if(plan.version===3 && !state.mapping.pwm)throw new Error("四组计划需要实际 PWM 列及已确认的控制器配置；请先补齐实际 PWM 列，本次未启动实验。");
     if(plan.version===3 && $('controller-confirmed').value!=='yes'){
@@ -180,7 +194,7 @@ async function continueIdentificationPlan(){
         if(job.status==='failed')throw new Error(job.error || tr("任务未完成，请检查提示"));
         outcome=await watchJob(plan.jobId);
       }else if(resultMatchesCurrent(state.result))outcome={status:'complete',job_id:state.resultId};
-      else outcome=await startFit({fromChat:true,waitForCompletion:true,onSubmitted:id=>{plan.jobId=id;saveIdentificationPlan(plan);}});
+      else outcome=await startFit({fromChat:true,executionSelection,waitForCompletion:true,onSubmitted:id=>{plan.jobId=id;saveIdentificationPlan(plan);}});
       if(outcome?.status!=='complete'){
         plan.uncertain=Boolean(outcome?.uncertain);
         throw new Error(outcome?.error || tr("未能启动实验：")+tr("请检查当前任务和输入设置。"));
@@ -202,6 +216,8 @@ async function continueIdentificationPlan(){
       pendingConfigurationStart={fingerprint:configurationFingerprint()};
       plan.note+=' '+tr('请确认当前接线和参数一致；回复“确认”后继续此计划。');
     }
+    // Every blocking prerequisite belongs in the main conversation as well.
+    message('assistant',plan.note,'任务状态');rememberMessage('assistant',plan.note,null,'任务状态');
   }}
   finally{
     state.planRunning=false;

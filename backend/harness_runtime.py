@@ -17,11 +17,13 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 from .agent_policy import BudgetExceeded
-from .provider_errors import HarnessTurnError
+from .provider_errors import HarnessTurnError, AgentCapacityError, AgentMemoryError
+from .memory_usage import log_memory, low_headroom, memory_readings
 
 scope = contextvars.ContextVar('harness_scope', default=None)
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'harness'
 active = {}
+runtime_slots = threading.BoundedSemaphore(int(os.getenv('AGENT_MAX_ACTIVE_TASKS', '1' if os.getenv('RENDER') else '2')))
 
 
 class Gateway:
@@ -194,6 +196,39 @@ class Gateway:
 
 
 async def run(messages, tools, invoke, budget):
+    # Guard the actual subprocess lifetime, including direct /api/chat calls.
+    if not runtime_slots.acquire(blocking=False):
+        raise AgentCapacityError('Agent capacity is busy; wait for an active task to finish')
+    work = None
+    try:
+        if not os.getenv('RENDER'):
+            return await _run(messages, tools, invoke, budget)
+        next_log = 0
+        loop = asyncio.get_running_loop()
+        while True:
+            readings = memory_readings()
+            if low_headroom(readings):
+                log_memory('agent_memory_pressure', readings)
+                raise AgentMemoryError()
+            if loop.time() >= next_log:
+                log_memory('agent_running', readings)
+                next_log = loop.time() + 15
+            if work is None:
+                work = asyncio.create_task(_run(messages, tools, invoke, budget))
+            done, _ = await asyncio.wait({work}, timeout=1)
+            if done:
+                return work.result()
+    finally:
+        try:
+            if work is not None and not work.done():
+                work.cancel()
+                await asyncio.gather(work, return_exceptions=True)
+            log_memory('agent_finished')
+        finally:
+            runtime_slots.release()
+
+
+async def _run(messages, tools, invoke, budget):
     from deepseek_harness import DeepSeekHarness
     state = scope.get() or {}
     identifier = state.get('session_id') or state.get('id') or secrets.token_hex(16)
@@ -263,7 +298,9 @@ async def run(messages, tools, invoke, budget):
         active[task_id] = (harness,identifier)
         try:
             def blocking():
+                log_memory('before_harness_start')
                 harness.start()
+                log_memory('after_harness_start')
                 session = harness.resume_session(identifier) if (home/'session.started').exists() else harness.start_session(identifier)
                 emit('status',{'text':'DeepSeek Harness 已接管工具调度'})
                 (home/'session.started').touch()

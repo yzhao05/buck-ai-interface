@@ -16,6 +16,7 @@ module.exports=async function installPlanChatFixtures(page){
   return route.fulfill({json:{mode:'deepseek',answer:'计划已解析。',job_id:null,sources:[],tool_calls:[],
    route:{task:'configuration',label:'辨识配置',mode:'rules',secondary_tasks:[]},
    ui_action:{id:body.ui_context.request_id,type:'identification_plan',parser:'deepseek',version:2,
-    methods:['weighted_integral','pann'],...fixture}}});
+    // Plan lifecycle tests assume choices were explicitly confirmed beforehand.
+    methods:['weighted_integral','pann'],execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured','controller','auto'],method_evidence:'Previously confirmed in this fixture',pwm_evidence:'Previously confirmed in this fixture'},...fixture}}});
  });
 };

@@ -29,7 +29,7 @@ window.BuckHarness = (()=>{
     document.getElementById('agent-progress').open=true;
     document.getElementById('agent-preview').textContent='';
     const storageKey=key();
-    let result=null,buffer='',ended=false;
+    let result=null,buffer='',ended=false,preview='';
     const response=await fetch(base.replace(/\/$/,'')+`/api/agent/tasks/${id}/events`,{headers:headers()});
     if(!response.ok)throw new Error('Cannot reconnect to the Agent task.');
     const reader=response.body.getReader(),decoder=new TextDecoder();
@@ -41,14 +41,18 @@ window.BuckHarness = (()=>{
       while((newline=buffer.indexOf('\n'))>=0){
         const line=buffer.slice(0,newline);buffer=buffer.slice(newline+1);if(!line)continue;
         const item=JSON.parse(line);
-        if(item.kind==='attempt_start'){result=null;document.getElementById('agent-preview').textContent='';status(item.data.text);}
+        if(item.kind==='attempt_start'){result=null;preview='';document.getElementById('agent-preview').textContent='';status(item.data.text);}
         if(item.kind==='status')status(item.data.text);
         if(item.kind==='tool_start')status(`正在执行：${tools[item.data.name]||item.data.name}`);
         if(item.kind==='tool_end')status(`${tools[item.data.name]||item.data.name}：${item.data.status}`);
-        if(item.kind==='text_delta')document.getElementById('agent-preview').textContent+=item.data.text;
+        if(item.kind==='text_delta'){
+          preview+=item.data.text;
+          window.BuckMarkdown.render(document.getElementById('agent-preview'),preview,{streaming:true});
+        }
         if(item.kind==='result')result=item.data;
         if(item.kind==='end'){
           ended=true;
+          if(preview)window.BuckMarkdown.render(document.getElementById('agent-preview'),preview);
           // The final task snapshot is authoritative, including a null result.
           // Old result events belong to previous attempts after a resume.
           result=item.data.result;
@@ -79,16 +83,23 @@ window.BuckHarness = (()=>{
     }
     if(!latest)latest=(await api('/api/agent/tasks/latest')).task;
     if(!latest){status('没有可恢复的 Agent 任务');return;}
+    if(latest.analysis_result_id && latest.analysis_result_id!==state.resultId){
+      const text=tr('该任务分析的结果与右侧当前显示的结果不同。请在右侧点击“让助手分析结果”分析当前结果；如需恢复原任务，请先选择原来的结果。');
+      status(text);message('assistant',text,'任务状态');rememberMessage('assistant',text,null,'任务状态');return;
+    }
     rememberTask(latest.id);
-    if(latest.state==='completed' && readConversation(activeConversation.id)?.messages?.some(m=>m.response?.agent_task_id===latest.id&&!m.response.task_state&&!m.response.error_code&&m.response.mode!=='provider_error')){
+    if(latest.state==='completed' && readConversation(activeConversation.id)?.messages?.some(({response})=>
+      response?.agent_task_id===latest.id && !response.task_state && response.mode!=='provider_error'
+      && (!response.error_code || response.mode==='validation_error'))){
       rememberTask(null);
       status('此任务已完成，回答已在当前会话中');return;
     }
     if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
       const response=await follow(latest.id);
       const text=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
-      const article=message('assistant',text,'Harness 恢复');decorateResponse(article,response);
-      rememberMessage('assistant',text,{...response,agent_task_id:latest.id},'Harness 恢复');
+      const mode=['provider_error','validation_error'].includes(response.mode)?'请求未完成':'Harness 恢复';
+      const article=message('assistant',text,mode);decorateResponse(article,response);
+      rememberMessage('assistant',text,{...response,agent_task_id:latest.id},mode);
       if(response.mode==='provider_error')window.alert(response.provider_error);
     }catch(error){
       const note=taskNotice(error);

@@ -15,7 +15,10 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    if(body.message==='请解释 Buck 原理')return route.continue();
    await route.fulfill({json:{mode:'deepseek',answer:'Validated, not executed yet',sources:[],tool_calls:[],job_id:null,
      route:{task:'configuration',label:'辨识配置',mode:'agent',secondary_tasks:[]},
-     ui_action:{id:body.ui_context.request_id,type:'configure_identification',...proposal}}});
+     // These configuration tests assume prior explicit choices; missing-choice
+     // behavior is covered separately by browser-execution-selection.cjs.
+     ui_action:{id:body.ui_context.request_id,type:'configure_identification',
+       execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured','controller','auto'],method_evidence:'Previously confirmed in this fixture',pwm_evidence:'Previously confirmed in this fixture'},...proposal}}});
  });
  try{
   await page.goto('http://127.0.0.1:8001');await ready();
@@ -53,6 +56,16 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.equal(await page.locator('#ask-error').isDisabled(),false);
   assert.equal(await page.locator('#download-report').isDisabled(),false);
   assert.match(await answer(),/未启动实验/);
+  assert.match(await answer(),/列与单位映射/);
+  assert.match(await answer(),/列映射已应用/);
+  assert.match(await answer(),/实验设置/);
+  assert.match(await answer(),/开始参数辨识/);
+  assert.doesNotMatch(await answer(),/列映射尚未应用|Validated/);
+  const checkedReply=await answer();
+  assert.match(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).content),/开始前请核对以下两项/);
+  await page.reload();await ready();
+  assert.equal(await answer(),checkedReply);
+  assert.equal(fits.length,1);
   // Next fit submits the form as changed, not the old LC result context.
   proposal={open_panel:true,changes:{},start_after_apply:true};
   await send('开始参数辨识');assert.equal(fits.length,2);assert.equal(fits[1].options.mode,'LCR');assert.equal(fits[1].options.resistance_ohm,8);
@@ -81,6 +94,10 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   }
   // An applied mapping is mandatory, even if dropdowns still display old columns.
   await page.evaluate(()=>{state.mapping=null;controls();});
+  proposal={open_panel:true,changes:{},start_after_apply:false};
+  await send('打开参数辨识，暂不开始');assert.equal(fits.length,2);
+  assert.match(await answer(),/列映射尚未应用/);assert.match(await answer(),/实验设置/);
+  proposal={open_panel:true,changes:{},start_after_apply:true};
   await send('开始参数辨识');assert.equal(fits.length,2);assert.match(await answer(),/列映射/);
   await page.locator('#apply-mapping').click();await ready();
   await page.locator('#pwm-source').selectOption('controller');await ready();
@@ -92,8 +109,11 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.evaluate(()=>document.querySelector('#fit-method [value="pann"]').disabled=false);
   proposal={open_panel:true,changes:{method:'pann'},start_after_apply:false};
   await send('选择 PANN');assert.equal(await page.locator('#fit-method').inputValue(),'pann');assert.equal(fits.length,2);
+  assert.match(await answer(),/控制器接线与参数尚未确认/);
+  assert.equal(await page.evaluate(()=>pendingConfigurationStart),null,'Configure-only feedback must not create a pending start');
   await page.locator('#language-toggle').click();
   await send('Use PANN without starting');assert.match(await answer(),/Identification settings applied/);assert.match(await answer(),/No experiment was started/);
+  assert.match(await answer(),/Column and unit mapping/);assert.match(await answer(),/Experiment settings/);
   // A backend active job blocks changes, even before the page has resumed it.
   await page.route('**/api/jobs/active',r=>r.fulfill({json:{job:{job_id:'existing'}}}));
   await page.route('**/api/jobs/existing',r=>r.fulfill({json:{status:'failed',error:'Test existing task'}}));

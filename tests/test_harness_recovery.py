@@ -13,6 +13,17 @@ from conftest import REAL_RUN
 from backend.schemas import ChatRequest, FitOptions
 
 
+def test_only_process_restart_interrupts_running_tasks(tmp_path, monkeypatch):
+    monkeypatch.setattr(agent_tasks, 'ROOT', tmp_path)
+    with agent_tasks.database() as db:
+        db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?)',('task','owner','running','{}',None,0))
+    # A GET can arrive between the admission commit and the in-memory task registration.
+    assert agent_tasks.read('owner','task')['state'] == 'running'
+    # Reopen the existing database as a fresh worker.
+    monkeypatch.setattr(agent_tasks, '_initialized_database', None)
+    assert agent_tasks.latest('owner')['state'] == 'interrupted'
+
+
 def test_resuming_older_task_still_blocks_new_task(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_tasks, 'ROOT', tmp_path)
 
@@ -36,6 +47,7 @@ def test_resuming_older_task_still_blocks_new_task(tmp_path, monkeypatch):
         agent_tasks.cancel('owner', older)
         await running
         assert agent_tasks.read('owner', older)['state'] == 'cancelled'
+        assert agent_tasks.latest('owner')['id'] == older
         assert agent_tasks.read('owner', older)['result'] is None
         with pytest.raises(ValueError, match='Only interrupted'):
             agent_tasks.launch('owner', None, succeed, newer, resume=True)

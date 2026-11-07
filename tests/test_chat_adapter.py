@@ -78,14 +78,19 @@ def test_explicit_result_scope_still_isolates_historical_data(monkeypatch):
 @pytest.mark.parametrize('source,version', [('measured',2),('both',3)])
 def test_agent_can_propose_batch_without_keyword_router(monkeypatch,source,version):
     monkeypatch.setenv('DEEPSEEK_API_KEY','test-only')
+    sources=['measured','controller'] if source=='both' else ['measured']
+    choice_message=f'Use both weighted integral and PANN with {", ".join(sources)} PWM.'
     async def agent(messages,tools,execute,budget):
         output=await execute('propose_identification_plan',{
             'execute':True,'clarification':'','filename':None,'pwm_source':source,
-            'pwm_evidence':'','mode':'LC','resistance_ohm':6})
+            'pwm_evidence':choice_message,'mode':'LC','resistance_ohm':6,
+            'execution_selection':{'methods':['weighted_integral','pann'],'pwm_sources':sources,
+                                   'method_evidence':choice_message,'pwm_evidence':choice_message}})
         assert output['status']=='pending_ui'
         return 'Plan proposed.'
     monkeypatch.setattr(harness_runtime,'run',agent)
     result=asyncio.run(chat.answer(ChatRequest(message='Proceed with the agreed combination.',
+        history=[{'role':'user','content':choice_message}],
         ui_context={'request_id':'r','options':{}}),None))
     assert result['ui_action']['version']==version
     assert result['ui_action']['changes']['mode']=='LC'
@@ -227,7 +232,8 @@ def test_unavailable_waveform_returns_tool_error_and_agent_can_continue(monkeypa
     assert result.json()['tool_calls'][0]['status']=='未执行'
 
 
-def test_changed_registered_circuit_does_not_reuse_old_experiment(monkeypatch):
+@pytest.mark.parametrize('delayed', [False, True])
+def test_changed_registered_circuit_does_not_reuse_old_experiment(monkeypatch, delayed):
     monkeypatch.setenv('DEEPSEEK_API_KEY','test-only')
     version='a'*64
     executed=[]
@@ -235,7 +241,12 @@ def test_changed_registered_circuit_does_not_reuse_old_experiment(monkeypatch):
         nonlocal version
         if name=='get_plecs_models':return {'models':{'m':{'source_sha256':version}}}
         if name=='select_plecs_model':version='b'*64;return {'status':'registered'}
-        if name=='run_plecs_experiment':executed.append(version);return {'status':'completed','source_sha256':version}
+        if name=='get_plecs_job_result':return {'status':'running','bridge_job_id':'job'}
+        if name=='run_plecs_experiment':
+            executed.append(version)
+            if delayed and len(executed)==1:
+                return {'status':'uncertain','bridge_job_id':'job'}
+            return {'status':'completed','source_sha256':version}
         pytest.fail(name)
     async def agent(messages,tools,execute,budget):
         args={'model':'m','parameter':'C','values':[1],'hypothesis':'test','expected_observation':'test'}

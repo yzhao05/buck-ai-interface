@@ -140,13 +140,21 @@ def ensure_running(owner):
     return {'status':'unavailable','error':'已启动 PLECS，但 1080 未就绪。请检查许可窗口及 Preferences 中的 RPC 开关与端口。'}
 
 
+def read_model(path):
+    limit = 10 * 1024 * 1024
+    with Path(path).open('rb') as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError('模型文件超过 10 MiB')
+    return raw
+
+
 def register(owner, filename):
     path = Path(filename.strip().strip('"'))
     if not path.is_absolute() or path.suffix.lower() != '.plecs' or not path.is_file():
         raise ValueError('需要本机存在的 .plecs 电路文件完整路径')
-    if path.stat().st_size > 10*1024*1024:
-        raise ValueError('模型文件超过 10 MiB')
-    text = path.read_text(encoding='utf-8-sig')
+    raw = read_model(path)
+    text = raw.decode('utf-8-sig').replace('\r\n','\n').replace('\r','\n')
     if not re.match(r'\s*Plecs\s*\{', text):
         raise ValueError('文件不是有效的 PLECS 模型')
     parameters = {}
@@ -190,7 +198,7 @@ def register(owner, filename):
         issues.append('TimeSpan 超过自动实验支持的 0.1 秒；未截短原时段。可打开模型，但不能直接执行此自动实验。')
     key = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:12]
     profile = {'path':str(path.resolve()),'description':path.stem,'parameters':parameters,
-               'source_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
+               'source_sha256':hashlib.sha256(raw).hexdigest(),
                'signals':[], 'duration_s':duration, 'experiment_issues':issues}
     state = settings(owner)
     # Explicit selection replaces the previous circuit for this session.

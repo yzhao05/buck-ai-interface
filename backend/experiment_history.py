@@ -1,9 +1,74 @@
-"""Only the explicitly approved per-experiment comparison fields leave the backend."""
+"""Conversation result summaries and on-demand reads of the right-hand list."""
 import math
 import re
 import json
 import hashlib
 import statistics
+from .schemas import ChatExperiment
+from .parameter_comparison import with_ground_truth
+
+
+READ_RESULT_TOOL = {'type':'function','function':{
+    'name':'read_experiment_results',
+    'description':'按右侧结果列表中的精确 ID 读取一条或多条已保存结果，用于分析或比较配置、参数、误差和诊断；只读，不切换界面或重新辨识。',
+    'parameters':{'type':'object','properties':{'result_ids':{
+        'type':'array','items':{'type':'string'},'minItems':1,'maxItems':200,'uniqueItems':True,
+        'description':'从 get_experiment_history 返回的 result_catalog 选择精确结果 ID。'}},
+        'required':['result_ids'],'additionalProperties':False}}}
+
+
+class ResultLibrary:
+    def __init__(self, runs, selected_id=None):
+        # Preserve the exact UI order, including equal-time records.
+        self.runs = list(runs)
+        self.by_id = {run.id:run for run in self.runs}
+        self.selected_id = selected_id
+
+    def catalog(self):
+        return [{'id':run.id,'position':index+1,'display_name':run.display_name or run.dataset.filename,
+                 'created':run.created,'display_time':run.display_time,'updated':run.updated,'dataset':run.dataset.model_dump(),
+                 'method':run.result.get('method') or run.result.get('options',{}).get('method'),
+                 'pwm_source':run.result.get('options',{}).get('pwm_source'),
+                 'mode':run.result.get('options',{}).get('mode'),
+                 'selected':run.id==self.selected_id} for index,run in enumerate(self.runs)]
+
+    def summaries(self):
+        return summarize_experiments([ChatExperiment.model_validate({
+            'id':run.id,'dataset':run.dataset.model_dump(),'parameters':run.result['parameters'],
+            'method':run.result.get('method') or run.result.get('options',{}).get('method'),
+            'pwm_source':run.result.get('options',{}).get('pwm_source'),
+            'ground_truth':run.ground_truth.model_dump() if run.ground_truth else None,
+        }) for run in self.runs])
+
+    def read(self, arguments):
+        ids = arguments.get('result_ids')
+        if (set(arguments)!={'result_ids'} or not isinstance(ids,list) or not 1<=len(ids)<=200
+            or any(not isinstance(identifier,str) for identifier in ids) or len(ids)!=len(set(ids))):
+            raise ValueError('Provide unique result_ids from the result catalog.')
+        missing = [identifier for identifier in ids if identifier not in self.by_id]
+        if missing:
+            raise ValueError('Result IDs are absent from this conversation result list: '+', '.join(missing))
+        # No fuzzy matching, filename deduplication, or fallback to the current card.
+        def snapshot(value):
+            if isinstance(value,dict):
+                return {key:snapshot(item) for key,item in value.items() if key not in {'chart','epoch_history','history'}}
+            if isinstance(value,list):
+                return [snapshot(item) for item in value]
+            return value
+        records=[]
+        for identifier in ids:
+            run=self.by_id[identifier]
+            result=snapshot(run.result)
+            # Legacy snapshots may lack metrics; keep that absence explicit.
+            had_metrics='metrics' in result
+            result=with_ground_truth({**result,'metrics':result.get('metrics',{})},run.ground_truth)
+            if not had_metrics:
+                result.pop('metrics',None)
+            records.append({'id':identifier,'display_name':run.display_name or run.dataset.filename,
+                            'created':run.created,'dataset':run.dataset.model_dump(),
+                            'result':{**result,'result_id':identifier,'result_source':'saved_conversation_snapshot'}})
+        return {'count':len(records),'experiments':records,
+                'source':'right_hand_result_list','missing_material':'Raw CSV, full curves and epoch traces are not included; absent fields are unknown.'}
 
 
 def summarize_experiments(experiments):

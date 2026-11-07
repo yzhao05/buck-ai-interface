@@ -32,6 +32,7 @@ from .schemas import AnalysisRequest, ChatRequest, FitRequest
 from .report import ReportRequest, build_pdf
 
 from . import archive
+from .memory_usage import log_memory
 archive.store = archive.ArchiveStore(os.getenv("ARCHIVE_DIR") or ROOT / "runtime" / "archive")
 TOKEN = os.getenv("APP_ACCESS_TOKEN", "")
 if (os.getenv("APP_ENV") == "production" or os.getenv("RENDER")) and len(TOKEN) < 20:
@@ -44,6 +45,7 @@ jobs = OrderedDict()
 rate = defaultdict(deque)
 pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="buck-fit")
 diagnostic_slot = threading.Lock()
+dataset_parse_slot = threading.Lock()
 TTL = 3600
 
 
@@ -108,14 +110,30 @@ def get_dataset(identifier, owner):
 
 
 def add_dataset(raw, name, owner, *, reference=False):
+    # Parsing expands CSV bytes into arrays/objects; serialize this peak across
+    # uploads and demo requests, including synchronous worker threads.
+    if not dataset_parse_slot.acquire(blocking=False):
+        raise HTTPException(503, "Another CSV is being parsed. Please retry shortly.")
+    try:
+        return _add_dataset(raw, name, owner, reference=reference)
+    finally:
+        dataset_parse_slot.release()
+
+
+def _add_dataset(raw, name, owner, *, reference=False):
     try:
         data = read_csv(raw, name)
     except (ValueError, UnicodeError) as exc:
         raise HTTPException(422, str(exc))
     identifier = uuid.uuid4().hex
     with lock:
-        candidates = [k for k,v in datasets.items() if v['owner']==owner and bool(v.get('reference'))==reference]
-        previous = candidates[0] if len(candidates) >= (1 if reference else 2) else None
+        pinned = {j['dataset_id'] for j in jobs.values() if j.get('status') in {'queued','running'}}
+        owned = [k for k,v in datasets.items() if v['owner']==owner and bool(v.get('reference'))==reference]
+        previous = None
+        if len(owned) >= (1 if reference else 2):
+            previous = next((key for key in owned if key not in pinned), None)
+            if previous is None:
+                raise HTTPException(409, "当前会话的数据正在辨识，请等待任务结束后再上传。")
         size = int(data.frame.memory_usage(deep=True).sum()) + len(raw)
         if sum(v["size"] for k,v in datasets.items() if k != previous) + size > 96 * 1024 * 1024 or len(datasets)-bool(previous) >= 12:
             raise HTTPException(503, "服务器数据容量已满，请删除不用的数据或稍后重试。")
@@ -206,10 +224,11 @@ def analyze_route(body: AnalysisRequest, owner: str = Depends(session)):
 
 
 def start_fit(body: FitRequest, owner):
-    dataset = get_dataset(body.dataset_id, owner)
-    if body.options.method == "pann" and not pann_available():
-        raise HTTPException(422, "此后端未安装 PANN 依赖，请选择积分辨识。")
     with lock:
+        # Look up and pin the dataset in the same critical section as admission.
+        dataset = get_dataset(body.dataset_id, owner)
+        if body.options.method == "pann" and not pann_available():
+            raise HTTPException(422, "此后端未安装 PANN 依赖，请选择积分辨识。")
         pending = [j for j in jobs.values() if j["status"] in ("queued", "running")]
         for job_id, job in jobs.items():
             if job["owner"] == owner and job["status"] in ("queued", "running"):
@@ -410,7 +429,10 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                 job = jobs.get(body.result_id)
                 if (job and job['owner']==owner and job['status']=='complete'
                     and job['config']['options']==body.options.model_dump()
-                    and job['config']['mapping']==(body.mapping.model_dump() if body.mapping else None)):
+                    and job['config']['mapping']==(body.mapping.model_dump() if body.mapping else None)
+                    and (not body.saved_result or (
+                        job['result'].get('file_sha256')==body.saved_result.dataset.sha256
+                        and job['result'].get('parameters')==body.saved_result.result.get('parameters')))):
                     return evidence({**with_ground_truth(job['result'],body.ground_truth),'result_id':body.result_id})
                 return evidence(await invoke('get_identification_result'))
             if name == 'evaluate_plecs_experiment':
@@ -482,12 +504,14 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                     return {'status':'unavailable','error':'另一个诊断对照正在运行，请稍后重试。'}
                 try:
                     throttle(owner,'diagnostic-controls',6)
+                    log_memory('before_diagnostic_controls')
                     control_cache = await run_in_threadpool(run_controls,data,source,result_id=body.result_id,
                         source_id=source_id,reference=reference_data)
                     if reference_error:
                         control_cache['reference']={'status':'rejected','reason':reference_error}
                 finally:
                     diagnostic_slot.release()
+                    log_memory('after_diagnostic_controls')
                 return control_cache
             if name == "get_waveform_summary":
                 if not body.dataset_id or not body.mapping:
@@ -551,11 +575,13 @@ def get_agent_task(identifier: str, after: int = 0, owner: str = Depends(session
 @app.get('/api/agent/tasks/{identifier}/events')
 async def agent_events(identifier: str, after: int = 0, owner: str = Depends(session)):
     import asyncio
-    get_agent_task(identifier,after,owner)
-    async def stream():
+    try:
+        first_snapshot = agent_tasks.read(owner,identifier,after,include_binding=False)
+    except ValueError as exc:
+        raise HTTPException(404,str(exc))
+    async def stream(snapshot):
         cursor = after
         while True:
-            snapshot = agent_tasks.read(owner,identifier,cursor)
             for item in snapshot['events']:
                 cursor = item['seq']
                 yield json.dumps(item,ensure_ascii=False)+'\n'
@@ -563,8 +589,10 @@ async def agent_events(identifier: str, after: int = 0, owner: str = Depends(ses
                 yield json.dumps({'kind':'end','data':{'state':snapshot['state'],'result':snapshot['result']}},ensure_ascii=False)+'\n'
                 break
             yield '{"kind":"heartbeat","data":{}}\n'
+            del snapshot
             await asyncio.sleep(.5)
-    return StreamingResponse(stream(),media_type='application/x-ndjson',headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
+            snapshot = agent_tasks.read(owner,identifier,cursor,include_binding=False)
+    return StreamingResponse(stream(first_snapshot),media_type='application/x-ndjson',headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
 
 
 class AgentInstruction(BaseModel):

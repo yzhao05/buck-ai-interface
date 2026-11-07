@@ -90,4 +90,5 @@ def test_no_key_does_not_start_old_configuration(monkeypatch):
 def test_start_with_panel_closed_also_uses_frontend_apply_path(monkeypatch):
     provider(monkeypatch, {"open_panel": True, "changes": {}, "start_after_apply": True})
     async def invoke(_): pytest.fail("Must not execute before frontend application")
-    assert asyncio.run(chat.answer(request("开始参数辨识"), invoke))["ui_action"]["start_after_apply"]
+    action=asyncio.run(chat.answer(request("开始参数辨识"), invoke))["ui_action"]
+    assert not action["start_after_apply"] and action['request_selection']

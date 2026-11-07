@@ -148,14 +148,16 @@ def test_tool_round_limit_stops_more_searches(monkeypatch):
 
 
 def test_failure_after_job_submission_keeps_job_id(monkeypatch):
+    choices={'methods':['pann'],'pwm_sources':['measured'],
+             'method_evidence':'使用 PANN','pwm_evidence':'使用 CSV 实测 PWM'}
     fake_provider(monkeypatch, [{"role": "assistant", "content": None, "tool_calls": [
-        {"id": "fit", "type": "function", "function": {"name": "start_identification", "arguments": "{}"}}]},
+        {"id": "fit", "type": "function", "function": {"name": "start_identification", "arguments": json.dumps({'execution_selection':choices})}}]},
         httpx.ReadTimeout("test-secret")])
     calls = []
     async def invoke(name):
         calls.append(name)
         return {"job_id": "submitted-job"}
-    result = asyncio.run(chat.answer(ChatRequest(message="开始参数辨识", identification_enabled=True), invoke))
+    result = asyncio.run(chat.answer(ChatRequest(message="使用 CSV 实测 PWM 和 PANN 开始参数辨识", identification_enabled=True), invoke))
     assert result["mode"] == "provider_error" and result["job_id"] == "submitted-job"
     assert calls == ["start_identification"]
 

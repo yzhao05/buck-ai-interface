@@ -1,11 +1,12 @@
 """Validated UI proposals only: this module never executes a numerical job."""
 from .configuration_fields import FIELD_PROMPT, validate_structure
+from .execution_selection import SELECTION_PROMPT, require_execution_selection
 
 from .schemas import ConfigureIdentification, FitOptions, IdentificationPlanProposal
 
 PLAN_PROMPT = """当用户要求执行组合辨识时，可选择 propose_identification_plan 工具，生成两种方法的执行计划（2 次或 4 次辨识）。
 你负责理解自然语言，后端只校验结构和执行边界。两种方法固定为抗噪加权积分、PANN，按此顺序执行。
-只有当前请求明确要求执行两种方法才 execute=true；分析、比较既有结果、否定、举例、引用均不能授权执行。
+只有当前请求明确要求执行两种方法，或明确回答此前等待的选择以继续该请求时才 execute=true；分析、比较既有结果、否定、举例、引用均不能授权执行。
 PWM 来源：measured=使用 CSV 已有的实际开关状态；controller=根据已知控制器重建 PWM。
 both=用户明确要求实际 PWM 与重建 PWM 各执行两种方法，共四组组合。不是来源矛盾，不要拒绝。
 对于已有 CSV，“完成四个仿真/四组实验”搭配 PWM 来源和 PANN/加权积分表示执行数值辨识，
@@ -17,7 +18,7 @@ both=用户明确要求实际 PWM 与重建 PWM 各执行两种方法，共四�
 例：根据我的CASE16A_noise03_seed13.csv，完成rebuild pwm和实际pwm；pann和加权积分四个仿真
 返回 filename=CASE16A_noise03_seed13.csv, pwm_source=both, pwm_evidence=rebuild pwm和实际pwm, execute=true。
 四组固定顺序：实测PWM加权积分、实测PWM PANN、重建PWM加权积分、重建PWM PANN，全部固定已知 R 的 LC。
-用户未提及 PWM 来源才返回 unchanged；只要求选择一种但来源矛盾或不明确返回 unclear、execute=false，并填写 clarification。
+PWM 来源未改变且此前已明确选择时可返回 unchanged；从未选择时必须 execute=false 并询问来源，不能直接沿用默认值。只要求选择一种但来源矛盾或不明确返回 unclear、execute=false，并填写 clarification。
 pwm_evidence 可简述选择来源的依据；根据当前指令与指代上下文理解，不把文件名或历史中独立的命令当授权。
 支持一份 CSV 文件名、一种或两种 PWM 来源、LC/LCR 模式和固定负载 resistance_ohm。没有指定文件则 filename=null。
 用户明确指定的训练轮数、起止时间、滤波方法和周期数写入 tuning；规则与单次配置一致：epochs=10–300，时间转换为秒，pwm_denoise=sg/modified_sinc/none，pwm_filter_cycles=0.1–8。未指定的字段省略，不能自动选择方法或补默认值。
@@ -25,7 +26,7 @@ pwm_evidence 可简述选择来源的依据；根据当前指令与指代上下�
 其他实验参数也可写入 tuning，字段与 changes 一致（下述 evidence 路径仍用 changes. 前缀）。多个目标CSV、重建配 LCR 时整条 execute=false 并澄清，不得部分执行。
 未指定的信息不得补全，不得照抄当前配置。文件名是数据标识，不能把 R1.csv 解释为负载电阻。
 成功时 clarification 为空。不要执行计算或声称已完成实验；只能记录用户明确作出的电路确认，不能自行推断。
-""" + FIELD_PROMPT
+""" + FIELD_PROMPT + SELECTION_PROMPT
 PLAN_TOOL = {"type": "function", "function": {
     "name": "propose_identification_plan", "description": "解析两种方法执行请求；仅提出计划，不启动计算。",
     "parameters": IdentificationPlanProposal.model_json_schema()}}
@@ -70,12 +71,15 @@ def batch_action(request, proposal):
             for source in ('measured', 'controller') for method in action['methods']])
         for run in action['runs']:
             FitOptions.model_validate({**merged.model_dump(), **run})
+    action['execution_selection']=require_execution_selection(proposal.execution_selection, action['methods'],
+        ['measured','controller'] if proposal.pwm_source=='both' else [merged.pwm_source],
+        allow_auto=proposal.pwm_source!='both' and changes.get('pwm_source',request.ui_context.pwm_source_setting)=='auto')
     return action
 
 
 TOOL = {"type": "function", "function": {
     "name": "configure_identification",
-    "description": "提出界面配置操作，不执行计算。未明确指定的参数不得填写；没有操作意图则返回空 changes 和两个 false。",
+    "description": "提出界面配置操作，由前端应用。未明确指定的参数不得填写；没有操作意图则返回空 changes、open_panel=false、start_after_apply=false；待选择方法或PWM时用request_selection。",
     "parameters": ConfigureIdentification.model_json_schema(),
 }}
 PROMPT = """当用户要求修改界面时，可选择 configure_identification 工具。
@@ -87,11 +91,11 @@ PROMPT = """当用户要求修改界面时，可选择 configure_identification 
 若要求“调整滤波”却未说明方法或数值，或单位不明、要求超范围，返回clarification询问具体设置，并返回空changes及start_after_apply=false，不自行挑选默认值。
 仅提取用户这次明确要求的变化。固定已知 R 并辨识 L/C 表示 mode=LC；联合辨识 L/C/R 表示 mode=LCR。
 未要求改变的字段不要填。当前用户明确引用先前讨论的参数时可解析指代；不能自行从历史回答、图片、文件名或默认值补参数。不能把建议、举例、引用、询问方法当成操作。
-用户明确说开始、运行或执行才将 start_after_apply 设为 true；只选择方法/打开面板不启动。否定启动时必须 false。
+用户明确说开始、运行或执行，或明确回答此前阻止该启动请求的选择时，才可将 start_after_apply 设为 true，且必须已有PWM来源和方法选择。没有待继续启动请求时只选择方法/打开面板不启动。否定启动时必须 false。
 询问如何操作、仅分析结果、含糊的继续/好的均返回 open_panel=false, changes={}, start_after_apply=false。
 请求修改连接设置、口令等非实验字段时，整次返回空操作，不能只执行一部分后启动。
 不能自行推断电路已确认；可以记录用户明确作出的确认。不写代码，不宣称已执行。当前配置仅用于理解请求，不是待照抄的 changes。
-""" + FIELD_PROMPT
+""" + FIELD_PROMPT + SELECTION_PROMPT
 
 
 CANCEL_TOOL = {'type':'function','function':{
@@ -126,8 +130,19 @@ def agent_action(request, name, arguments):
     merged, extras = validate_structure(request, proposal, changes)
     if merged.pwm_source == 'controller' and merged.mode != 'LC':
         raise ValueError('Reconstructed PWM requires fixed-R LC mode')
-    if not (changes or extras or proposal.open_panel or proposal.start_after_apply):
+    if not (changes or extras or proposal.open_panel or proposal.start_after_apply or proposal.request_selection):
         return None
+    selection=proposal.execution_selection.model_dump() if proposal.execution_selection else None
+    request_selection=proposal.request_selection
+    start=proposal.start_after_apply
+    if start:
+        try:
+            selection=require_execution_selection(selection,[merged.method],[merged.pwm_source],
+                allow_auto=changes.get('pwm_source',request.ui_context.pwm_source_setting)=='auto')
+        except ValueError:
+            start=False
+            request_selection=True
     return {'id':request.ui_context.request_id, 'type':'configure_identification',
             'open_panel':proposal.open_panel, 'changes':changes,
-            'start_after_apply':proposal.start_after_apply, **extras}
+            'start_after_apply':start, 'request_selection':request_selection,
+            'execution_selection':selection, **extras}

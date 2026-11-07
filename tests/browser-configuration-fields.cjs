@@ -13,7 +13,9 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await require('./harness-browser-fixture.cjs').install(page);
   await page.route('**/api/chat',async route=>{
    const body=route.request().postDataJSON();chats.push(body);
-   await route.fulfill({json:{mode:'deepseek',answer:'Validated',sources:[],tool_calls:[],job_id:null,ui_action:{id:body.ui_context.request_id,type:'configure_identification',open_panel:false,changes:{},start_after_apply:false,...action}}});
+   // Exercise field/circuit confirmation with execution choices already made.
+   await route.fulfill({json:{mode:'deepseek',answer:'Validated',sources:[],tool_calls:[],job_id:null,ui_action:{id:body.ui_context.request_id,type:'configure_identification',open_panel:false,changes:{},start_after_apply:false,
+     execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured','controller','auto'],method_evidence:'Previously confirmed in this fixture',pwm_evidence:'Previously confirmed in this fixture'},...action}}});
   });
   const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
   const send=async(text,patch)=>{action=patch;await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();await ready();};
@@ -56,6 +58,11 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.equal(await page.locator('#controller-confirmed').inputValue(),'no');
   await send('恢复默认电路',{assets:{circuit_id:null}});assert.equal(await page.locator('#controller-image').inputValue(),'');
   await send('切换到已上传CSV',{assets:{csv_id:csv.id}});assert.equal(await page.locator('#end-ms').inputValue(),'0.7');
+  assert.match(await answer(),/列与单位映射/);assert.match(await answer(),/列映射已应用/);
+  assert.match(await answer(),/实验设置/);assert.match(await answer(),/Vin = 35 V/);
+  assert.match(await answer(),/结束时间 \(ms\) = 0.7/);
+  assert.match(await answer(),/开始参数辨识/);assert.equal(fits.length,0);
+  assert.doesNotMatch(await answer(),/列映射尚未应用/);
   await send('选择不存在文件并修改电压',{assets:{csv_id:'invented'},changes:{vin:99}});assert.equal(await page.locator('#vin').inputValue(),'35');
   // A real weighted-integral fit verifies the submitted configuration.
   await send('恢复工况并开始辨识',{changes:{vin:28,frequency_hz:100000,resistance_ohm:6,start_s:0,end_s:.0008,pwm_denoise:'sg'},start_after_apply:true});
@@ -66,6 +73,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await send('时间单位保持s',{mapping:{time_unit:'s'}});
   assert.equal(await page.evaluate(()=>state.resultId),completedId,'Applying the same mapping must preserve the completed result');
   assert.equal(await page.locator('#controller-confirmed').inputValue(),'yes','Unchanged mapping must preserve circuit confirmation');
+  assert.doesNotMatch(await answer(),/控制器接线与参数尚未确认/);
   await send('真实L为1mH，C为1000uF，计算误差',{analysis:{truth_L_H:.001,truth_C_F:.001,calculate_error:true}});
   assert.equal(await page.locator('#truth-l').inputValue(),'1000');assert(await page.evaluate(()=>Boolean(parameterComparison())));
   await send('选择诊断参考',{analysis:{reference_csv_id:csv.id}});assert.match(await answer(),/同一实验/);assert.equal(await page.locator('#diagnostic-reference-confirm').isChecked(),false);
@@ -75,9 +83,12 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#controller-confirmed').evaluate(el=>el.value='no');
   await send('改用重建PWM并开始',{changes:{pwm_source:'controller'},start_after_apply:true});
   assert.equal(fits.length,1);assert.match(await answer(),/回复.*确认/);
-  await send('取消开始辨识',{});assert.equal(chats.at(-1).ui_context.pending_start,false);
+  // The Agent receives the pending state and returns the typed cancellation;
+  // the frontend must not reinterpret the user's wording before the request.
+  await send('取消开始辨识',{type:'cancel_pending_identification'});assert.equal(chats.at(-1).ui_context.pending_start,true);
   assert.equal(await page.evaluate(()=>pendingConfigurationStart),null);assert.equal(fits.length,1);
   await send('开始辨识',{changes:{},start_after_apply:true});assert.match(await answer(),/回复.*确认/);
+  assert.equal(chats.at(-1).ui_context.pending_start,false);
   await page.route('**/api/identify',route=>route.fulfill({json:{job_id:'mock-training'}}));
   await page.route('**/api/jobs/mock-training',route=>route.fulfill({json:{status:'failed',error:'test stop'}}));
   await send('是的',{changes:{controller_confirmed:true},start_after_apply:true});

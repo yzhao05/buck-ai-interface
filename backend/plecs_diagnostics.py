@@ -90,7 +90,7 @@ def experiment(arguments, owner, result_id=None):
     client = None
     loaded = False
     try:
-        source = Path(p['path']).read_bytes()
+        source = plecs_local.read_model(p['path'])
         if p.get('source_sha256') and hashlib.sha256(source).hexdigest() != p['source_sha256']:
             raise ValueError('电路文件已变化，请重新搜索或选择模型后再实验')
         text = source.decode('utf-8-sig')
@@ -174,7 +174,7 @@ def open_model(owner, model):
     if not SLOT.acquire(blocking=False):
         return {'status':'unavailable', 'error':'PLECS 正在执行另一项操作。'}
     try:
-        raw = Path(profile['path']).read_bytes()
+        raw = plecs_local.read_model(profile['path'])
         if hashlib.sha256(raw).hexdigest() != profile['source_sha256']:
             raise ValueError('电路文件已变化，请重新选择模型。')
         name = 'view_' + uuid.uuid4().hex

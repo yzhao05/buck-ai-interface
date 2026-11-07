@@ -17,7 +17,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   return route.fulfill({json:{mode:'deepseek',answer:'计划已解析。',job_id:null,sources:[],tool_calls:[],
    route:{task:'configuration',label:'辨识配置',mode:'rules',secondary_tasks:[]},
    ui_action:{id:body.ui_context.request_id,type:'identification_plan',parser:'deepseek',version:2,filename:'CASE16A_noise03_seed14.csv',
-    methods:['weighted_integral','pann'],changes:{pwm_source:'measured'}}}});
+    methods:['weighted_integral','pann'],changes:{pwm_source:'measured'},
+    execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured'],method_evidence:body.message,pwm_evidence:body.message}}}});
  });
  let integral=null;
  page.on('response',async response=>{
@@ -70,6 +71,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await send();
   assert.equal(await page.evaluate(()=>currentIdentificationPlan().status),'paused');
   assert.match(await page.locator('#plan-note').innerText(),/请映射实际 PWM 列/);
+  assert.match(await page.locator('.message.assistant').last().locator('.message-content').innerText(),/请映射实际 PWM 列/);
   assert.match(await page.locator('#plan-note').innerText(),/取消本计划并重新发送指令/);
   assert.equal(fits.length,2,'Missing measured PWM must never fall back to reconstruction');
   await page.locator('#pwm-source').selectOption('controller');

@@ -127,7 +127,15 @@ class AnalysisChanges(StrictModel):
     calculate_error: bool | None = Field(default=None, strict=True)
 
 
+class ExecutionSelection(StrictModel):
+    methods: list[Literal['pann','weighted_integral']] = Field(default_factory=list, max_length=2)
+    pwm_sources: list[Literal['measured','controller','auto']] = Field(default_factory=list, max_length=3)
+    method_evidence: str = Field(default='', max_length=1000)
+    pwm_evidence: str = Field(default='', max_length=1000)
+
+
 class ConfigurationExtras(StrictModel):
+    execution_selection: ExecutionSelection | None = None
     mapping: MappingChanges = Field(default_factory=MappingChanges)
     assets: ConfigurationAssets = Field(default_factory=ConfigurationAssets)
     analysis: AnalysisChanges = Field(default_factory=AnalysisChanges)
@@ -135,6 +143,7 @@ class ConfigurationExtras(StrictModel):
 
 
 class ConfigureIdentification(ConfigurationExtras):
+    request_selection: bool = Field(default=False, strict=True)
     open_panel: bool = Field(strict=True)
     changes: IdentificationChanges
     start_after_apply: bool = Field(strict=True)
@@ -212,6 +221,11 @@ class SavedExperiment(StrictModel):
         if self.ground_truth and self.ground_truth.result_id != self.id:
             raise ValueError("Ground truth must belong to this experiment")
         return self
+
+
+class ResultLibraryEntry(SavedExperiment):
+    display_name: str = Field(default='', max_length=1024)
+    display_time: str = Field(default='', max_length=100)
 
 
 class ExperimentParameters(StrictModel):
@@ -306,6 +320,7 @@ class ChatRequest(StrictModel):
     result_id: str | None = None
     ground_truth: ChatGroundTruth | None = None
     saved_result: SavedExperiment | None = None
+    result_library: list[ResultLibraryEntry] = Field(default_factory=list, max_length=200)
     experiments: list[ChatExperiment] = Field(default_factory=list, max_length=200)
     # Legacy clients only. New clients send the searchable full conversation.
     analysis_history: list[HistoricalAnalysis] = Field(default_factory=list, max_length=4)
@@ -323,6 +338,8 @@ class ChatRequest(StrictModel):
 
     @model_validator(mode="after")
     def truth_matches_result(self):
+        if len({run.id for run in self.result_library}) != len(self.result_library):
+            raise ValueError('Result library IDs must be unique.')
         if self.diagnostic_reference and (not self.enable_diagnostic_controls or self.diagnostic_reference.result_id != self.result_id):
             raise ValueError('Reference must belong to the selected diagnostic result.')
         if self.saved_result:

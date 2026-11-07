@@ -22,7 +22,8 @@ assert(['complete','failure','cancel'].includes(scenario));
   return route.fulfill({json:{mode:'deepseek',answer:'四组计划已解析。',job_id:null,sources:[],tool_calls:[],
    route:{task:'configuration',label:'辨识配置',mode:'rules',secondary_tasks:[]},
    ui_action:{id:chatBody.ui_context.request_id,type:'identification_plan',parser:'deepseek',version:3,
-    filename:'CASE16A_noise03_seed13.csv',methods:['weighted_integral','pann'],changes:{mode:'LC'},runs}}});
+    filename:'CASE16A_noise03_seed13.csv',methods:['weighted_integral','pann'],changes:{mode:'LC'},runs,
+    execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured','controller'],method_evidence:requestText,pwm_evidence:requestText}}}});
  });
  await page.route('**/api/identify',route=>{
   fits.push(route.request().postDataJSON());

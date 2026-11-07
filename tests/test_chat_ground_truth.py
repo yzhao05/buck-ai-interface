@@ -1,4 +1,5 @@
 import copy
+import asyncio
 import json
 import time
 import uuid
@@ -59,6 +60,53 @@ def test_saved_result_without_dataset_or_cached_job(context, monkeypatch):
     assert response.status_code == 200
     assert response.json()["answer"] == "" and response.json()["mode"] == "provider_error"
     assert not response.json().get("job_id")
+
+
+def test_task_resume_after_job_cache_loss_keeps_bound_snapshot(context, monkeypatch, tmp_path):
+    from backend import agent_tasks, harness_runtime
+    from backend.schemas import ChatRequest
+    from starlette.requests import Request
+    client, body, original = context
+    owner = client.headers['X-Session-ID']
+    body = saved_request(body, original)
+    monkeypatch.setattr(agent_tasks, 'ROOT', tmp_path / 'tasks')
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-only')
+    seen = []
+
+    async def provider(messages, tools, invoke, budget):
+        data = json.loads(messages[1]['content'].split('：', 1)[1])
+        selected = data['previous_result']
+        assert selected['result_id'] == body['result_id']
+        assert selected['parameters'] == original['parameters']
+        assert selected['options'] == body['options']
+        assert selected['parameter_comparison']['ground_truth'] == {'L_H': 60e-6, 'C_F': 500e-6}
+        assert selected['result_source'] == 'saved_conversation_snapshot'
+        seen.append(selected)
+        return 'Analyzed the displayed snapshot without retraining.'
+
+    monkeypatch.setattr(harness_runtime, 'run', provider)
+    monkeypatch.setattr(main, 'start_fit', lambda *args: pytest.fail('Snapshot analysis must not retrain'))
+
+    async def scenario():
+        async def disconnected(_):
+            return {'mode': 'provider_error', 'error_code': 'provider_timeout'}
+        task = agent_tasks.launch(owner, ChatRequest.model_validate(body), disconnected)['id']
+        await agent_tasks.running[task]
+        main.jobs.pop(body['result_id'])  # Simulate the lost in-memory cache.
+        assert agent_tasks.read(owner, task)['analysis_result_id'] == body['result_id']
+        request = Request({'type': 'http', 'headers': [], 'client': ('127.0.0.1', 1234)})
+        async def analyze(restored):
+            assert restored.saved_result.id == body['result_id']
+            return await main.chat_route(restored, request, owner)
+        agent_tasks.launch(owner, None, analyze, task, resume=True)
+        await agent_tasks.running[task]
+        recovered = agent_tasks.read(owner, task)
+        assert recovered['state'] == 'completed'
+        assert recovered['result']['mode'] == 'deepseek'
+        # A fresh click on the same displayed result remains analyzable too.
+        assert (await analyze(ChatRequest.model_validate(body)))['mode'] == 'deepseek'
+    asyncio.run(scenario())
+    assert len(seen) == 2
 
 
 @pytest.mark.parametrize("change", ["id", "options", "mapping", "execute"])

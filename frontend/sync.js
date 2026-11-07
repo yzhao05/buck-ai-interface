@@ -125,6 +125,13 @@ async function synchronizeArchive({preferRemote=false,background=false}={}) {
   const previousId=activeConversation?.id;
   const before=activeConversation ? JSON.stringify(wireRecord(activeConversation)) : "";
   let missing=false, failed=false;
+  function pauseForActiveTask() {
+    if (!background || !historyLocked()) return false;
+    archiveAgain=true;
+    archivePreferRemote ||= preferRemote;
+    syncStatus("正在执行任务，剩余会话将在任务结束后继续同步。");
+    return true;
+  }
   syncStatus("正在核对并同步对话、实验记录和 CSV…");
   try {
     // Input/import handlers have already saved local edits. Do not synthesize a
@@ -141,6 +148,8 @@ async function synchronizeArchive({preferRemote=false,background=false}={}) {
       conversationCache.delete(activeConversation.id);
     }
     for (const id of ids) {
+      // An analysis may have started while the previous HTTP request was in flight.
+      if (pauseForActiveTask()) return;
       const deleted=savedValue(conversationPrefix+"deleted:"+id);
       if (deleted || remoteIds.get(id)?.deleted) {
         if (!remoteIds.get(id)?.deleted) await archiveRequest(`/conversations/${id}`,{method:"DELETE"});
@@ -155,6 +164,7 @@ async function synchronizeArchive({preferRemote=false,background=false}={}) {
       if (!saved) { archiveAgain=true;continue; }
       if (JSON.stringify(wireRecord(saved))!==JSON.stringify(wireRecord(merged.record))) archiveAgain=true;
       // A newer local Clear CSV must not restore files from the older response generation.
+      if (pauseForActiveTask()) return;
       missing=(await reconcileFiles(saved,(saved.file_epoch || 0)===(merged.record.file_epoch || 0) ? merged.files : [])) || missing;
     }
     archiveBootstrap=false; archiveLastSuccess=Date.now();

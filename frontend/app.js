@@ -29,6 +29,7 @@ const state = { dataset: null, csvFile: null, mapping: null, summary: null, resu
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
 const tools = {search_conversation:"检索会话记录", read_conversation_message:"读取历史消息", get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", get_analysis_history:"读取历史分析", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
 tools.run_diagnostic_controls="运行参数与初值对照";
+tools.read_experiment_results="读取所选历史辨识结果";
 Object.assign(tools,{get_diagnostic_evidence:'读取训练与残差证据',connect_plecs:'连接或唤醒 PLECS',
   open_plecs_model:'打开电路模型',search_plecs_models:'搜索电路模型文件夹',select_plecs_model:'选择实验电路',get_plecs_models:'读取电路参数',run_plecs_experiment:'运行 PLECS 对比实验',
   get_plecs_job_result:'接回仿真结果',evaluate_plecs_experiment:'比较仿真辨识误差',read_diagnosis:'读取诊断记录',record_diagnosis:'更新诊断证据'});
@@ -361,11 +362,16 @@ function displaySummary() {
   $("wave-subtitle").textContent = state.dataset.filename;
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
 }
-async function startFit({fromChat=false,waitForCompletion=false,onSubmitted=null}={}) {
+async function startFit({fromChat=false,waitForCompletion=false,onSubmitted=null,executionSelection=null}={}) {
   if (!state.identificationOpen || !state.mapping || (fromChat ? state.busy || state.syncBusy || state.job : historyLocked()) || resultMatchesCurrent(state.result)) return;
   let submitted=false;
   try {
     const fitOptions = options();
+    if(fromChat){
+      const question=executionSelectionQuestion(executionSelection,[fitOptions.method],[fitOptions.pwm_source],{allowAuto:$('pwm-source').value==='auto'});
+      if(question)throw new Error(question);
+      if(fitOptions.pwm_source==='measured'&&!state.mapping.pwm)throw new Error(tr('当前未映射实际 PWM 列，请补齐，或选择并确认控制器重建。'));
+    }
     state.busy = true; controls(); invalidateResult(); notice();
     await ensureDatasetAvailable();
     ui($("job-status"), "正在提交辨识任务…");
@@ -822,9 +828,20 @@ async function applyIdentificationAction(action, context) {
   applied.push(...applyConfigurationChanges(changes,{resetConfirmation:Boolean(staged.dataset||staged.mappingChanged||staged.imageChanged)}));
   controls();persistConversation();
   const prefix=tr(applied.length ? "辨识设置已应用。" : "参数辨识面板已打开。")+(applied.length ? ` ${applied.join(" · ")}。` : "");
-  if (!action.start_after_apply)return prefix+" "+tr("未启动实验，右侧保留已有结果。");
+  if(action.start_after_apply || action.request_selection){
+    const question=executionSelectionQuestion(action.execution_selection,[$('fit-method').value],[pwmSource()],{allowAuto:$('pwm-source').value==='auto'});
+    if(question)return prefix+'\n\n'+question;
+  }
+  if (!action.start_after_apply){
+    const review=action.open_panel||Boolean(staged.dataset||staged.mapping)||Object.keys(changes).length;
+    return prefix+" "+tr(state.result?"未启动实验，右侧保留已有结果。":"未启动实验。")+(review?identificationReviewFeedback():"");
+  }
   const plan=currentIdentificationPlan();
   if(plan&&plan.status==='paused'){
+    const question=executionSelectionQuestion(action.execution_selection,plan.methods,
+      plan.version===3?['measured','controller']:[pwmSource()],{allowAuto:plan.version!==3&&$('pwm-source').value==='auto'});
+    if(question)return prefix+'\n\n'+question;
+    plan.execution_selection=action.execution_selection;
     plan.status='queued';saveIdentificationPlan(plan);return prefix+' '+tr('将继续已有辨识计划，并重新检查实验条件。');
   }
   if (!state.dataset) {toggleSection("toggle-import","import-content","导入波形",true);return prefix+" "+tr("请先上传 CSV；本次未启动实验。");}
@@ -835,7 +852,7 @@ async function applyIdentificationAction(action, context) {
   }
   if (pwmSource()==="measured" && !state.mapping.pwm)return prefix+" "+tr("请映射实际 PWM 列，或手动选择并确认控制器重建；本次未启动实验。");
   if (resultMatchesCurrent(state.result))return prefix+" "+tr("当前配置已有完成结果，未重复启动实验。");
-  const started=await startFit({fromChat:true});
+  const started=await startFit({fromChat:true,executionSelection:action.execution_selection});
   return prefix+" "+(started?.job_id ? tr("辨识任务已提交，进度与结果将在右侧显示。") : tr("未能启动实验：")+tr(started?.error || "请检查当前任务和输入设置。"));
 }
 async function sendMessage(value, {analysisRequest=false}={}) {
@@ -844,7 +861,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   if (!state.connected) { window.alert("Backend is not connected. Please connect to the backend and try again."); return; }
   const currentOnly=analysisRequest;
   const targetResultId=state.resultId;
-  if(currentOnly && (!state.result || !targetResultId)){notice("当前结果已失效，请重新辨识后再分析。");return;}
+  if(currentOnly && (!state.result || !targetResultId)){notice("当前显示结果已变化或不可用，请在右侧重新选择要分析的已保存结果后再试。");return;}
   const corpus=currentOnly ? [] : conversationMessages(readConversation(activeConversation.id));
   const analysisMeta=currentOnly ? analysisDescriptor() : null;
   // Read-only analysis belongs to the displayed completed run, not unsubmitted form edits.
@@ -870,9 +887,11 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     if (state.mapping && !analyzeResult) {
       try { await ensureDatasetAvailable(); } catch (error) { datasetAvailable=false;notice(error.message); }
     }
-    if(currentOnly && (!state.result || state.resultId!==targetResultId))throw new Error("当前结果已失效，请重新辨识后再分析。");
+    if(currentOnly && (!state.result || state.resultId!==targetResultId))throw new Error("当前显示结果已变化或不可用，请在右侧重新选择要分析的已保存结果后再试。");
     const comparison=fitOptions ? parameterComparison() : null;
-    const savedResult=analyzeResult ? state.savedRun : null;
+    // Persist the displayed result in the task request even for a freshly
+    // completed run; backend job/dataset caches can disappear after a restart.
+    const savedResult=analyzeResult ? displayedExperiment() : null;
     let actionContext=null;
     if (!currentOnly) {
       try {
@@ -893,15 +912,18 @@ async function sendMessage(value, {analysisRequest=false}={}) {
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
         pending_start:pendingConfigurationStart?.fingerprint===actionContext.fingerprint,
         pending_reference_confirmation:Boolean(selectedDiagnosticReference()&&!$('diagnostic-reference-confirm').checked)} : undefined,
-      dataset_id:savedResult || !datasetAvailable ? null : state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
-      saved_result:savedResult ? {...savedResult,result:experimentSnapshot(state.result)} : undefined,
+      dataset_id:!datasetAvailable || state.savedRun ? null : savedResult
+        ? (savedResult.dataset.sha256 && savedResult.dataset.sha256===state.dataset?.sha256 ? state.dataset.dataset_id : null)
+        : state.mapping ? state.dataset?.dataset_id : null,mapping:analysisMapping,
+      saved_result:savedResult || undefined,
       options:fitOptions,result_id:fitOptions ? state.resultId : null,
       enable_diagnostic_controls:analyzeResult,
       diagnostic_reference:analyzeResult && selectedDiagnosticReference() && $("diagnostic-reference-confirm").checked ? {dataset_id:diagnosticReference.dataset_id,result_id:state.resultId,confirmed_same_experiment:true} : undefined,
       ground_truth:comparison ? {result_id:state.resultId,...comparison.ground_truth} : undefined,
       conversation_messages:corpus,
       // Displayed result and editable form are separate contexts. The Agent chooses tools.
-      experiments:currentOnly ? [] : chatExperiments(),identification_enabled:!currentOnly && !savedResult && state.identificationOpen && Boolean(fitOptions)});
+      experiments:currentOnly ? [] : chatExperiments(),result_library:currentOnly ? [] : chatResultLibrary(),
+      identification_enabled:!currentOnly && !savedResult && state.identificationOpen && Boolean(fitOptions)});
     pending.remove();
     if (response.mode === "provider_error") {
       const article = message("assistant", response.provider_error, "请求未完成");
@@ -928,6 +950,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
     const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
+      error_code:response.error_code,
       agent_task_id:response.agent_task_id,diagnosis:response.diagnosis,request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
       repeatability:response.repeatability,
       control_checks:response.control_checks,

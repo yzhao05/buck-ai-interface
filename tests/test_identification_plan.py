@@ -13,8 +13,13 @@ def request(message, **opts):
 
 
 def proposal(**updates):
-    return dict(execute=True, clarification='', filename=None, pwm_source='unchanged',
+    result=dict(execute=True, clarification='', filename=None, pwm_source='unchanged',
                 pwm_evidence='', mode=None, resistance_ohm=None) | updates
+    if result['pwm_source'] in ('measured','controller','both') and result['pwm_evidence']:
+        result.setdefault('execution_selection',{'methods':['weighted_integral','pann'],
+            'pwm_sources':['measured','controller'] if result['pwm_source']=='both' else [result['pwm_source']],
+            'method_evidence':'用户要求两种方法','pwm_evidence':result['pwm_evidence']})
+    return result
 
 
 def provider(monkeypatch, arguments, *, fail=False, calls=None):
@@ -103,7 +108,11 @@ def test_validated_model_plan(monkeypatch,text,parsed,changes):
     req=request(text)
     if parsed.get('filename'):req.ui_context.catalog=[{'id':'csv-1','kind':'csv','name':parsed['filename']}]
     result=asyncio.run(chat.answer(req,None))
-    assert result['ui_action']['changes']==changes
+    if parsed.get('execution_selection'):
+        assert result['ui_action']['changes']==changes
+    else:
+        assert result['ui_action'] is None
+        assert result['tool_calls'][-1]['status']=='未执行'
 
 
 FOUR_REQUEST='根据我的CASE16A_noise03_seed13.csv，完成rebuild pwm和实际pwm；pann和加权积分四个仿真'

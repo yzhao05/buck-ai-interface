@@ -13,6 +13,10 @@ from backend.schemas import ChatRequest
                                      "Identify parameters and explain the equations"])
 def test_deepseek_tool_roundtrip(monkeypatch, message):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key-not-real")
+    choice_message='使用 PANN 和 CSV 实测 PWM。'
+    choices={'methods':['pann'],'pwm_sources':['measured'],
+             'method_evidence':choice_message,'pwm_evidence':choice_message}
+    start_arguments=json.dumps({'execution_selection':choices})
     requests = []
     calls = []
     class Client:
@@ -23,7 +27,7 @@ def test_deepseek_tool_roundtrip(monkeypatch, message):
             requests.append(copy.deepcopy(json))
             if len(requests) == 1:
                 message = {"role":"assistant", "content":None, "tool_calls":[
-                    {"id":"fit-1", "type":"function", "function":{"name":"start_identification", "arguments":"{}"}}]}
+                    {"id":"fit-1", "type":"function", "function":{"name":"start_identification", "arguments":start_arguments}}]}
             elif len(requests) == 2 and any(word in str(requests[0]['messages'][-1]) for word in ('公式','equations')):
                 message = {"role":"assistant", "content":None, "tool_calls":[
                     {"id":"search", "type":"function", "function":{"name":"search_knowledge", "arguments":'{"query":"Buck 模型"}'}}]}
@@ -35,7 +39,8 @@ def test_deepseek_tool_roundtrip(monkeypatch, message):
         if name == "start_identification":return {"job_id":"real-test-job", "status":"queued"}
         return {"rows":1000}
     monkeypatch.setattr(chat.httpx, "AsyncClient", Client)
-    result=asyncio.run(chat.answer(ChatRequest(message=message,dataset_id="data",identification_enabled=True,reasoning_mode="fast"), invoke))
+    result=asyncio.run(chat.answer(ChatRequest(message=message,dataset_id="data",identification_enabled=True,reasoning_mode="fast",
+        history=[{'role':'user','content':choice_message}]), invoke))
     assert result["mode"]=="deepseek" and result["job_id"]=="real-test-job"
     assert calls.count("start_identification")==1
     assert requests[1]["messages"][-1]["tool_call_id"]=="fit-1"

@@ -1,5 +1,6 @@
 const assert=require('node:assert/strict');
 const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
+const baseUrl=process.env.TEST_BASE_URL || 'http://127.0.0.1:8001';
 (async()=>{
  const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
  const page=await browser.newPage({viewport:{width:1500,height:1050}}),errors=[];
@@ -9,7 +10,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
  const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();await ready();};
  try{
-  await page.goto('http://127.0.0.1:8001');await ready();await send('需要保留的旧会话');
+  await page.goto(baseUrl);await ready();await send('需要保留的旧会话');
   await page.evaluate(()=>synchronizeArchive());await ready();
   const previous=await page.evaluate(()=>({id:activeConversation.id,record:wireRecord(activeConversation),key:archiveKey}));
   // Another browser has a newer message/settings copy. Automatic sync must store
@@ -17,7 +18,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   const remote=structuredClone(previous.record);
   remote.messages.push({id:crypto.randomUUID(),created:Date.now(),role:'assistant',content:'远端新增历史消息',mode:'local',response:null});
   remote.meta_updated=Date.now()+1;remote.fields.vin='33';remote.draft='远端草稿';
-  const saved=await page.request.post('http://127.0.0.1:8001/api/archive/conversations/'+previous.id,{headers:{'X-Archive-Key':previous.key},data:remote});assert(saved.ok());
+  const saved=await page.request.post(baseUrl+'/api/archive/conversations/'+previous.id,{headers:{'X-Archive-Key':previous.key},data:remote});assert(saved.ok());
   let release,arrived;let rootRequests=0;
   let gate=new Promise(resolve=>release=resolve),reached=new Promise(resolve=>arrived=resolve);
   await page.route('**/api/archive',async route=>{rootRequests++;arrived();await gate;await route.continue();});
@@ -75,6 +76,20 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    const result={filename:file?.filename,text:await file?.blob.text()};
    await BuckAttachments.remove(scope);return result;
   }),{filename:'new.csv',text:'new'});
+  let merges=0;
+  await page.route('**/api/archive/conversations/*',route=>{
+    if(route.request().method()==='POST') merges++;
+    return route.continue();
+  });
+  gate=new Promise(resolve=>release=resolve);reached=new Promise(resolve=>arrived=resolve);
+  await start();
+  await page.evaluate(()=>{state.chatBusy=true;});
+  release();
+  await page.waitForFunction(()=>!archiveRunning);
+  assert.equal(merges,0,'A background sync yields before posting conversations during analysis');
+  await page.evaluate(()=>{state.chatBusy=false;});
+  await page.waitForFunction(()=>archiveLastSuccess>0 && !archiveRunning);
+  assert(merges>0,'Deferred conversations synchronize after analysis ends');
   assert.deepEqual(errors,[]);
   console.log('PASS: slow automatic sync leaves controls/focus/selection/scroll/DOM intact, merges remote messages, throttles visibility events and preserves navigation/new drafts');
  }finally{await browser.close();}

@@ -1,7 +1,7 @@
 /* Searchable conversation material. Analysis types come only from stored metadata. */
 "use strict";
 function analysisDescriptor() {
-  return {kind:"identification_analysis",filename:state.savedRun?.dataset.filename || state.dataset?.filename || null,method:state.result?.method || state.result?.options?.method || null,
+  return {kind:"identification_analysis",filename:state.result?.filename || state.savedRun?.dataset.filename || null,method:state.result?.method || state.result?.options?.method || null,
     pwm_source:state.result?.options?.pwm_source || null,result_id:state.resultId || null};
 }
 function findHistoricalAnalyses(record) {

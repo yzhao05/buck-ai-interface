@@ -27,6 +27,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.equal(await page.locator('#pwm-source').inputValue(),'controller');
   assert.equal(await page.locator('#fit-mode').inputValue(),'LC');
   assert.match(await page.locator('#plan-note').innerText(),/确认控制电路/);
+  assert.match(await page.locator('.message.assistant').last().locator('.message-content').innerText(),/确认控制电路/);
   assert.equal(fits.length,0,'A restored CSV must not imply circuit confirmation');
   await page.reload();await ready();
   assert.equal(fits.length,0,'Restoring a plan never automatically submits it');

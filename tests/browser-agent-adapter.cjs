@@ -56,7 +56,12 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    await page.evaluate(text=>sendMessage(text),text);
    const body=await page.evaluate(()=>sentRequests.at(-1));
    assert(body.result_id&&body.ui_context&&body.experiments.length);
-   assert(body.enable_diagnostic_controls&&body.identification_enabled);
+   assert(body.enable_diagnostic_controls);
+   // A displayed snapshot is read-only; new executions use ui_context and
+   // configure_identification rather than the snapshot's legacy start tool.
+   assert.equal(body.identification_enabled,false);
+   assert.equal(body.saved_result.id,body.result_id);
+   assert.equal(body.ui_context.options.method,'weighted_integral');
   }
   // Only the explicit result-analysis UI action narrows the scope.
   await page.evaluate(()=>sendMessage('分析这个结果',{analysisRequest:true}));

@@ -19,8 +19,11 @@ def install(monkeypatch, *, execute=False, controls=False):
                 msg = {'role':'assistant','content':None,'tool_calls':[{'id':'controls','type':'function',
                     'function':{'name':'run_diagnostic_controls','arguments':'{}'}}]}
             elif execute and payload['messages'][-1]['role'] != 'tool':
+                opts=json.loads(payload['messages'][1]['content'].split('：',1)[1])['configuration']
+                selection={'methods':[opts['method']],'pwm_sources':[opts['pwm_source']],
+                           'method_evidence':'Explicit execution fixture method','pwm_evidence':'Explicit execution fixture PWM'}
                 msg = {'role':'assistant', 'content':None, 'tool_calls':[{'id':'fit', 'type':'function',
-                    'function':{'name':'start_identification', 'arguments':'{}'}}]}
+                    'function':{'name':'start_identification', 'arguments':json.dumps({'execution_selection':selection})}}]}
             else:
                 msg = {'role':'assistant', 'content':'Provider answer'}
             return httpx.Response(200, request=httpx.Request('POST',url), json={'choices':[{'message':msg}]})

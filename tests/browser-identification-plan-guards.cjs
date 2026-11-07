@@ -25,7 +25,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.match(await page.locator('#plan-note').innerText(),/数据或参数已更改/);assert.equal(fits.length,2);
   await page.locator('#plan-cancel').click();
   const duplicate=await page.evaluate(async()=>{
-    const action={id:'replay-plan',type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{pwm_source:'measured'}};
+    const action={id:'replay-plan',type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{pwm_source:'measured'},
+      execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured'],method_evidence:'Both methods explicitly selected',pwm_evidence:'Measured PWM explicitly selected'}};
     let ctx={request_id:action.id,fingerprint:configurationFingerprint()};
     await applyIdentificationAction(action,ctx);
     ctx.fingerprint=configurationFingerprint();return applyIdentificationAction(action,ctx);
@@ -52,7 +53,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   }),null);
   await page.evaluate(async()=>{
     const ctx={request_id:'quota-plan',fingerprint:configurationFingerprint()};
-    await applyIdentificationAction({id:ctx.request_id,type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{}},ctx);
+    await applyIdentificationAction({id:ctx.request_id,type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{},
+      execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['auto'],method_evidence:'Both methods explicitly selected',pwm_evidence:'Auto PWM explicitly selected'}},ctx);
     const original=Storage.prototype.setItem;
     Storage.prototype.setItem=function(key,value){
       if(key.startsWith('buck-plan:'))throw new DOMException('Quota exhausted','QuotaExceededError');

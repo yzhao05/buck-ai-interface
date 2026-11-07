@@ -9,6 +9,37 @@ const configurationFields={
 };
 const mappingFields={time:'map-time',current:'map-current',voltage:'map-voltage',pwm:'map-pwm',time_unit:'time-unit',current_unit:'current-unit',voltage_unit:'voltage-unit'};
 let pendingConfigurationStart=null;
+function executionSelectionQuestion(selection,methods,sources,{allowAuto=false}={}){
+  const missing=[];
+  if(!selection?.method_evidence?.trim() || !Array.isArray(selection.methods) || !methods.every(value=>selection.methods.includes(value)))
+    missing.push(tr('计算方法：抗噪加权积分、PANN，还是两种都运行？'));
+  if(!selection?.pwm_evidence?.trim() || !Array.isArray(selection.pwm_sources) || !(sources.every(value=>selection.pwm_sources.includes(value)) || (allowAuto&&selection.pwm_sources.includes('auto'))))
+    missing.push(tr('PWM 来源：CSV 实测 PWM、控制器重建，还是明确采用自动判断？'));
+  return missing.length?tr('开始前请先选择：')+'\n\n'+missing.map(item=>'- '+item).join('\n')+'\n\n'+tr('尚未启动辨识；请回复具体选项后继续。'):'';
+}
+function identificationReviewFeedback(){
+  // Read the applied UI state, not the model's pre-application assumptions.
+  const selected=id=>$(id).selectedOptions[0]?.textContent||$(id).value;
+  const m=state.mapping;
+  const mapping=!state.dataset?tr('请先导入 CSV，再核对列与单位并点击“应用并检查数据”。')
+    :!m?tr('列映射尚未应用，请核对时间、电流、电压列及单位，然后点击“应用并检查数据”。')
+    :tr('列映射已应用，请核对是否对应本次数据：')+[
+      `${tr('时间')} = ${m.time} (${m.time_unit})`,`${tr('电流')} = ${m.current} (${m.current_unit})`,
+      `${tr('电压')} = ${m.voltage} (${m.voltage_unit})`,`PWM = ${m.pwm||tr('未映射')}`
+    ].join('；')+'。'+tr('如需更改，请修改后重新点击“应用并检查数据”；无误则无需重复应用。');
+  const settings=[`${tr('辨识目标')} = ${selected('fit-mode')}`,`${tr('计算方法')} = ${selected('fit-method')}`,
+    `Vin = ${$('vin').value} V`,`${tr('开关频率 (kHz)')} = ${$('frequency').value}`,
+    `${tr('训练区间占比')} = ${$('train-fraction').value}%`,`${tr('PWM 来源')} = ${tr(pwmSource()==='controller'?'控制器重建':'实测 PWM')}`,
+    `${tr('开始时间 (ms)')} = ${$('start-ms').value||tr('自动')}`,`${tr('结束时间 (ms)')} = ${$('end-ms').value||tr('自动')}`];
+  if($('fit-mode').value==='LC')settings.push(`${tr('负载电阻')} = ${$('fixed-r').value} Ω`);
+  if($('fit-method').value==='pann')settings.push(`${tr('训练轮数')} = ${$('pann-epochs').value}`);
+  let requirement=tr('请核对这些设置是否与本次数据及实验工况一致。');
+  if(pwmSource()==='controller' && $('controller-confirmed').value!=='yes')requirement+=' '+tr('控制器接线与参数尚未确认，请核对后在基本信息中确认电路配置。');
+  if(state.dataset&&m&&pwmSource()==='measured'&&!m.pwm)requirement+=' '+tr('当前未映射实际 PWM 列，请补齐，或选择并确认控制器重建。');
+  return '\n\n'+tr('开始前请核对以下两项：')+'\n\n1. **'+tr('列与单位映射')+'**：'+mapping+
+    '\n\n2. **'+tr('实验设置')+'**：'+settings.join('；')+'。'+requirement+
+    '\n\n'+tr('核对完成且数据就绪后，点击“开始参数辨识”，或明确回复“开始参数辨识”。本次不会自动启动。');
+}
 const convertedField=(value,scale)=>value===null?'':typeof value==='number'?String(Number((value*scale).toPrecision(15))):String(value);
 function validConfigurationChanges(c){
   if(!c || Array.isArray(c) || typeof c!=='object')return false;

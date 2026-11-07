@@ -91,7 +91,7 @@ def test_analysis_options(key,value):
 
 def test_two_method_plan_preserves_tuning_and_nested_controller():
     from test_identification_plan import request as plan_request, proposal
-    text='设置训练轮数为300，时间窗口改为0–0.8 ms，R1改为12 kΩ，然后运行两种方法'
-    parsed=proposal(tuning={'epochs':300,'start_s':0,'end_s':.0008,'controller':{'R1_ohm':12000}},evidence={'changes.controller.R1_ohm':'R1改为12 kΩ'})
+    text='设置训练轮数为300，时间窗口改为0–0.8 ms，R1改为12 kΩ，使用实测PWM运行两种方法'
+    parsed=proposal(pwm_source='measured',pwm_evidence='使用实测PWM',tuning={'epochs':300,'start_s':0,'end_s':.0008,'controller':{'R1_ohm':12000}},evidence={'changes.controller.R1_ohm':'R1改为12 kΩ'})
     action=configuration.batch_action(plan_request(text),IdentificationPlanProposal.model_validate(parsed))
-    assert action['changes']==parsed['tuning']
+    assert action['changes']=={'pwm_source':'measured',**parsed['tuning']}

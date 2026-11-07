@@ -1,5 +1,6 @@
 """CSV ingestion. Original adaptive time samples are retained for computation."""
 import csv
+import codecs
 import hashlib
 import io
 from dataclasses import dataclass
@@ -25,18 +26,25 @@ def read_csv(raw: bytes, name: str) -> Dataset:
         raise ValueError("CSV 必须非空且小于 32 MB。")
     if b"\x00" in raw:
         raise ValueError("请导出 UTF-8 / GB18030 文本 CSV，不支持二进制或 UTF-16 文件。")
+    # Validate incrementally: never retain a decoded copy of the entire file.
+    encoding = 'utf-8-sig'
     try:
-        text = raw.decode("utf-8-sig")
+        decoder = codecs.getincrementaldecoder(encoding)()
+        for offset in range(0, len(raw), 65536):
+            decoder.decode(raw[offset:offset+65536], final=offset+65536 >= len(raw))
     except UnicodeDecodeError:
-        text = raw.decode("gb18030")
+        encoding = 'gb18030'
+    with io.TextIOWrapper(io.BytesIO(raw), encoding=encoding, newline='') as stream:
+        sample = stream.read(8192)
     try:
-        delimiter = csv.Sniffer().sniff(text[:8192], delimiters=",;\t").delimiter
+        delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t").delimiter
     except csv.Error:
         delimiter = ","
-    first = next(csv.reader(io.StringIO(text), delimiter=delimiter), [])
+    with io.TextIOWrapper(io.BytesIO(raw), encoding=encoding, newline='') as stream:
+        first = next(csv.reader(stream, delimiter=delimiter), [])
     if len(first) < 3 or len(first) > 32 or len(first) != len(set(first)):
         raise ValueError("首行需要 3～32 个不重复的列名（至少时间、电流、电压）。")
-    frame = pd.read_csv(io.StringIO(text), sep=delimiter, nrows=MAX_ROWS + 1)
+    frame = pd.read_csv(io.BytesIO(raw), encoding=encoding, sep=delimiter, nrows=MAX_ROWS + 1)
     if len(frame) > MAX_ROWS or len(frame) < 30:
         raise ValueError("需要 30～350000 行数据；请在 PLECS 中选择合适时间段导出。")
     return Dataset(name[:150], frame, hashlib.sha256(raw).hexdigest())

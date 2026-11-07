@@ -22,7 +22,18 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#fit-mode').selectOption('LCR');
   await page.locator('#identify').click();await page.waitForFunction(()=>state.result&&!state.job);
   const originalId=await page.evaluate(()=>state.resultId);
-  assert.equal((await analyze()).result_id,originalId);
+  const initial=await analyze();assert.equal(initial.result_id,originalId);
+  assert.equal(initial.saved_result.id,originalId,'Freshly completed results must carry a durable snapshot too');
+  assert.deepEqual(initial.saved_result.result.parameters,await page.evaluate(()=>state.result.parameters));
+  // Exercise real backend validation using the browser's complete payload.
+  // The isolated test server has no API key; reaching that error proves the
+  // selected result passed binding checks before any provider request.
+  const validated=await page.evaluate(async body=>{
+    const response=await fetch(base.replace(/\/$/,'')+'/api/chat?validate_snapshot=1',{
+      method:'POST',headers:{'Content-Type':'application/json','X-Session-ID':sessionId},body:JSON.stringify(body)});
+    return {status:response.status,body:await response.json()};
+  },initial);
+  assert.equal(validated.status,200);assert.equal(validated.body.error_code,'missing_api_key');
   // Reproduce the user's preceding answer without calling an external model.
   await page.evaluate(()=>rememberMessage('assistant','OLD_LCR_RESULT: C=489.8 μF，R=5.7 Ω。'));
   await page.locator('#fit-mode').selectOption('LC');await page.locator('#fixed-r').fill('6');
@@ -37,6 +48,10 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    assert.equal(body.current_result_analysis,true);
    assert.equal(body.result_id,current.id);assert.equal(body.options.mode,'LC');assert.equal(body.options.resistance_ohm,6);
    assert.deepEqual(body.options,current.result.options);assert.deepEqual(body.ground_truth,{result_id:current.id,...current.truth.ground_truth});
+   assert.equal(body.saved_result.id,current.id);assert.deepEqual(body.saved_result.result.parameters,current.result.parameters);
+   assert.deepEqual(body.saved_result.result.options,body.options);assert.deepEqual(body.saved_result.result.mapping,body.mapping);
+   assert.deepEqual(body.saved_result.ground_truth,body.ground_truth);
+   assert.equal(body.saved_result.result.chart,undefined);
    assert.deepEqual(body.history,[]);assert.deepEqual(body.conversation_messages,[]);
    // Explicit result analysis sends only the selected result context.
    assert.deepEqual(body.experiments,[]);
@@ -67,6 +82,21 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#chat-input').fill('比较本会话的两次实验');await page.locator('#send-chat').click();
   const compare=(await compareRequest).postDataJSON();await ready();
   assert.equal(compare.current_result_analysis,false);assert(compare.experiments.length>=2);assert(compare.conversation_messages.length>0);
+  // Simulate a job cache lost after a backend restart. The live card has not
+  // been manually reselected from history; both menu actions must still work.
+  assert.equal(await page.evaluate(()=>state.savedRun),null);
+  await page.route('**/api/jobs/*/analysis-copy',route=>route.fulfill({status:404,json:{detail:'expired cache'}}));
+  const owner=await page.evaluate(()=>activeConversation.id);
+  const newRequest=page.waitForRequest(r=>r.url().endsWith('/api/agent/tasks'));
+  await page.locator('#ask-error').click();await page.locator('#analyze-new').click();
+  const copied=(await newRequest).postDataJSON();await ready();
+  assert.notEqual(await page.evaluate(()=>activeConversation.id),owner);
+  assert.notEqual(copied.result_id,current.id);
+  assert.equal(copied.saved_result.id,copied.result_id);
+  assert.deepEqual(copied.saved_result.result.parameters,current.result.parameters);
+  assert.deepEqual(copied.saved_result.result.options,current.result.options);
+  assert.deepEqual(copied.ground_truth,{result_id:copied.result_id,...current.truth.ground_truth});
+  assert.deepEqual(await page.evaluate(()=>state.result.parameters),current.result.parameters);
   assert.deepEqual(errors,[]);
   console.log('PASS: LCR to fixed-R LC, two successive current-result analyses, exact ID/options/truth, draft preservation and independent historical comparison');
  }finally{await browser.close();}

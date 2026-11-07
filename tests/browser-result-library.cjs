@@ -30,10 +30,15 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.equal(await page.locator('#fit-mode').inputValue(),'LC');assert.deepEqual(await page.evaluate(()=>parameterComparison()),first.truth);
   await page.locator('#ask-error').click();await page.locator('#analyze-here').click();await ready();
   assert.equal(chats.at(-1).saved_result.id,first.id);assert.equal(chats.at(-1).dataset_id,null);assert.equal(chats.at(-1).options.mode,'LCR');
+  assert.deepEqual(chats.at(-1).result_library,[],'Single-result button must not mix in other runs');
   assert(!JSON.stringify(chats.at(-1).saved_result).includes('"chart"'));
   assert(!await page.locator('.message.assistant').last().innerText().then(t=>t.includes('Saved result')));
   // An expired job still has a durable result, including its own truth comparison.
   await choose(second.id);assert.deepEqual(await page.evaluate(()=>state.result.parameters),second.p);assert.equal(await page.evaluate(()=>parameterComparison()),null);
+  await page.locator('#ask-error').click();await page.locator('#analyze-here').click();await ready();
+  assert.equal(chats.at(-1).saved_result.id,second.id);assert.deepEqual(chats.at(-1).saved_result.result.parameters,second.p);
+  assert.equal(chats.at(-1).ground_truth,undefined,'Switching results must not inherit the previous truth');
+  assert.equal(chats.at(-1).saved_result.ground_truth,null);
   // The selected result can belong to a different CSV than the current import.
   await page.evaluate(async()=>{const file=new File([await state.csvFile.arrayBuffer()], 'another-experiment.csv', {type:'text/csv'});await importData(file);});await ready();
   await page.route('**/api/jobs/*',route=>route.fulfill({status:404,json:{detail:'expired test cache'}}));
@@ -43,6 +48,19 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert(await page.evaluate(()=>JSON.stringify(state.chart)===JSON.stringify(state.summary.chart)));
   await page.reload();await ready();await page.waitForFunction(id=>state.savedRun?.id===id,first.id);
   assert.equal(await page.locator('#vin').inputValue(),'31');assert.deepEqual(await page.evaluate(()=>state.result.parameters),first.p);
+  const list=await page.locator('.result-library-item').evaluateAll(items=>items.map(el=>({id:el.dataset.resultId,name:el.querySelector('strong').textContent})));
+  await page.locator('#chat-input').fill('对比右侧列表中的这两次辨识，解释参数和误差差异');await page.locator('#send-chat').click();await ready();
+  const comparison=chats.at(-1);
+  assert.equal(await page.evaluate(()=>activeConversation.messages.at(-1).response?.error_code),'missing_api_key',
+    'The complete browser payload must pass real backend validation before the test server reports its missing API key');
+  assert.equal(comparison.current_result_analysis,false);assert.equal(comparison.result_id,first.id);
+  assert.deepEqual(comparison.result_library.map(run=>({id:run.id,name:run.display_name})),list);
+  assert.deepEqual(comparison.result_library.find(run=>run.id===first.id).result.parameters,first.p);
+  assert.deepEqual(comparison.result_library.find(run=>run.id===second.id).result.parameters,second.p);
+  assert.equal(comparison.result_library.find(run=>run.id===first.id).ground_truth.result_id,first.id);
+  assert.equal(comparison.result_library.find(run=>run.id===second.id).ground_truth,null);
+  assert(!JSON.stringify(comparison.result_library).includes('"chart"'));
+  assert.equal(await page.evaluate(()=>state.resultId),first.id);assert.equal(fits,2,'Reading the list must not switch the result or refit');
   const downloads=[];page.on('download',d=>downloads.push(d));await downloadReportFiles(page);
   await page.waitForFunction(()=>!reportExportBusy);await page.waitForTimeout(300);
   assert.equal(downloads.length,2);assert.deepEqual(downloads.map(d=>d.suggestedFilename()).sort(),[filename,filename.replace('.json','.pdf')].sort());

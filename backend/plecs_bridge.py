@@ -9,23 +9,29 @@ import secrets
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'bridge'
 TOOLS = {'check_plecs_connection', 'connect_plecs', 'search_plecs_models', 'select_plecs_model',
          'get_plecs_models', 'open_plecs_model', 'run_plecs_experiment'}
 
 
+@contextmanager
 def database():
     ROOT.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(ROOT / 'queue.sqlite', timeout=15)
-    db.row_factory = sqlite3.Row
-    db.executescript('''
-        CREATE TABLE IF NOT EXISTS peers(owner TEXT PRIMARY KEY, secret TEXT, seen REAL, settings TEXT);
-        CREATE TABLE IF NOT EXISTS work(id TEXT PRIMARY KEY, owner TEXT, fingerprint TEXT,
-          state TEXT, payload TEXT, result TEXT, created REAL, deadline REAL);
-        CREATE UNIQUE INDEX IF NOT EXISTS work_dedupe ON work(owner, fingerprint);
-    ''')
-    return db
+    try:
+        db.row_factory = sqlite3.Row
+        db.executescript('''
+            CREATE TABLE IF NOT EXISTS peers(owner TEXT PRIMARY KEY, secret TEXT, seen REAL, settings TEXT);
+            CREATE TABLE IF NOT EXISTS work(id TEXT PRIMARY KEY, owner TEXT, fingerprint TEXT,
+              state TEXT, payload TEXT, result TEXT, created REAL, deadline REAL);
+            CREATE UNIQUE INDEX IF NOT EXISTS work_dedupe ON work(owner, fingerprint);
+        ''')
+        with db:
+            yield db
+    finally:
+        db.close()
 
 
 def pair(owner, configuration=None):

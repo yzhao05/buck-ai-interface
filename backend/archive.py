@@ -19,6 +19,7 @@ from fastapi.responses import Response
 from pydantic import Field
 
 from .data import MAX_BYTES
+from .memory_usage import log_memory
 from .schemas import StrictModel, SavedExperiment
 from .vision import ChatImage
 
@@ -73,14 +74,27 @@ class ArchiveStore:
 
     def get(self, owner, identifier):
         with self.connect() as db:
+            db.execute("BEGIN")
             row = db.execute("SELECT * FROM conversations WHERE owner=? AND id=?",(owner,identifier)).fetchone()
             if row is None: raise HTTPException(404, "Archive conversation not found")
             if row["deleted"]: return {"deleted":True,"id":identifier}
             record = json.loads(row["payload"])
-            files = [{"sha256":r["sha"],"filename":r["filename"],"size":len(r["raw"]),
-                      "valid":hashlib.sha256(r["raw"]).hexdigest()==r["sha"]}
-                     for r in db.execute("SELECT * FROM files WHERE owner=? AND id=? AND epoch=?",(owner,identifier,record["file_epoch"]))]
+            files = self._manifest(db, owner, identifier, record["file_epoch"])
             return {"deleted":False,"record":record,"files":files}
+
+    @staticmethod
+    def _manifest(db, owner, identifier, epoch):
+        files = []
+        rows = db.execute("SELECT rowid,sha,filename,length(raw) AS size FROM files WHERE owner=? AND id=? AND epoch=?",
+                          (owner, identifier, epoch))
+        for row in rows:
+            digest = hashlib.sha256()
+            with db.blobopen("files", "raw", row["rowid"], readonly=True) as blob:
+                while chunk := blob.read(64 * 1024):
+                    digest.update(chunk)
+            files.append({"sha256":row["sha"], "filename":row["filename"], "size":row["size"],
+                          "valid":digest.hexdigest() == row["sha"]})
+        return files
 
     def merge(self, owner, incoming):
         identifier = incoming["id"]
@@ -116,7 +130,8 @@ class ArchiveStore:
                 raise HTTPException(413,"Conversation archive is full; start a new conversation")
             db.execute("INSERT OR REPLACE INTO conversations VALUES(?,?,0,?)",(owner,identifier,encoded))
             db.execute("DELETE FROM files WHERE owner=? AND id=? AND epoch<>?",(owner,identifier,merged["file_epoch"]))
-        return self.get(owner,identifier)
+            files = self._manifest(db, owner, identifier, merged["file_epoch"])
+        return {"deleted":False, "record":merged, "files":files}
 
     def delete(self, owner, identifier):
         with self.connect() as db:
@@ -166,7 +181,11 @@ def get_conversation(identifier: UUID, account=Depends(owner)):
 @router.post("/conversations/{identifier}")
 def merge_conversation(identifier: UUID, body: SavedConversation, account=Depends(owner)):
     if identifier != body.id: raise HTTPException(422,"Conversation ID mismatch")
-    return store.merge(account,body.model_dump(mode="json"))
+    log_memory('before_archive_merge')
+    try:
+        return store.merge(account,body.model_dump(mode="json"))
+    finally:
+        log_memory('after_archive_merge')
 
 
 @router.delete("/conversations/{identifier}")

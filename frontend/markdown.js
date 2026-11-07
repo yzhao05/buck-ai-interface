@@ -20,14 +20,85 @@ window.BuckMarkdown = (() => {
     }
   });
 
-  function render(element, source) {
-    const raw = String(source ?? "");
+  const citationPattern = /\[kb:[^\]\s]+\]/g;
+  const citationHeading = /^(?:依据|来源|引用|证据|references?|sources?|citations?|evidence)[:：]?$/i;
+  const withoutCitations = text => text.replace(citationPattern, "");
+  const onlyCitations = text => withoutCitations(text)!==text && /^[\s,，;；、。.—–\-()（）:：]*$/.test(
+    withoutCitations(text).replace(/^(?:依据|来源|引用|证据|references?|sources?|citations?|evidence)\s*[:：]?/i,""));
+
+  // Only known application status annotations, never arbitrary parentheses,
+  // physical parameters or code examples. Match across inline formatting.
+  const stateAssignment = String.raw`(?:identification_enabled|controller_confirmed|result_loaded)\s*=\s*(?:true|false)`;
+  const stateNote = new RegExp(String.raw`\(\s*${stateAssignment}(?:\s*[,，;；]\s*${stateAssignment})*\s*\)|（\s*${stateAssignment}(?:\s*[,，;；]\s*${stateAssignment})*\s*）`, 'g');
+  const standaloneState = new RegExp(`^\\s*${stateAssignment}\\s*$`);
+  function hideStateNotes(element) {
+    for(const block of element.querySelectorAll('p,li,td,th,h1,h2,h3,h4,h5,h6')){
+      const walker=document.createTreeWalker(block,NodeFilter.SHOW_TEXT), nodes=[];
+      let text='';
+      while(walker.nextNode()){
+        const node=walker.currentNode, parent=node.parentElement;
+        const protectedText=parent.closest('pre,a') || (parent.closest('code') && !standaloneState.test(parent.closest('code').textContent));
+        nodes.push({node,start:text.length,end:text.length+node.textContent.length});
+        text+=protectedText?'\uFFFC'.repeat(node.textContent.length):node.textContent;
+      }
+      for(const match of [...text.matchAll(stateNote)].reverse()){
+        const start=match.index,end=start+match[0].length;
+        const first=nodes.find(item=>item.start<=start && start<item.end);
+        const last=nodes.find(item=>item.start<end && end<=item.end);
+        const range=document.createRange();
+        range.setStart(first.node,start-first.start);
+        range.setEnd(last.node,end-last.start);
+        range.deleteContents();
+      }
+    }
+  }
+
+  function hideInternalMetadata(element, streaming) {
+    hideStateNotes(element);
+    for(const table of element.querySelectorAll('table')){
+      const header=table.tHead?.rows[0], rows=[...table.tBodies].flatMap(body=>[...body.rows]);
+      if(!header)continue;
+      for(let column=header.cells.length-1;column>=0;column--){
+        if(!citationHeading.test(header.cells[column].textContent.trim()))continue;
+        const cells=rows.map(row=>row.cells[column]);
+        if(cells.some(cell=>!cell))continue;
+        const texts=cells.map(cell=>cell.textContent.trim());
+        const hasCitations=texts.some(text=>withoutCitations(text)!==text);
+        if((hasCitations || streaming) && texts.every(text=>!text || /^[-—–]+$/.test(text) || onlyCitations(text))){
+          for(const row of [header,...rows])row.deleteCell(column);
+        }
+      }
+      if(!header.cells.length)table.remove();
+    }
+    // Remove source-only notes, never substantive explanations or code blocks.
+    for(const heading of element.querySelectorAll('h1,h2,h3,h4,h5,h6')){
+      if(!citationHeading.test(heading.textContent.trim()))continue;
+      const next=heading.nextElementSibling;
+      if(next?.matches('p,ul,ol') && !next.querySelector('pre') && onlyCitations(next.textContent))heading.remove();
+    }
+    for(const note of element.querySelectorAll('p,li')){
+      if(!note.closest('pre') && onlyCitations(note.textContent))note.remove();
+    }
+    for(const list of element.querySelectorAll('ul,ol'))if(!list.children.length)list.remove();
+    const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT), nodes=[];
+    while(walker.nextNode())nodes.push(walker.currentNode);
+    for(const node of nodes){
+      if(node.parentElement.closest('pre'))continue;
+      if(node.parentElement.closest('code') && !onlyCitations(node.textContent))continue;
+      node.textContent=withoutCitations(node.textContent);
+    }
+  }
+
+  function render(element, source, {streaming=false}={}) {
+    // Hold a split citation prefix until the next streamed chunk arrives.
+    const raw = streaming ? String(source ?? "").replace(/\[(?:k(?:b(?::[^\]\n]*)?)?)?$/, "") : String(source ?? "");
     element.classList.add("markdown-body");
     try {
       // Safe parser configuration above: no raw HTML, unsafe URLs or image loads.
       element.innerHTML = md.render(raw);
+      hideInternalMetadata(element, streaming);
     } catch {
-      element.textContent = raw;
+      element.textContent = withoutCitations(raw).replace(stateNote,'');
       element.classList.remove("markdown-body");
       return;
     }

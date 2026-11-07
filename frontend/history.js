@@ -341,13 +341,18 @@ async function analyzeInNewConversation() {
   if (!persistConversation()) {
     notice("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");return;
   }
-  const source=activeConversation, result=structuredClone(state.result), comparison=parameterComparison();
+  const source=activeConversation, result=structuredClone(state.result), comparison=parameterComparison(), snapshot=displayedExperiment();
   const truthDraft={...state.truthDraft}, truthComparison=structuredClone(state.truthComparison);
   state.busy=true;controls();notice("正在为新对话复制实验结果…",true);
   let copied;
   try {
-    copied=state.savedRun ? {session_id:crypto.randomUUID(),job_id:crypto.randomUUID(),dataset:null} : await api(`/api/jobs/${state.resultId}/analysis-copy`,{method:"POST"});
-    const now=Date.now(),opts=result.options,fields={...source.fields,"chat-images":"","selected-result":state.savedRun ? copied.job_id : "",
+    if(state.savedRun)copied={session_id:crypto.randomUUID(),job_id:crypto.randomUUID(),dataset:null};
+    else try{copied=await api(`/api/jobs/${state.resultId}/analysis-copy`,{method:"POST"});}
+    catch(error){
+      if(error.status!==404)throw error;
+      copied={session_id:crypto.randomUUID(),job_id:crypto.randomUUID(),dataset:null};
+    }
+    const now=Date.now(),opts=result.options,fields={...source.fields,"chat-images":"","selected-result":copied.dataset ? "" : copied.job_id,
       vin:String(opts.vin),frequency:String(opts.frequency_hz/1000),"fit-mode":opts.mode,"fixed-r":String(opts.resistance_ohm),
       "fit-method":opts.method,"pwm-source":opts.pwm_source,"controller-confirmed":opts.controller_confirmed?"yes":"no",
       "pwm-denoise":opts.pwm_denoise || 'none',"pwm-filter-cycles":String(opts.pwm_filter_cycles ?? 1),
@@ -358,7 +363,7 @@ async function analyzeInNewConversation() {
     if(truthComparison)truthComparison.result_id=copied.job_id;
     const record={id:copied.session_id,updated:now,meta_updated:now,messages:[],draft:"",fields,file_epoch:0,
       attachment:copied.dataset ? {dataset:copied.dataset,mapping:result.mapping,mappingDraft:result.mapping,resultId:copied.job_id,jobId:null,csvEpoch:0,truthDraft,truthComparison} : null,
-      experiments:[{id:copied.job_id,created:now,updated:now,dataset:copied.dataset ? {filename:copied.dataset.filename,sha256:copied.dataset.sha256} : {...state.savedRun.dataset},
+      experiments:[{id:copied.job_id,created:now,updated:now,dataset:copied.dataset ? {filename:copied.dataset.filename,sha256:copied.dataset.sha256} : {...snapshot.dataset},
         result:experimentSnapshot(result),ground_truth:comparison?{result_id:copied.job_id,...comparison.ground_truth}:null}]};
     // Save the destination before leaving the source. A storage error keeps the source open.
     saveExperimentKeys(record);
