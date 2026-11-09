@@ -33,37 +33,7 @@ jobs:
             backend frontend examples requirements-lock.txt \
             LICENSE THIRD_PARTY_NOTICES.md | tar -x -C build/app
 
-          python - <<'PY'
-          from pathlib import Path
-
-          root = Path("build/app")
-          edits = {
-              "frontend/config.js": [
-                  ('apiBaseUrl: ""', 'apiBaseUrl: window.location.origin'),
-              ],
-              "frontend/app.js": [
-                  ("headers.Authorization =", 'headers["X-Buck-Authorization"] ='),
-              ],
-              "frontend/agent-harness.js": [
-                  ("{Authorization:", '{"X-Buck-Authorization":'),
-              ],
-              "backend/main.py": [
-                  ('request.headers.get("authorization", "")',
-                   'request.headers.get("x-buck-authorization", "")'),
-                  ('allow_headers=["Authorization",',
-                   'allow_headers=["X-Buck-Authorization",'),
-              ],
-          }
-
-          for name, replacements in edits.items():
-              path = root / name
-              text = path.read_text(encoding="utf-8")
-              for old, new in replacements:
-                  if text.count(old) != 1:
-                      raise SystemExit(f"请检查魔搭适配，源码已变化：{name}")
-                  text = text.replace(old, new, 1)
-              path.write_text(text, encoding="utf-8")
-          PY
+          echo 'window.BUCK_CONFIG = { apiBaseUrl: window.location.origin, studioBackend: true, sourceUrl: "https://github.com/${{ github.repository }}" };' > build/app/frontend/config.js
 
           tar -czf build/upload/buck-lab.tar.gz -C build/app .
           cp deploy/modelscope/Dockerfile deploy/modelscope/studio_start.py build/upload/
