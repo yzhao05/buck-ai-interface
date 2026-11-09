@@ -1,0 +1,104 @@
+name: Deploy Buck Lab to ModelScope
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modelscope-buck-lab
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the GitHub commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build the ModelScope upload package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/app build/upload
+
+          git archive "$GITHUB_SHA" -- \
+            backend frontend examples requirements-lock.txt \
+            LICENSE THIRD_PARTY_NOTICES.md | tar -x -C build/app
+
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("build/app")
+          edits = {
+              "frontend/config.js": [
+                  ('apiBaseUrl: ""', 'apiBaseUrl: window.location.origin'),
+              ],
+              "frontend/app.js": [
+                  ("headers.Authorization =", 'headers["X-Buck-Authorization"] ='),
+              ],
+              "frontend/agent-harness.js": [
+                  ("{Authorization:", '{"X-Buck-Authorization":'),
+              ],
+              "backend/main.py": [
+                  ('request.headers.get("authorization", "")',
+                   'request.headers.get("x-buck-authorization", "")'),
+                  ('allow_headers=["Authorization",',
+                   'allow_headers=["X-Buck-Authorization",'),
+              ],
+          }
+
+          for name, replacements in edits.items():
+              path = root / name
+              text = path.read_text(encoding="utf-8")
+              for old, new in replacements:
+                  if text.count(old) != 1:
+                      raise SystemExit(f"请检查魔搭适配，源码已变化：{name}")
+                  text = text.replace(old, new, 1)
+              path.write_text(text, encoding="utf-8")
+          PY
+
+          tar -czf build/upload/buck-lab.tar.gz -C build/app .
+          cp deploy/modelscope/Dockerfile deploy/modelscope/studio_start.py build/upload/
+
+      - name: Push deployment files to ModelScope
+        shell: bash
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${MODELSCOPE_TOKEN:?请在 GitHub 添加 MODELSCOPE_TOKEN}"
+
+          export GIT_TERMINAL_PROMPT=0
+          export GIT_ASKPASS="$RUNNER_TEMP/modelscope-askpass"
+          trap 'rm -f "$GIT_ASKPASS"' EXIT
+          cat > "$GIT_ASKPASS" <<'SH'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' oauth2 ;;
+            *) printf '%s\n' "$MODELSCOPE_TOKEN" ;;
+          esac
+          SH
+          chmod 700 "$GIT_ASKPASS"
+
+          git lfs install
+          git clone --depth 1 --branch master \
+            https://oauth2@www.modelscope.cn/studios/yuzhao05/buck-lab.git studio
+          cp build/upload/* studio/
+          cd studio
+          git config user.name "GitHub Actions"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f -- Dockerfile studio_start.py buck-lab.tar.gz
+          if git diff --cached --quiet; then
+            echo "魔搭文件已经是当前版本。"
+            exit 0
+          fi
+          git commit -m "Deploy GitHub commit $GITHUB_SHA"
+          git push origin HEAD:master
