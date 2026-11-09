@@ -34,6 +34,47 @@ def test_explicit_matching_choices_allow_start_and_are_forwarded():
     assert action['execution_selection']==choices
 
 
+@pytest.mark.parametrize('sources,version', [(['auto'],2),(['measured'],2),(['measured','controller'],3)])
+def test_configure_start_honors_all_selected_methods(sources,version):
+    req=request()
+    req.ui_context.options=FitOptions(method='pann',mode='LC',resistance_ohm=6)
+    choices=selection(['weighted_integral','pann'],sources)
+    action=configuration.agent_action(req,'configure_identification',{'open_panel':False,
+        'changes':{},'start_after_apply':True,'execution_selection':choices})
+    assert action['type']=='identification_plan' and action['version']==version
+    assert action['methods']==['weighted_integral','pann']
+    assert action['execution_selection']==choices
+    if version==2:
+        assert action['changes']['pwm_source']==sources[0]
+    else:
+        assert len(action['runs'])==4
+
+
+def test_configure_can_continue_a_paused_dual_plan():
+    req=request()
+    req.ui_context.paused_plan=True
+    action=configuration.agent_action(req,'configure_identification',{'open_panel':False,'changes':{},
+        'start_after_apply':True,'execution_selection':selection(['weighted_integral','pann'])})
+    assert action['type']=='configure_identification' and action['start_after_apply']
+
+
+@pytest.mark.parametrize('sources,version', [(['auto'],2),(['controller'],2),(['measured','controller'],3)])
+def test_plan_tool_uses_full_selection_even_if_form_was_measured(sources,version):
+    req=request()
+    req.ui_context.pwm_source_setting='measured'
+    req.ui_context.options=FitOptions(mode='LC',resistance_ohm=6)
+    plan=IdentificationPlanProposal(execute=True,clarification='',filename=None,pwm_source='unchanged',
+        mode=None,resistance_ohm=None,execution_selection=selection(['weighted_integral','pann'],sources))
+    result=configuration.batch_action(req,plan)
+    assert result['version']==version
+    if version==2:
+        assert result['changes']['pwm_source']==sources[0]
+    else:
+        assert len(result['runs'])==4
+    with pytest.raises(ValueError,match='PWM 来源与用户选择冲突'):
+        configuration.batch_action(req,plan.model_copy(update={'pwm_source':'measured'}))
+
+
 @pytest.mark.parametrize('field,expected,absent',[('methods','计算方法','PWM 来源'),('pwm_sources','PWM 来源','计算方法')])
 def test_only_missing_choice_is_asked(field,expected,absent):
     choices=selection();choices[field]=[]
@@ -73,6 +114,8 @@ def test_direct_tool_cannot_bypass_selection_and_read_only_tools_remain_availabl
         blocked=await execute('start_identification',{})
         assert '计算方法' in blocked['error'] and 'PWM 来源' in blocked['error']
         assert calls==[]
+        batch=await execute('start_identification',{'execution_selection':selection(['weighted_integral','pann'])})
+        assert 'plan' in batch['error'] and calls==[]
         started=await execute('start_identification',{'execution_selection':selection()})
         assert started['job_id']=='started'
         return '已按选择提交。'

@@ -54,10 +54,10 @@ controller 是局部补丁，仅写指定元件：R1_ohm/R2_ohm/R3_ohm/R4_ohm(Ω
 duty_min/duty_max(0–1)、carrier_phase_at_t0(0–1)、initial_c2_V/initial_c3_V。kΩ×1000,nF×1e-9,kHz×1000,百分比÷100。
 未指定字段省略，包含嵌套 controller；start_s/end_s=null 仅表示用户明确要求清空时间边界。
 mapping 可局部修改 time/current/voltage/pwm 列名、time_unit(s/ms/us/ns)、current_unit(A/mA)、voltage_unit(V/mV)；pwm=null 清除 PWM 映射。
-assets.csv_id 切换已上传 CSV，assets.circuit_id 切换已上传电路参考图(null恢复默认图)。
+assets.csv_id 加载目录中的 CSV，assets.circuit_id 切换已上传电路参考图(null恢复默认图)。
 assets.result_id 选择当前会话已保存辨识结果供查看/分析，不修改实验输入配置，不能和切换CSV或列映射混用。
 两方法/四组执行计划不同时设置 analysis 或 assets.result_id；先辨识完成，再单独指定真值或参考。
-只能从 ui_context.catalog 根据用户明确指定的文件选择 id；同名多份或不明确时 clarification，不能猜。
+文件 id 来自 ui_context.catalog 或本次 search_local_csv 实际返回的候选；同名多份或不明确时 clarification，不能猜。
 换电路参考图不等于更换 CSV 或自动识别元件参数；需要这些变化则分别填写。
 analysis.truth_L_H/truth_C_F 设置真实L/C(SI单位，可null清空)，calculate_error=true 仅用户要求计算真值误差时；
 analysis.reference_csv_id 从已上传CSV选择诊断干净参考(null清除)，reference_confirmed=true 只在用户明确确认同一实验同一工况时。

@@ -53,9 +53,19 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    await page.evaluate(()=>continueIdentificationPlan());await ready();
    assert.equal(fits.length,count+1);
    assert.equal(fits.at(-1).options.pwm_source,source);
+   assert.equal(await page.locator('#pwm-source').inputValue(),'auto');
    assert.deepEqual(await page.evaluate(()=>planRuns(currentIdentificationPlan()).map(run=>run.pwm_source)),[source,source]);
    assert.match(await page.locator('#plan-source').innerText(),source==='measured'?/CSV 实际开关状态/:/已知控制器重建/);
    assert.match(await answer(),/Mock job; no training executed/);
+   assert.equal(await page.evaluate(()=>currentIdentificationPlan().jobId),null);
+   const frequency=await page.locator('#frequency').inputValue();
+   await page.locator('#frequency').evaluate(el=>{el.value=Number(el.value)+1;});
+   await page.locator('#plan-continue').click();await ready();
+   assert.equal(fits.length,count+1);
+   assert.match(await page.locator('#plan-note').innerText(),/数据或参数已更改/);
+   await page.locator('#frequency').evaluate((el,value)=>{el.value=value;},frequency);
+   await page.locator('#plan-continue').click();await ready();
+   assert.equal(fits.length,count+2,'User continuation retries a confirmed failed step');
   }
   await page.evaluate(()=>{const plan=currentIdentificationPlan();plan.status='cancelled';saveIdentificationPlan(plan);document.getElementById('fit-method').value='weighted_integral';controls();});
   // This rule applies to Agent execution, not the user's manual start button.

@@ -4,6 +4,7 @@ import sqlite3
 import hashlib
 import json
 import tracemalloc
+import weakref
 import threading
 from collections import OrderedDict
 
@@ -15,6 +16,16 @@ from backend.archive import ArchiveStore
 from conftest import REAL_RUN
 from backend.provider_errors import AgentCapacityError, AgentMemoryError, provider_failure
 from backend import memory_usage
+from starlette.requests import Request
+
+
+def test_background_runner_releases_http_request():
+    request = Request({'type':'http','headers':[], 'client':('127.0.0.1',1234)})
+    request_ref = weakref.ref(request)
+    runner = main.chat_runner(request,'owner')
+    del request
+    assert request_ref() is None
+    assert callable(runner)
 
 
 def test_capacity_error_is_not_reported_as_bad_api_key():
@@ -161,3 +172,13 @@ def test_upload_keeps_active_dataset_in_memory_accounting(monkeypatch):
         main.add_dataset(raw, 'four.csv', 'owner')
     assert exc.value.status_code == 409
     assert set(main.datasets) == {first, second}
+
+
+def test_retry_preserves_original_dataset_until_browser_applies(monkeypatch):
+    monkeypatch.setattr(main,'datasets',OrderedDict())
+    monkeypatch.setattr(main,'jobs',OrderedDict())
+    raw=b'time,current,voltage\n'+b'0,1,2\n'*30
+    original=main.add_dataset(raw,'original.csv','owner')['dataset_id']
+    for _ in range(3):
+        staged=main.add_dataset(raw,'retry.csv','owner',keep_dataset_id=original)['dataset_id']
+        assert set(main.datasets)=={original,staged}

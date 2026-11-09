@@ -18,7 +18,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
      // These configuration tests assume prior explicit choices; missing-choice
      // behavior is covered separately by browser-execution-selection.cjs.
      ui_action:{id:body.ui_context.request_id,type:'configure_identification',
-       execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured','controller','auto'],method_evidence:'Previously confirmed in this fixture',pwm_evidence:'Previously confirmed in this fixture'},...proposal}}});
+       execution_selection:{methods:[proposal.changes?.method||body.ui_context.options.method],pwm_sources:[proposal.changes?.pwm_source||body.ui_context.pwm_source_setting||body.ui_context.options.pwm_source],method_evidence:'Previously confirmed in this fixture',pwm_evidence:'Previously confirmed in this fixture'},...proposal}}});
  });
  try{
   await page.goto('http://127.0.0.1:8001');await ready();

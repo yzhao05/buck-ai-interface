@@ -1,6 +1,7 @@
 """Durable application task envelopes around official Harness sessions."""
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 import sqlite3
@@ -13,6 +14,12 @@ from .schemas import ChatRequest
 
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'agent_tasks'
 running = {}
+# These tools only read existing evidence. Unknown tools require the original session.
+REPLAYABLE_READS = frozenset({
+    'read_experiment_results', 'get_experiment_history', 'get_analysis_history', 'get_identification_result',
+    'get_waveform_summary', 'get_diagnostic_evidence', 'search_knowledge', 'search_conversation', 'search_local_csv',
+    'read_conversation_message', 'read_diagnosis', 'check_plecs_connection', 'search_plecs_models', 'get_plecs_models',
+})
 _initialization_lock = threading.Lock()
 _initialized_database = None
 
@@ -54,20 +61,23 @@ def finish(identifier, state, result=None):
         db.execute('UPDATE tasks SET state=?,result=? WHERE id=?',(state,encoded,identifier))
         db.execute('INSERT INTO events(task,kind,data) VALUES (?,?,?)',
                    (identifier,'result' if encoded else 'status',encoded or json.dumps(cancellation,ensure_ascii=False)))
+    logging.getLogger('uvicorn.error').info('Agent task finished: id=%s state=%s error_code=%s',
+                                            identifier, state, (result or {}).get('error_code') or 'none')
 
 
 def read(owner,identifier,after=0, *, include_binding=True):
     with database() as db:
-        columns = 'state,result,request' if include_binding else 'state,result'
+        columns = 'state,result'
+        if include_binding:
+            columns += ", CASE WHEN json_extract(request,'$.current_result_analysis') THEN json_extract(request,'$.result_id') END AS analysis_result_id"
         db.execute('BEGIN')
         row = db.execute(f'SELECT {columns} FROM tasks WHERE id=? AND owner=?',(identifier,owner)).fetchone()
         if not row:
             raise ValueError('Task not found')
         state = row['state']
         events = db.execute('SELECT * FROM events WHERE task=? AND seq>? ORDER BY seq LIMIT 200',(identifier,after)).fetchall()
-    request = json.loads(row['request']) if include_binding else {}
     return {'id':identifier,'state':state,'result':json.loads(row['result']) if row['result'] else None,
-            'analysis_result_id':request.get('result_id') if request.get('current_result_analysis') else None,
+            'analysis_result_id':row['analysis_result_id'] if include_binding else None,
             'events':[{'seq':r['seq'],'kind':r['kind'],'data':json.loads(r['data'])} for r in events]}
 
 
@@ -89,6 +99,7 @@ def launch(owner,body,runner,identifier=None,resume=False):
     if len(running)>=int(os.getenv('AGENT_MAX_ACTIVE_TASKS','1' if os.getenv('RENDER') else '2')):
         raise ValueError('Agent capacity is busy; wait for an active task to finish')
     identifier = identifier or uuid.uuid4().hex
+    can_restart_session = True
     with database() as db:
         if resume:
             row = db.execute('SELECT request,state FROM tasks WHERE owner=? AND id=?',(owner,identifier)).fetchone()
@@ -97,22 +108,25 @@ def launch(owner,body,runner,identifier=None,resume=False):
             if row['state'] not in {'interrupted','failed','cancelled'}:
                 raise ValueError('Only interrupted tasks may be resumed')
             body = ChatRequest.model_validate_json(row['request'])
+            attempts = db.execute("SELECT data FROM events WHERE task=? AND kind='tool_start'",(identifier,))
+            can_restart_session = all(json.loads(row['data']).get('name') in REPLAYABLE_READS for row in attempts)
             db.execute("UPDATE tasks SET state='running',result=NULL WHERE id=?",(identifier,))
         else:
             db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?)',(identifier,owner,'running',body.model_dump_json(),None,time.time()))
         db.execute('INSERT INTO events(task,kind,data) VALUES (?,?,?)',
                    (identifier,'attempt_start',json.dumps({'text':'正在恢复 Agent 任务' if resume else '正在准备 Agent 任务'},ensure_ascii=False)))
     async def work():
-        token = harness_runtime.scope.set({'id':identifier,'owner':owner,'resume':resume,
+        logging.getLogger('uvicorn.error').info('Agent task started: id=%s resume=%s', identifier, resume)
+        token = harness_runtime.scope.set({'id':identifier,'owner':owner,'resume':resume,'can_restart_session':can_restart_session,
                                            'emit':lambda kind,data:event(identifier,kind,data)})
         try:
             result = await runner(body)
             finish(identifier, 'failed' if result.get('mode')=='provider_error' else 'completed', result)
         except asyncio.CancelledError:
             finish(identifier,'cancelled')
-        except Exception:
+        except Exception as exc:
             from .provider_errors import provider_failure
-            result = provider_failure()
+            result = provider_failure(exc)
             finish(identifier,'failed',result)
         finally:
             harness_runtime.scope.reset(token)

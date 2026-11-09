@@ -47,6 +47,17 @@ def test_official_harness_mcp_stream_resume_and_tool_roster(monkeypatch, thinkin
         tools=[{'type':'function','function':{'name':'probe','description':'Read a value','parameters':{'type':'object','properties':{}}}}]
         try:
             messages=[{'role':'system','content':'Use probe then answer'},{'role':'user','content':'Test'}]
+            if not thinking:
+                # The old adapter could persist this marker before the SDK saved any session.
+                home = harness_runtime.ROOT / identifier
+                home.mkdir(parents=True)
+                (home/'session.started').touch()
+                state.update(resume=True, can_restart_session=False)
+                from backend.provider_errors import SessionRestoreError
+                with pytest.raises(SessionRestoreError, match='missing_after_tools'):
+                    await REAL_RUN(messages,tools,invoke,Budget(thinking))
+                assert not requests and not executions
+                state['can_restart_session']=True
             assert await REAL_RUN(messages,tools,invoke,Budget(thinking))=='verified'
             # A successful response/close alone does not prove persistence:
             # the Windows packaged runtime can swallow native-module errors.

@@ -22,6 +22,19 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.route('**/api/**',route=>route.fulfill({json:route.request().url().endsWith('/api/health')?{chat_mode:'deepseek',archive_enabled:false,pann_available:false}:{}}));
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked());
+  await page.evaluate(()=>{
+   identificationPlans.set(identificationPlanKey(),{version:2,methods:['weighted_integral','pann'],pwmSource:'measured',status:'running',done:[]});
+   renderIdentificationPlan();
+  });
+  const planSummary=page.locator('#identification-plan summary');
+  await planSummary.click();
+  assert(await page.locator('#plan-file').isHidden());
+  await page.evaluate(()=>{currentIdentificationPlan().done.push({method:'weighted_integral'});renderIdentificationPlan();});
+  assert.match(await planSummary.innerText(),/1 \/ 2/);
+  assert(await page.locator('#plan-cancel').isHidden());
+  await planSummary.press('Enter');
+  assert(await page.locator('#plan-cancel').isVisible());
+  await page.evaluate(()=>{identificationPlans.delete(identificationPlanKey());renderIdentificationPlan();});
   await page.evaluate(async()=>{
    for(let i=0;i<12;i++)await BuckAttachments.save(conversationPrefix+activeConversation.id,String(i).padStart(64,'0'),`sample-${i}.csv`,new Blob(['time,i,v\n0,1,2']));
    const result={parameters:{L_H:60e-6,C_F:500e-6,R_ohm:6},metrics:{current_nrmse_pct:1,voltage_nrmse_pct:1},options:{method:'weighted_integral',pwm_source:'measured',mode:'LC'},method:'weighted_integral'};
@@ -84,7 +97,24 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
    await page.locator('#'+id+' > summary').click();await page.locator('#chat-input').click();
    assert(await page.locator('#'+id).evaluate(el=>el.open),id);
   }
+  await page.locator('#toggle-left-pane').click();
+  await page.locator('#toggle-right-pane').click();
+  async function checkProgressWidth(){
+   const boxes=await page.evaluate(()=>['#agent-progress','.chat-compose','.chat-panel'].map(selector=>{
+    const {left,right,width}=document.querySelector(selector).getBoundingClientRect();
+    return {left,right,width};
+   }));
+   const [progress,composer,panel]=boxes;
+   assert(Math.abs(progress.left-composer.left)<1 && Math.abs(progress.right-composer.right)<1,'Progress must align with both composer edges');
+   assert(panel.width-progress.width<60,'Progress must use the available chat width');
+  }
+  await checkProgressWidth();
+  await page.locator('#agent-progress > summary').click();
+  await checkProgressWidth();
   await page.setViewportSize({width:390,height:844});
+  await checkProgressWidth();
+  await page.locator('#toggle-left-pane').click();
+  await page.locator('#toggle-right-pane').click();
   await page.locator('#toggle-csv-library').click();await page.waitForFunction(()=>!historyLocked());
   await page.locator('#chat-input').click();assert(await page.locator('#csv-library-menu').isVisible());
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));

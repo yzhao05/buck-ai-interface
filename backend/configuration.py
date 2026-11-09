@@ -32,27 +32,52 @@ PLAN_TOOL = {"type": "function", "function": {
     "parameters": IdentificationPlanProposal.model_json_schema()}}
 
 
+def plan_for_selected_methods(request, proposal, changes):
+    selection = proposal.execution_selection
+    tuning = changes.copy()
+    tuning.pop('method',None)  # Each plan run sets its own method.
+    mode = tuning.pop('mode',None)
+    resistance = tuning.pop('resistance_ohm',None)
+    extras=proposal.model_dump(include={'assets','mapping','analysis','evidence','execution_selection'},exclude_unset=True)
+    plan=IdentificationPlanProposal(**extras,execute=True,clarification='',filename=None,pwm_source='unchanged',
+                                    pwm_evidence=selection.pwm_evidence,mode=mode,resistance_ohm=resistance,tuning=tuning)
+    return batch_action(request,plan)
+
+
 def batch_action(request, proposal):
     """Validate a model proposal without reinterpreting its PWM wording locally."""
     if not proposal.execute or proposal.clarification or proposal.pwm_source == 'unclear':
         raise ValueError('Plan requires an explicit executable proposal')
+    tuning = proposal.tuning.model_dump(exclude_unset=True)
+    source = proposal.pwm_source
+    selection = proposal.execution_selection
+    if selection and selection.pwm_sources and selection.pwm_evidence.strip():
+        sources = set(selection.pwm_sources)
+        if sources == {'measured','controller'}:
+            chosen = 'both'
+        elif len(sources)==1:
+            chosen = next(iter(sources))
+        else:
+            raise ValueError('Clarify whether PWM is automatic or both sources should be run')
+        if source not in {'unchanged',chosen} or tuning.get('pwm_source',chosen)!=chosen:
+            raise ValueError('计划的 PWM 来源与用户选择冲突，请确认要执行的来源。')
+        source = chosen
     changes = {}
-    if proposal.pwm_source not in ('unchanged', 'both'):
-        changes['pwm_source'] = proposal.pwm_source
+    if source not in ('unchanged', 'both'):
+        changes['pwm_source'] = source
     if proposal.mode:
         changes['mode'] = proposal.mode
     if proposal.resistance_ohm is not None:
         if proposal.mode == 'LCR':
             raise ValueError("Fixed load requires LC mode")
         changes.update(mode='LC', resistance_ohm=proposal.resistance_ohm)
-    if proposal.pwm_source in ('controller', 'both'):
+    if source in ('controller', 'both'):
         if proposal.mode == 'LCR':
             raise ValueError("Controller reconstruction requires LC mode")
         changes['mode'] = 'LC'
-    tuning = proposal.tuning.model_dump(exclude_unset=True)
     if any(key in changes and changes[key] != value for key,value in tuning.items()):
         raise ValueError('计划中的重复参数设置互相冲突，请明确一组设置')
-    if proposal.pwm_source == 'both' and 'pwm_source' in tuning:
+    if source == 'both' and 'pwm_source' in tuning:
         raise ValueError('四组计划不能覆盖单一 PWM 来源')
     changes.update(tuning)
     merged, extras = validate_structure(request,proposal,changes)
@@ -66,14 +91,14 @@ def batch_action(request, proposal):
         raise ValueError("Controller reconstruction requires LC mode")
     action = {"id": request.ui_context.request_id, "type": "identification_plan", "parser": "deepseek", "version": 2,
               "filename": proposal.filename, "methods": ["weighted_integral", "pann"], "changes": changes, **extras}
-    if proposal.pwm_source == 'both':
+    if source == 'both':
         action.update(version=3, runs=[{"method": method, "pwm_source": source}
             for source in ('measured', 'controller') for method in action['methods']])
         for run in action['runs']:
             FitOptions.model_validate({**merged.model_dump(), **run})
     action['execution_selection']=require_execution_selection(proposal.execution_selection, action['methods'],
-        ['measured','controller'] if proposal.pwm_source=='both' else [merged.pwm_source],
-        allow_auto=proposal.pwm_source!='both' and changes.get('pwm_source',request.ui_context.pwm_source_setting)=='auto')
+        ['measured','controller'] if source=='both' else [merged.pwm_source],
+        allow_auto=source!='both' and changes.get('pwm_source',request.ui_context.pwm_source_setting)=='auto')
     return action
 
 
@@ -119,16 +144,25 @@ def agent_action(request, name, arguments):
         if not proposal.execute:
             return None
         if proposal.filename:
-            matches = [item for item in request.ui_context.catalog if item.get('kind')=='csv' and item.get('name')==proposal.filename]
+            matches = [item for item in request.ui_context.catalog if item.get('kind')=='csv' and item.get('name','').casefold()==proposal.filename.casefold()
+                       and (not proposal.assets.csv_id or item.get('id')==proposal.assets.csv_id)]
             if len(matches)!=1:
                 raise ValueError('Select one unambiguous uploaded CSV')
+            if matches[0]['id'].startswith('local-csv:'):
+                proposal.assets.csv_id = matches[0]['id']
         return batch_action(request, proposal)
     proposal = ConfigureIdentification.model_validate(arguments)
     if proposal.clarification:
         raise ValueError(proposal.clarification)
     changes = proposal.changes.model_dump(exclude_unset=True)
+    selection = proposal.execution_selection
+    if (proposal.start_after_apply and not request.ui_context.paused_plan and selection
+            and set(selection.methods)=={'weighted_integral','pann'} and selection.method_evidence.strip()
+            and selection.pwm_sources and selection.pwm_evidence.strip()):
+        return plan_for_selected_methods(request,proposal,changes)
     merged, extras = validate_structure(request, proposal, changes)
-    if merged.pwm_source == 'controller' and merged.mode != 'LC':
+    load_only = extras.get('assets',{}).get('csv_id') and not changes and not proposal.start_after_apply
+    if not load_only and merged.pwm_source == 'controller' and merged.mode != 'LC':
         raise ValueError('Reconstructed PWM requires fixed-R LC mode')
     if not (changes or extras or proposal.open_panel or proposal.start_after_apply or proposal.request_selection):
         return None

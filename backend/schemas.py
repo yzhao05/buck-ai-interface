@@ -161,6 +161,12 @@ class IdentificationPlanProposal(ConfigurationExtras):
     resistance_ohm: float | None = Field(strict=True, gt=0.01, le=100000)
 
 
+class PreviousLocalCsvAction(StrictModel):
+    filename: str = Field(max_length=255)
+    browser_report: str = Field(max_length=1000)
+    current_dataset: str | None = Field(default=None,max_length=255)
+
+
 class IdentificationUIContext(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     # Separate from the displayed historical result's options.
@@ -169,7 +175,9 @@ class IdentificationUIContext(StrictModel):
     mapping: Mapping | None = None
     columns: list[str] = Field(default_factory=list, max_length=300)
     catalog: list[dict[str, str]] = Field(default_factory=list, max_length=300)
+    previous_local_csv_action: PreviousLocalCsvAction | None = None
     pending_start: bool = False
+    paused_plan: bool = False
     pending_reference_confirmation: bool = False
 
 

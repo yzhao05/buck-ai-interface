@@ -123,12 +123,13 @@ async function continueIdentificationPlan(){
     if(!state.connected)throw new Error("请先连接分析后端。");
     // Once a job has been submitted, reject edits before asking for new circuit
     // confirmation or validating a different configuration.
-    if((plan.done.length || plan.jobId) && plan.inputs!==planInputs())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
+    if((plan.inputs || plan.done.length || plan.jobId) && plan.inputs!==planInputs())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
     const c=plan.changes;
     if(!plan.done.length && !plan.jobId && !plan.settingsApplied){
       if(!validConfigurationChanges(c)||plan.assets?.result_id||Object.keys(plan.analysis||{}).length)throw new Error('配置操作格式无效。');
       const context={fingerprint:configurationFingerprint()};
       context.catalog=await configurationCatalog({includeRemote:Boolean(plan.filename||plan.assets?.csv_id)});
+      addLocalCsvSelections(context.catalog,plan);
       const action={...plan,assets:{...plan.assets}};
       if(plan.filename&&!action.assets.csv_id&&state.dataset?.filename.toLowerCase()!==plan.filename.toLowerCase()){
         const candidates=[...context.catalog.values()].filter(item=>item.kind==='csv'&&item.name.toLowerCase()===plan.filename.toLowerCase());
@@ -184,25 +185,31 @@ async function continueIdentificationPlan(){
     while(plan.done.length<runs.length && plan.status!=='cancelled'){
       if(owner!==identificationPlanKey())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
       const runSpec=runs[plan.done.length],method=runSpec.method;$('fit-method').value=method;
-      if(runSpec.pwm_source)$('pwm-source').value=runSpec.pwm_source;
+      // Keep the user's auto setting in the form and recovery fingerprint.
+      // options() resolves it from the mapping when submitting each fit.
+      if(runSpec.pwm_source && c.pwm_source!=='auto')$('pwm-source').value=runSpec.pwm_source;
       plan.inputs=planInputs();
       plan.note=plan.version===3?"正在按计划执行四组辨识，完成的结果会分别保存。"
         :method==='pann'?"正在运行 PANN，完成后将分别保留两份结果。":"正在运行抗噪加权积分，完成后继续 PANN。";saveIdentificationPlan(plan);controls();
       let outcome;
       if(plan.jobId){
         const job=await api(`/api/jobs/${plan.jobId}`);
-        if(job.status==='failed')throw new Error(job.error || tr("任务未完成，请检查提示"));
-        outcome=await watchJob(plan.jobId);
+        outcome=job.status==='failed' ? {status:'failed',error:job.error} : await watchJob(plan.jobId);
       }else if(resultMatchesCurrent(state.result))outcome={status:'complete',job_id:state.resultId};
       else outcome=await startFit({fromChat:true,executionSelection,waitForCompletion:true,onSubmitted:id=>{plan.jobId=id;saveIdentificationPlan(plan);}});
       if(outcome?.status!=='complete'){
+        if(outcome?.status==='failed')plan.jobId=null;
         plan.uncertain=Boolean(outcome?.uncertain);
         throw new Error(outcome?.error || tr("未能启动实验：")+tr("请检查当前任务和输入设置。"));
       }
       // Save the completed snapshot before a later job replaces the result card.
       if(!persistConversation())throw new Error("当前会话尚未完整保存，已保留在本页；请先重试保存或同步。");
       const run=activeConversation.experiments?.find(r=>r.id===outcome.job_id);
-      plan.done.push({method,pwm_source:pwmSource(),job_id:outcome.job_id,report_name:run?experimentReportName(run):null,parameters:{...state.result.parameters}});
+      if(!run || (run.result.method || run.result.options?.method)!==method || run.result.options?.pwm_source!==runSpec.pwm_source
+          || plan.done.some(previous=>previous.job_id===run.id)){
+        throw new Error('当前步骤没有对应的独立结果记录，请核对实验历史后继续。');
+      }
+      plan.done.push({method,pwm_source:runSpec.pwm_source,job_id:run.id,report_name:experimentReportName(run),parameters:{...run.result.parameters}});
       plan.jobId=null;saveIdentificationPlan(plan);
     }
     if(plan.status!=='cancelled'){

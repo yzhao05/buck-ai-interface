@@ -104,9 +104,12 @@
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
       <section id="identification-plan" class="identification-plan" hidden aria-live="polite">
-        <strong id="plan-progress"></strong><span id="plan-file"></span><p id="plan-source"></p><p id="plan-note"></p><ul id="plan-runs"></ul>
-        <button type="button" id="plan-continue" class="button subtle small">继续计划</button>
-        <button type="button" id="plan-cancel" class="button subtle small">取消后续任务</button>
+        <details id="identification-plan-details" open>
+          <summary class="plan-summary"><span class="compose-toggle" aria-hidden="true"></span><strong id="plan-progress"></strong></summary>
+          <span id="plan-file"></span><p id="plan-source"></p><p id="plan-note"></p><ul id="plan-runs"></ul>
+          <button type="button" id="plan-continue" class="button subtle small">继续计划</button>
+          <button type="button" id="plan-cancel" class="button subtle small">取消后续任务</button>
+        </details>
       </section>
         <details id="agent-progress" class="harness-progress"><summary>Agent 任务进度与恢复</summary>
     <p id="agent-status" role="status">Harness 任务进度与恢复</p>
@@ -185,7 +188,7 @@
     </aside>
     </div>
   </div>
-  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。</p><label>本机 PLECS 程序路径<input id="plecs-executable" type="text" autocomplete="off" spellcheck="false" placeholder="E:\Documents\Plexim\PLECS 4.9 (64 bit)\PLECS.exe"></label><p class="field-note">本机后端可直接启动 PLECS；云端后端需运行下方本机连接器。助手优先搜索模型文件夹，找不到唯一匹配时再询问。请预先启用 RPC，端口 1080。</p><label>电路模型文件夹<input id="plecs-model-directory" type="text" autocomplete="off" spellcheck="false" placeholder="D:\Models"></label><p class="field-note">自动搜索此文件夹及所有子文件夹中的 .plecs 文件。按上传文件名匹配；找不到或出现多个同名模型时，助手会请你确认。</p><details><summary>仿真结果自动辨识绑定</summary><p class="field-note">按 PLECS 顶层 Output 端口顺序填写；电流单位 A、电压单位 V，PWM 为 0/1。绑定只用于仿真对照，不改左侧配置。</p>
+  <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>连接你的分析后端</h2><button type="button" id="close-settings" class="icon-button" aria-label="关闭">×</button></div><p>本地启动时自动连接；部署后填写 Render 服务地址。</p><label>后端地址<input type="url" id="api-url" placeholder="https://your-service.onrender.com" required></label><label>应用访问口令<input type="password" id="access-token" autocomplete="off" placeholder="后端 APP_ACCESS_TOKEN；本地可留空"></label><p class="field-note">这里填写应用口令。DeepSeek API Key 只设置在后端 .env 或 Render 环境变量中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。</p><label>本机 PLECS 程序路径<input id="plecs-executable" type="text" autocomplete="off" spellcheck="false" placeholder="E:\Documents\Plexim\PLECS 4.9 (64 bit)\PLECS.exe"></label><p class="field-note">本机后端可直接启动 PLECS；云端后端需运行下方本机连接器。助手优先搜索模型文件夹，找不到唯一匹配时再询问。请预先启用 RPC，端口 1080。</p><label>电路模型文件夹<input id="plecs-model-directory" type="text" autocomplete="off" spellcheck="false" placeholder="D:\Models"></label><p class="field-note">在此文件夹及子文件夹中搜索 .plecs 模型。本地后端也可按你的指令查找并加载实验 CSV。</p><details><summary>仿真结果自动辨识绑定</summary><p class="field-note">按 PLECS 顶层 Output 端口顺序填写；电流单位 A、电压单位 V，PWM 为 0/1。绑定只用于仿真对照，不改左侧配置。</p>
 <label>模型文件名<input id="plecs-binding-model" placeholder="Buck.plecs"></label>
 <label>电流输出端口<input id="plecs-binding-current" type="number" min="1" max="64"></label>
 <label>电压输出端口<input id="plecs-binding-voltage" type="number" min="1" max="64"></label>
@@ -194,6 +197,7 @@
 <label>电容参数键<input id="plecs-binding-c" placeholder="C1.C"></label>
 <label><input id="plecs-binding-confirmed" type="checkbox">已核对端口物理量、单位、L/C 元件及当前辨识工况配置</label>
 <label><input id="plecs-binding-same" type="checkbox">此模型与当前数据来自同一电路和工况</label></details>
+<p id="plecs-direct-note" class="field-note" hidden>本地后端直接连接 PLECS，无需配对。</p>
 <button id="bridge-pair" type="button" class="button ghost full">生成本机连接器配对码</button>
 <button id="bridge-check" type="button" class="button ghost full">检查连接器状态</button>
 <pre id="bridge-instructions" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><label>同步恢复码<input id="sync-code" type="password" autocomplete="off" spellcheck="false" minlength="64" maxlength="64"></label><p class="field-note">自动生成并记住。请复制保管，换浏览器或清空本地后可用它恢复备份；不要分享给他人。</p><button type="button" id="copy-sync-code" class="button ghost full">复制同步恢复码</button><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p></form></dialog>

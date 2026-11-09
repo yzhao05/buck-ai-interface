@@ -13,6 +13,24 @@ from conftest import REAL_RUN
 from backend.schemas import ChatRequest, FitOptions
 
 
+@pytest.mark.parametrize('tool,can_restart', [('read_experiment_results',True),('run_plecs_experiment',False),('unknown',False)])
+def test_session_restart_uses_task_tool_history(tmp_path,monkeypatch,tool,can_restart):
+    monkeypatch.setattr(agent_tasks,'ROOT',tmp_path)
+    async def scenario():
+        async def fail(_):
+            harness_runtime.scope.get()['emit']('tool_start',{'name':tool})
+            return {'mode':'provider_error'}
+        async def resume(_):
+            assert harness_runtime.scope.get()['can_restart_session'] is can_restart
+            return {'mode':'deepseek'}
+        task_id = agent_tasks.launch('owner',ChatRequest(message='Compare results'),fail)['id']
+        await agent_tasks.running[task_id]
+        agent_tasks.launch('owner',None,resume,task_id,resume=True)
+        await agent_tasks.running[task_id]
+        assert agent_tasks.read('owner',task_id)['state'] == 'completed'
+    asyncio.run(scenario())
+
+
 def test_only_process_restart_interrupts_running_tasks(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_tasks, 'ROOT', tmp_path)
     with agent_tasks.database() as db:

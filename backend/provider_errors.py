@@ -1,4 +1,5 @@
 """Public provider failures. Never expose provider bodies, credentials or prompts."""
+import logging
 import httpx
 from .agent_policy import BudgetExceeded
 
@@ -17,6 +18,10 @@ class AgentMemoryError(RuntimeError):
     pass
 
 
+class SessionRestoreError(RuntimeError):
+    pass
+
+
 class CitationValidationError(ValueError):
     pass
 
@@ -31,6 +36,10 @@ def provider_failure(exc=None, *, missing=False, **metadata):
     elif isinstance(exc, AgentCapacityError):
         code = 'agent_capacity_busy'
         message = 'The backend Agent capacity is busy. Wait for the active task to finish and retry.'
+    elif isinstance(exc, SessionRestoreError):
+        code = 'harness_session_unavailable'
+        message = ('The saved Agent session is missing. This task already attempted tools. Check the saved results before starting another task.'
+                   if str(exc)=='missing_after_tools' else 'The backend could not restore the saved Harness session. Check the Render logs before retrying.')
     elif isinstance(exc, HarnessTurnError):
         metadata['finish_reason'] = exc.reason
         code = 'output_token_limit' if exc.reason == 'max-tokens' else 'harness_incomplete'
@@ -58,10 +67,23 @@ def provider_failure(exc=None, *, missing=False, **metadata):
     elif isinstance(exc, (TimeoutError, httpx.TimeoutException)):
         code = 'provider_timeout'
         message = 'AI provider or Harness communication timed out before completion. Check backend connectivity and retry.'
+    elif isinstance(exc, httpx.HTTPStatusError):
+        code = "provider_failed"
+        status = exc.response.status_code
+        detail = ('Check the backend API key and model access.' if status in (401,403) else
+                  'The provider rate limit was reached. Retry later.' if status == 429 else 'Check the provider status and backend logs.')
+        message = f"AI request failed (HTTP {status}). {detail}"
+    elif isinstance(exc, httpx.TransportError):
+        code = 'provider_connection_failed'
+        message = 'The backend could not communicate with the AI service. Check the backend network and provider endpoint.'
     else:
         code = "provider_failed"
-        status = f" (HTTP {exc.response.status_code})" if isinstance(exc, httpx.HTTPStatusError) else ""
-        message = f"AI request failed{status}. Please check the API key, model settings and network connection, then try again."
+        message = "The backend could not finish the Agent task. Check the Render logs for the Agent failure."
+    logging.getLogger('uvicorn.error').warning(
+        'Agent failure: code=%s exception=%s cause=%s http_status=%s', code,
+        type(exc).__name__ if exc else 'none',
+        type(exc.__cause__).__name__ if exc and exc.__cause__ else 'none',
+        exc.response.status_code if isinstance(exc,httpx.HTTPStatusError) else 'none')
     return {**metadata, "mode": "provider_error", "answer": "", "provider_error": message,
             "error_code": code, "ui_action": None, "sources": metadata.get("sources", []),
             "tool_calls": metadata.get("tool_calls", []), "job_id": metadata.get("job_id")}

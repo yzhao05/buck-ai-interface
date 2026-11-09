@@ -29,7 +29,7 @@ entry('language', '顶部语言与服务状态', 'language-toggle connection-sta
       'EN/中文切换界面语言；后端已连接表示后端健康检查成功，不等于模型回答或 PLECS 仿真已经成功。尚未连接时去连接设置核对地址。提示条 × 只关闭当前提示，不修复错误也不撤销操作。')
 entry('csv-upload', '导入波形：拖入或选择 PLECS CSV', 'csv-file dropzone',
       '上传 导入 CSV 波形 upload import waveform',
-      '点击上传区或拖入 CSV，最大 32 MB。上传到分析后端后读取列、建议映射并检查数据，不会仅因上传就开始参数辨识。需要时间、电感电流、输出电压；实际 PWM 列可选。接着核对信号与单位映射。')
+      '点击上传区或拖入 CSV，最大 32 MB。使用本地后端时，也可在连接设置保存包含实验 CSV 的文件夹，再告诉助手文件名。助手可递归搜索该目录，找到明确匹配后直接加载，同名文件可用相对路径区分。导入后读取列、建议映射并检查数据，不会仅因上传就开始参数辨识。需要时间、电感电流、输出电压；实际 PWM 列可选。接着核对信号与单位映射。')
 entry('csv-library', '已有实验示例与历史 CSV', 'load-demo empty-demo toggle-csv-library csv-library-list csv-library-menu',
       '示例 历史CSV 下拉 文件列表 demo historical CSV library',
       '加载已有实验示例（空波形区的加载实验示例也是同一入口）加载项目示例数据，不生成一次新的实测实验。旁边下拉箭头展开/收起历史 CSV 列表，点击聊天区不会自动收起；列表内按Esc可收起。点击文件后收起列表并加载到当前会话；这不等于切换到文件原来的会话。加载失败时先检查备份状态或重新上传原文件。', 'frontend/csv-library.js')
@@ -133,9 +133,9 @@ entry('agent-steer', '追加指令 / 发送追加指令', 'agent-instruction age
 entry('agent-stop', '停止任务 / 找回或恢复任务', 'agent-cancel agent-resume',
       '停止 取消 中断 找回 恢复 agent cancel stop resume recover',
       '停止任务请求取消当前Agent运行，不回滚已经完成的修改或计算。找回/恢复先查询当前会话已保存或最新任务：运行中重新连接，已完成取回回答，中断/失败/取消任务尝试恢复。已执行实验复用证据，状态未知的操作不应盲目重做；恢复产生的配置建议不会自动应用到可能已变更的界面。结果分析任务绑定提交时的快照；若与右侧当前结果不同，会在主对话提示重新选择，不混用结果。', 'frontend/agent-harness.js')
-entry('plan', '辨识计划面板：继续计划 / 取消后续任务', 'identification-plan plan-continue plan-cancel plan-progress plan-runs',
+entry('plan', '辨识计划面板：折叠、继续计划 / 取消后续任务', 'identification-plan identification-plan-details plan-continue plan-cancel plan-progress plan-runs',
       '计划 排队 多组 继续计划 取消后续任务 identification plan continue cancel',
-      '显示计划文件、配置依据、每组进度和暂停原因。继续计划按原计划配置接续未完成步骤，须满足数据、任务状态和必要确认。取消后续任务不撤销已完成结果，也不等于停止当前正在执行的数值辨识。与停止Agent按钮属于不同任务层。', 'frontend/identification-plan.js')
+      '点击标题左侧箭头可折叠详情，标题上的完成进度仍会更新，计划继续运行。展开可查看文件、每组进度和暂停原因。继续计划按原配置接续未完成步骤，须满足数据、任务状态和必要确认。取消后续任务会保留已完成结果，当前正在执行的数值辨识仍会完成。', 'frontend/identification-plan.js')
 entry('statistics', '右侧波形统计卡片', 'stat-voltage stat-current stat-duration stat-points',
       '平均输出电压 电感电流RMS 数据时长 数据点 时间加权 statistics RMS duration',
       '平均输出电压单位V、电感电流RMS单位A，均为当前已分析数据全段的时间加权统计；数据时长单位ms，另显示数据点数。不是参数真值、不是留出RMSE，也不随图形局部缩放变成该局部统计。')
@@ -177,13 +177,13 @@ entry('access-token', '应用访问口令 / 清除已记住的口令', 'access-t
       '填写后端APP_ACCESS_TOKEN，本地未配置可留空；不是DeepSeek API Key，后者仅在后端环境变量配置。保存后浏览器按后端地址记住口令；清除已记住口令仅删除当前浏览器对应后端凭据，不改服务器口令、不删除历史或恢复码。解释时不需要用户提供密钥内容。')
 entry('plecs-path', 'PLECS 程序路径与电路模型文件夹', 'plecs-executable plecs-model-directory',
       'PLECS 路径 模型 文件夹 RPC executable model directory',
-      '程序路径是本机PLECS可执行文件，用于需要时启动；模型文件夹是递归搜索.plecs文件的根目录。已启动PLECS且RPC可用时可只配置模型文件夹；RPC端口1080。云端不能直接访问本机路径，需本机连接器。文件名匹配不保证同电路同工况，歧义时应确认。')
+      '程序路径是本机PLECS可执行文件，用于需要时启动。模型文件夹用于递归搜索.plecs模型；本地后端也可按用户指令从该目录搜索并加载实验CSV。搜索CSV无需启动PLECS。操作模型时通过本机RPC端口1080；云端操作PLECS需本机连接器。文件名匹配不保证同电路同工况，歧义时应确认。')
 entry('plecs-binding', '仿真结果自动辨识绑定', 'plecs-binding-model plecs-binding-current plecs-binding-voltage plecs-binding-pwm plecs-binding-l plecs-binding-c plecs-binding-confirmed plecs-binding-same',
       '绑定 模型文件名 电流输出端口 电压输出端口 PWM输出端口 电感参数键 电容参数键 binding output port',
       '模型文件名指定被绑定的PLECS模型；电流/电压端口填顶层Output顺序（从1起、最多64），单位A/V；PWM端口可空，填写时须0/1状态。电感/电容参数键如L1.L、C1.C用于元件绑定。第一确认框核对物理量、单位、元件和辨识配置，第二框确认模型与数据同电路同工况。绑定只用于仿真对照自动重辨识，不改左栏设置；不猜测端口意义。')
 entry('bridge', '本机连接器配对码 / 检查连接器状态', 'bridge-pair bridge-check bridge-instructions',
       '配对码 连接器 在线 离线 bridge pairing companion',
-      '先保存连接后端和本机路径，再生成配对码，按显示命令在本机运行连接器并在提示时输入配对码。生成配对不等于进程已运行；重新配对可能撤销旧连接器凭据。检查连接器状态显示未配对/已配对离线/在线，不代表模型已打开或仿真成功。配对码用于连接器授权，不是同步恢复码或API Key。', 'frontend/agent-harness.js')
+      '本地后端直接连接PLECS，无需配对；检查本机PLECS连接会探测RPC是否就绪。使用云端后端时，先保存后端和本机路径，再生成配对码，在本机按提示运行连接器。云端的检查按钮查询连接器配对及在线状态；重新配对可能撤销旧连接器凭据。', 'frontend/agent-harness.js')
 entry('sync-code', '同步恢复码与复制', 'sync-code copy-sync-code',
       '同步恢复码 复制 换浏览器 找回 backup recovery code',
       '自动生成并保存的64位十六进制码，用于访问对应后端备份；复制按钮只复制到剪贴板。换浏览器或清空本地后，在同一后端填入原码并保存连接才能找回仍存在的后端副本。保管好且不要分享；不是DeepSeek密钥或连接器配对码。备份没有完成或服务器数据丢失时恢复码不能凭空还原数据。')

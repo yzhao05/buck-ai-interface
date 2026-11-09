@@ -114,6 +114,28 @@ async function configurationCatalog({includeRemote=false}={}){
   return entries;
 }
 function publicConfigurationCatalog(catalog){return [...catalog.values()].map(({id,kind,name})=>({id,kind,name}));}
+function previousLocalCsvAction(record){
+  for(const message of [...(record?.messages || [])].reverse()){
+    const response=message.response, action=response?.ui_action;
+    const file=action?.local_csv_files?.find(item=>item.id===action.assets?.csv_id);
+    if(file && response.ui_action_status){
+      return {filename:file.name,browser_report:response.ui_action_status.slice(0,1000),current_dataset:state.dataset?.filename||null};
+    }
+  }
+  return null;
+}
+function addLocalCsvSelections(catalog,action){
+  for(const file of action.local_csv_files || []){
+    if(!isLocalBackend(base) || !/^local-csv:[a-f0-9]{64}$/.test(file.id))throw new Error('本地 CSV 选择无效。');
+    catalog.set(file.id,{id:file.id,kind:'csv',name:file.name,local:file});
+  }
+}
+async function configurationCsvFile(item){
+  if(!item.local)return historicalCsvFile(item.entry);
+  const blob=await api('/api/local-csv/file',{method:'POST',body:{relative_path:item.local.relative_path,id:item.id},asBlob:true});
+  if(item.local.sha256 && await csvDigest(blob)!==item.local.sha256)throw new Error('文件内容已变化，请重新选择。');
+  return new File([blob],item.name,{type:'text/csv'});
+}
 function validConfigurationExtras(action){
   const allowed={assets:['csv_id','circuit_id','result_id'],mapping:Object.keys(mappingFields),analysis:['truth_L_H','truth_C_F','reference_csv_id','reference_confirmed','calculate_error']};
   for(const [section,keys] of Object.entries(allowed)){
@@ -132,14 +154,26 @@ async function prepareConfigurationExtras(action,context){
   if(!validConfigurationExtras(action))throw new Error('配置操作格式无效。');
   const assets=action.assets||{}, analysis=action.analysis||{}, patch=action.mapping||{};
   if(assets.result_id&&(assets.csv_id||Object.keys(patch).length||action.start_after_apply))throw new Error('查看历史结果与更换输入或开始新辨识请分别发送指令。');
-  const find=(id,kind)=>{const item=context.catalog?.get(id);if(!item||item.kind!==kind)throw new Error('文件已失效或未上传，请重新选择文件。');return item;};
+  const find=(id,kind)=>{
+    if(kind==='csv' && id.startsWith('local-csv:')){
+      const file=action.local_csv_files?.find(candidate=>candidate.id===id);
+      if(!isLocalBackend(base) || !file?.relative_path || !file.name)throw new Error('此任务缺少可用的本地 CSV 选择信息，请刷新页面后重新搜索。');
+      return {id,kind,name:file.name,local:file};
+    }
+    const item=context.catalog?.get(id);
+    if(!item||item.kind!==kind)throw new Error('文件已失效或未上传，请重新选择文件。');
+    return item;
+  };
   const staged={};
   if(assets.csv_id){
     const item=find(assets.csv_id,'csv');
-    staged.file=await historicalCsvFile(item.entry);
+    staged.file=await configurationCsvFile(item);
     const form=new FormData();form.append('file',staged.file);
-    staged.dataset=await api('/api/datasets',{method:'POST',body:form});
-    if(staged.dataset.sha256!==item.entry.sha256)throw new Error('文件内容已变化，请重新选择。');
+    // Mapping and analysis can still fail. Keep the currently displayed dataset usable.
+    const keep=state.dataset?.dataset_id;
+    staged.dataset=await api('/api/datasets'+(keep?'?keep_dataset_id='+encodeURIComponent(keep):''),{method:'POST',body:form});
+    const expected=item.local?.sha256 || item.entry?.sha256;
+    if(expected && staged.dataset.sha256!==expected)throw new Error('文件内容已变化，请重新选择。');
   }
   if('circuit_id' in assets){
     const item=assets.circuit_id===null?null:find(assets.circuit_id,'circuit');
@@ -151,7 +185,8 @@ async function prepareConfigurationExtras(action,context){
   if(assets.result_id){find(assets.result_id,'result');if(!readConversation(activeConversation.id)?.experiments?.some(r=>r.id===assets.result_id))throw new Error('结果已失效。');}
   if(staged.dataset||Object.keys(patch).length){
     const data=staged.dataset||state.dataset;if(!data)throw new Error('请先选择 CSV。');
-    const previous=staged.dataset&&!state.dataset?{...mappingFromForm(),...data.suggested_mapping}:mappingFromForm();
+    const previous=staged.dataset && (!state.dataset || assets.csv_id?.startsWith('local-csv:'))
+      ? {...mappingFromForm(),...data.suggested_mapping}:mappingFromForm();
     // Reuse named columns only when they exist in the selected CSV; otherwise require a mapping.
     staged.mapping={...previous,...patch};
     staged.mappingChanged=Object.entries(staged.mapping).some(([key,value])=>state.mapping?.[key]!==value);
@@ -163,7 +198,7 @@ async function prepareConfigurationExtras(action,context){
     if(!state.result&&!assets.result_id)throw new Error('请先选择或完成一次辨识，再设置真值或诊断参考。');
     if(staged.dataset||staged.mapping)throw new Error('更换数据/列映射后请先完成辨识，再设置真值或诊断参考。');
     if(analysis.reference_csv_id){
-      const item=find(analysis.reference_csv_id,'csv'),file=await historicalCsvFile(item.entry),form=new FormData();form.append('file',file);
+      const item=find(analysis.reference_csv_id,'csv'),file=await configurationCsvFile(item),form=new FormData();form.append('file',file);
       staged.reference=await api('/api/datasets?reference=true',{method:'POST',body:form});
     }
     const existingRef=selectedDiagnosticReference();

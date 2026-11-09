@@ -17,7 +17,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 from .agent_policy import BudgetExceeded
-from .provider_errors import HarnessTurnError, AgentCapacityError, AgentMemoryError
+from .provider_errors import HarnessTurnError, AgentCapacityError, AgentMemoryError, SessionRestoreError
 from .memory_usage import log_memory, low_headroom, memory_readings
 
 scope = contextvars.ContextVar('harness_scope', default=None)
@@ -230,6 +230,7 @@ async def run(messages, tools, invoke, budget):
 
 async def _run(messages, tools, invoke, budget):
     from deepseek_harness import DeepSeekHarness
+    from deepseek_harness.errors import JsonRpcError
     state = scope.get() or {}
     identifier = state.get('session_id') or state.get('id') or secrets.token_hex(16)
     task_id = state.get('id') or identifier
@@ -301,9 +302,21 @@ async def _run(messages, tools, invoke, budget):
                 log_memory('before_harness_start')
                 harness.start()
                 log_memory('after_harness_start')
-                session = harness.resume_session(identifier) if (home/'session.started').exists() else harness.start_session(identifier)
+                marker = home/'session.started'
+                if marker.exists() or state.get('resume'):
+                    try:
+                        session = harness.resume_session(identifier)
+                    except JsonRpcError as exc:
+                        if exc.message != f'session "{identifier}" not found':
+                            raise SessionRestoreError('unavailable') from exc
+                        if state.get('resume') and not state.get('can_restart_session'):
+                            raise SessionRestoreError('missing_after_tools') from exc
+                        emit('status',{'text':'先前的 Harness 会话未保存，正在用本次请求重新建立会话。'})
+                        session = harness.start_session(identifier)
+                else:
+                    session = harness.start_session(identifier)
                 emit('status',{'text':'DeepSeek Harness 已接管工具调度'})
-                (home/'session.started').touch()
+                marker.touch()
                 return session.run(prompt)
             result = await asyncio.wait_for(asyncio.to_thread(blocking), timeout=budget.remaining())
             if gateway.error:

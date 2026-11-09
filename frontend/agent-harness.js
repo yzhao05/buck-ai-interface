@@ -8,6 +8,10 @@ window.BuckHarness = (()=>{
     catch{try{localStorage.removeItem(storageKey);}catch{/* Backend latest-task lookup remains available. */}}
   }
   const status=text=>{document.getElementById('agent-status').textContent=text;};
+  function showOutcome(text,label){
+    status(tr(label));
+    window.BuckMarkdown.render(document.getElementById('agent-preview'),text);
+  }
   const headers=()=>({'X-Session-ID':sessionId,...(accessToken?{Authorization:`Bearer ${accessToken}`}:{})});
   function taskError(taskState,id){
     return Object.assign(new Error(taskState),{taskState,agentTaskId:id});
@@ -52,11 +56,12 @@ window.BuckHarness = (()=>{
         if(item.kind==='result')result=item.data;
         if(item.kind==='end'){
           ended=true;
-          if(preview)window.BuckMarkdown.render(document.getElementById('agent-preview'),preview);
           // The final task snapshot is authoritative, including a null result.
           // Old result events belong to previous attempts after a resume.
           result=item.data.result;
           status(({completed:'任务已完成',failed:'任务未完成，可查看已保存证据',interrupted:'任务已中断，可恢复',cancelled:'任务已停止，可恢复。'})[item.data.state]||item.data.state);
+          window.BuckMarkdown.render(document.getElementById('agent-preview'),result?.ui_action?'':result?.answer||result?.provider_error||'');
+          if(result?.ui_action)status(tr('等待界面应用操作'));
           if(item.data.state==='completed')rememberTask(null,storageKey);
           if(['cancelled','interrupted'].includes(item.data.state))throw taskError(item.data.state,id);
           if(!result)throw taskError('failed',id);
@@ -88,15 +93,17 @@ window.BuckHarness = (()=>{
       status(text);message('assistant',text,'任务状态');rememberMessage('assistant',text,null,'任务状态');return;
     }
     rememberTask(latest.id);
-    if(latest.state==='completed' && readConversation(activeConversation.id)?.messages?.some(({response})=>
+    const savedReply=readConversation(activeConversation.id)?.messages?.find(({response})=>
       response?.agent_task_id===latest.id && !response.task_state && response.mode!=='provider_error'
-      && (!response.error_code || response.mode==='validation_error'))){
+      && (!response.error_code || response.mode==='validation_error' || response.ui_action_status));
+    if(latest.state==='completed' && savedReply){
       rememberTask(null);
-      status('此任务已完成，回答已在当前会话中');return;
+      showOutcome(savedReply.content,savedReply.response.error_code==='ui_action_failed'?'界面操作失败':'此任务已完成，回答已在当前会话中');return;
     }
     if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
       const response=await follow(latest.id);
       const text=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
+      if(response.ui_action)showOutcome(text,'界面操作未重新执行');
       const mode=['provider_error','validation_error'].includes(response.mode)?'请求未完成':'Harness 恢复';
       const article=message('assistant',text,mode);decorateResponse(article,response);
       rememberMessage('assistant',text,{...response,agent_task_id:latest.id},mode);
@@ -125,8 +132,19 @@ window.BuckHarness = (()=>{
         try{localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(config));}catch{document.getElementById('settings-status').textContent='配对成功，但浏览器无法记住本机路径。';}
       }catch(error){document.getElementById('settings-status').textContent=error.message;}
     };
-    document.getElementById('bridge-check').onclick=async()=>{try{const result=await api('/api/bridge/status');document.getElementById('settings-status').textContent=result.online?'本机连接器在线':result.paired?'已配对，连接器离线':'尚未配对';}catch(error){document.getElementById('settings-status').textContent=error.message;}};
+    document.getElementById('bridge-check').onclick=async()=>{
+      const target=document.getElementById('api-url').value.trim().replace(/\/$/,'');
+      const output=document.getElementById('settings-status');
+      if(target!==base.replace(/\/$/,'')){ui(output,'请先保存并连接新后端。');return;}
+      try{
+        const direct=isLocalBackend(target);
+        const result=await api(direct?'/api/plecs/status':'/api/bridge/status');
+        if(target!==document.getElementById('api-url').value.trim().replace(/\/$/,''))return;
+        ui(output,direct?(result.ready?'本机 PLECS RPC 已就绪。':'本机 PLECS RPC 未就绪，请确认 PLECS 已启动并启用端口 1080。'):
+          result.online?'本机连接器在线':result.paired?'已配对，连接器离线':'尚未配对');
+      }catch(error){output.textContent=error.message;}
+    };
   }
   function reset(){state.agentTask=null;document.getElementById('bridge-instructions').textContent='';document.getElementById('agent-progress').open=false;document.getElementById('agent-preview').textContent='';document.getElementById('agent-instruction').value='';status('Agent 任务进度与恢复');}
-  return {request,recover,bind,reset,taskNotice};
+  return {request,recover,bind,reset,taskNotice,showOutcome};
 })();

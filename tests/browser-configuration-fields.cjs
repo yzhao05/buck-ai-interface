@@ -13,9 +13,10 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await require('./harness-browser-fixture.cjs').install(page);
   await page.route('**/api/chat',async route=>{
    const body=route.request().postDataJSON();chats.push(body);
+   const methods=action.methods || (body.ui_context.paused_plan?['weighted_integral','pann']:[action.changes?.method||body.ui_context.options.method]);
    // Exercise field/circuit confirmation with execution choices already made.
    await route.fulfill({json:{mode:'deepseek',answer:'Validated',sources:[],tool_calls:[],job_id:null,ui_action:{id:body.ui_context.request_id,type:'configure_identification',open_panel:false,changes:{},start_after_apply:false,
-     execution_selection:{methods:['weighted_integral','pann'],pwm_sources:['measured','controller','auto'],method_evidence:'Previously confirmed in this fixture',pwm_evidence:'Previously confirmed in this fixture'},...action}}});
+     execution_selection:{methods,pwm_sources:[action.changes?.pwm_source||body.ui_context.pwm_source_setting||body.ui_context.options.pwm_source],method_evidence:'Previously confirmed in this fixture',pwm_evidence:'Previously confirmed in this fixture'},...action}}});
   });
   const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning);
   const send=async(text,patch)=>{action=patch;await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();await ready();};
@@ -101,7 +102,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await send('确认',{changes:{controller_confirmed:true},start_after_apply:true});
   assert.equal(chats.at(-1).ui_context.pending_start,true);assert.equal(fits.length,3);
   assert.equal(fits[2].options.method,'weighted_integral');
-  assert.equal(await page.evaluate(()=>currentIdentificationPlan().jobId),'mock-training');
+  assert.equal(await page.evaluate(()=>currentIdentificationPlan().jobId),null);
+  assert.match(await page.locator('#plan-note').innerText(),/test stop/);
   await page.locator('#new-chat').click();await ready();
   assert.equal(await page.evaluate(()=>state.dataset),null);
   await send('使用已上传CSV运行两种方法',{type:'identification_plan',parser:'deepseek',version:2,filename:null,methods:['weighted_integral','pann'],assets:{csv_id:csv.id},changes:{pwm_source:'controller',mode:'LC'}});

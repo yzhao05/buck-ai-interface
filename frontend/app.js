@@ -34,11 +34,20 @@ Object.assign(tools,{get_diagnostic_evidence:'读取训练与残差证据',conne
   open_plecs_model:'打开电路模型',search_plecs_models:'搜索电路模型文件夹',select_plecs_model:'选择实验电路',get_plecs_models:'读取电路参数',run_plecs_experiment:'运行 PLECS 对比实验',
   get_plecs_job_result:'接回仿真结果',evaluate_plecs_experiment:'比较仿真辨识误差',read_diagnosis:'读取诊断记录',record_diagnosis:'更新诊断证据'});
 function localPlecsConfig(){try{return JSON.parse(savedValue(`buck-plecs:${base}`)||'null');}catch{return null;}}
+function isLocalBackend(url){
+  try{return ['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname);}catch{return false;}
+}
+function updatePlecsControls(){
+  const direct=isLocalBackend($("api-url").value.trim());
+  $("plecs-direct-note").hidden=!direct;
+  $("bridge-pair").hidden=direct;
+  $("bridge-instructions").hidden=direct;
+  ui($("bridge-check"),direct?"检查本机 PLECS 连接":"检查连接器状态");
+}
 async function syncPlecsConfig(){
   const config=localPlecsConfig();
   if(config){
-    const localBackend=['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname);
-    if(localBackend)await api('/api/plecs/settings',{method:'POST',body:config,timeout:5000});
+    if(isLocalBackend(base))await api('/api/plecs/settings',{method:'POST',body:config,timeout:5000});
     else if((await api('/api/bridge/status')).paired)await api('/api/bridge/settings',{method:'POST',body:config,timeout:5000});
   }
 }
@@ -444,7 +453,11 @@ async function watchJob(id) {
         ui($("job-status"), `辨识完成 · 用时 ${response.result.elapsed_s} 秒`);
         return {status:"complete",job_id:id};
       }
-      if (response.status === "failed") {displayPWMQuality(response.pwm_reconstruction);throw new Error(response.error);}
+      if (response.status === "failed") {
+        displayPWMQuality(response.pwm_reconstruction);notice(response.error);
+        ui($("job-status"),"任务未完成，请检查提示");
+        return {status:"failed",job_id:id,error:response.error};
+      }
       await pause(1200);
     }
   } catch (error) { notice(error.message); ui($("job-status"), "任务未完成，请检查提示"); return {error:error.message}; }
@@ -803,6 +816,18 @@ async function applyIdentificationAction(action, context) {
       || ("method" in changes && !["pann","weighted_integral"].includes(changes.method))
       || ("mode" in changes && !["LC","LCR"].includes(changes.mode))
       || ("resistance_ohm" in changes && !(typeof changes.resistance_ohm==="number" && Number.isFinite(changes.resistance_ohm) && changes.resistance_ohm>.01 && changes.resistance_ohm<=100000))) throw new Error("配置操作格式无效。");
+  if(action.start_after_apply && currentIdentificationPlan()?.status!=='paused' &&
+      (new Set(action.execution_selection?.methods).size>1 || new Set(action.execution_selection?.pwm_sources).size>1))
+    throw new Error('多个执行选项需要辨识计划，请重新提交计划。尚未启动辨识。');
+  if(action.start_after_apply && currentIdentificationPlan()?.status==='paused'){
+    const plan=currentIdentificationPlan(), selected=action.execution_selection?.pwm_sources || [];
+    const expected=plan.version===3 ? ['measured','controller'] :
+      [plan.changes?.pwm_source || plan.execution_selection?.pwm_sources?.[0] || $('pwm-source').value];
+    const missing=executionSelectionQuestion(action.execution_selection,plan.methods,expected);
+    if(missing)return missing;
+    if(selected.length && (selected.some(source=>!expected.includes(source)) || expected.some(source=>!selected.includes(source))))
+      throw new Error('本次选择的 PWM 来源与暂停计划不同。请先取消原计划，再启动新的计划。');
+  }
   const key=`buck-ui-action:${sessionId}:${action.id}`;
   if (sessionStorage.getItem(key))return tr("此操作已处理，未重复应用或启动。");
   if (state.job || state.busy || state.syncBusy)return tr("已有任务或同步正在进行，本次未修改配置或启动新实验。");
@@ -816,7 +841,8 @@ async function applyIdentificationAction(action, context) {
   const selectedSource=changes.pwm_source||$('pwm-source').value;
   const targetMapping=staged.mapping||state.mapping;
   const targetSource=selectedSource==='auto'?(targetMapping&&!targetMapping.pwm?'controller':'measured'):selectedSource;
-  if(targetSource==='controller'&&(changes.mode||$('fit-mode').value)!=='LC')return tr('重建 PWM 只支持固定 R 的 LC 模式，本次未修改设置。');
+  const loadOnly=staged.dataset && !Object.keys(changes).length && !action.start_after_apply;
+  if(!loadOnly && targetSource==='controller'&&(changes.mode||$('fit-mode').value)!=='LC')return tr('重建 PWM 只支持固定 R 的 LC 模式，本次未修改设置。');
   // Mark before applying; replaying stored replies/retrying the same response cannot run twice.
   sessionStorage.setItem(key,"processed");
   pendingConfigurationStart=null;
@@ -838,9 +864,6 @@ async function applyIdentificationAction(action, context) {
   }
   const plan=currentIdentificationPlan();
   if(plan&&plan.status==='paused'){
-    const question=executionSelectionQuestion(action.execution_selection,plan.methods,
-      plan.version===3?['measured','controller']:[pwmSource()],{allowAuto:plan.version!==3&&$('pwm-source').value==='auto'});
-    if(question)return prefix+'\n\n'+question;
     plan.execution_selection=action.execution_selection;
     plan.status='queued';saveIdentificationPlan(plan);return prefix+' '+tr('将继续已有辨识计划，并重新检查实验条件。');
   }
@@ -910,7 +933,9 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
       ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options,pwm_source_setting:$('pwm-source').value,
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
+        previous_local_csv_action:isLocalBackend(base)?previousLocalCsvAction(activeConversation):null,
         pending_start:pendingConfigurationStart?.fingerprint===actionContext.fingerprint,
+        paused_plan:currentIdentificationPlan()?.status==='paused',
         pending_reference_confirmation:Boolean(selectedDiagnosticReference()&&!$('diagnostic-reference-confirm').checked)} : undefined,
       dataset_id:!datasetAvailable || state.savedRun ? null : savedResult
         ? (savedResult.dataset.sha256 && savedResult.dataset.sha256===state.dataset?.sha256 ? state.dataset.dataset_id : null)
@@ -942,11 +967,12 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     }
     if (response.ui_action) {
       try {response.answer=await applyIdentificationAction(response.ui_action,actionContext);}
-      catch(error){response.answer=tr("未能应用配置操作：")+tr(error.message);}
+      catch(error){response.error_code='ui_action_failed';response.answer=tr("未能应用配置操作：")+tr(error.message);}
       response.ui_action_status=response.answer;
+      window.BuckHarness.showOutcome(response.answer,response.error_code?'界面操作失败':'界面处理结果');
     }
     const answer = response.answer;
-    const replyMode=response.mode === "deepseek" ? "DeepSeek" : "请求未完成";
+    const replyMode=response.mode === "deepseek" && !response.error_code ? "DeepSeek" : "请求未完成";
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
     const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
@@ -1255,6 +1281,7 @@ $("clear-data").onclick=async()=>{
 };
 $("open-settings").onclick=async()=>{$("api-url").value=base;$("access-token").value=accessToken;$("sync-code").value=archiveKey;$("plecs-executable").value='';ui($("settings-status"), "");$("settings-dialog").showModal();
   $("plecs-model-directory").value='';
+  updatePlecsControls();
   const rememberedPlecs=localPlecsConfig();
   fillPlecsBinding(rememberedPlecs?.analysis_binding);
   if(rememberedPlecs){$("plecs-executable").value=rememberedPlecs.executable;$("plecs-model-directory").value=rememberedPlecs.model_directory||'';}
@@ -1270,6 +1297,7 @@ $("copy-sync-code").onclick=async()=>{
   catch { ui($("settings-status"),"复制失败，请手动复制同步恢复码。"); }
 };
 $("api-url").oninput=()=>{
+  updatePlecsControls();ui($("settings-status"),"");
   $("plecs-executable").value='';
   $("plecs-model-directory").value='';
   fillPlecsBinding(null);

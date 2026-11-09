@@ -45,7 +45,11 @@ def test_folder_paging_selection_and_open(tmp_path,monkeypatch,mode,remote):
                 stop.wait(.01)
         thread=threading.Thread(target=work,daemon=True);thread.start()
     else:
+        # A pairing created with the old settings UI must not override saved local paths.
+        pair=client.post('/api/bridge/pair',json={'model_directory':str(folder)})
+        assert pair.status_code==200
         assert client.post('/api/plecs/settings',json={'model_directory':str(folder)}).status_code==200
+        assert client.get('/api/plecs/status').json()=={'ready':True}
     async def agent(messages,tools,invoke,budget):
         assert budget.thinking==(mode!='fast')
         assert (await invoke('check_plecs_connection',{}))['status']=='ready'

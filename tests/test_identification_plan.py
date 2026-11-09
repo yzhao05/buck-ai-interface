@@ -51,6 +51,15 @@ def test_no_provider_does_not_fall_back_to_rules(monkeypatch):
     assert result['mode']=='provider_error'
 
 
+def test_local_plan_matches_the_verified_file_name_case_insensitively():
+    req=request('use both methods')
+    key='local-csv:'+'b'*64
+    req.ui_context.catalog=[{'kind':'csv','id':key,'name':'CASE16A.csv'}]
+    action=configuration.agent_action(req,'propose_identification_plan',proposal(
+        pwm_source='measured',pwm_evidence='CSV PWM',filename='case16a.CSV',assets={'csv_id':key}))
+    assert action['assets']['csv_id']==key
+
+
 def test_chat_dispatch_uses_model_plan_without_starting_old_configuration(monkeypatch):
     captured=provider(monkeypatch,proposal(pwm_source='measured',pwm_evidence='已有PWM'))
     async def invoke(name):

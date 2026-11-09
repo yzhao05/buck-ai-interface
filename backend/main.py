@@ -1,9 +1,13 @@
 import hmac
+import hashlib
 import json
 import os
+import re
 import threading
 import time
 import uuid
+import zlib
+from functools import partial
 from collections import OrderedDict, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -32,6 +36,7 @@ from .schemas import AnalysisRequest, ChatRequest, FitRequest
 from .report import ReportRequest, build_pdf
 
 from . import archive
+from . import local_csv
 from .memory_usage import log_memory
 archive.store = archive.ArchiveStore(os.getenv("ARCHIVE_DIR") or ROOT / "runtime" / "archive")
 TOKEN = os.getenv("APP_ACCESS_TOKEN", "")
@@ -63,6 +68,8 @@ async def size_limit(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     if request.url.path.startswith(("/api/archive", "/api/jobs", "/api/agent", "/api/bridge")):
         response.headers["Cache-Control"] = "no-store"
+    elif request.url.path == "/" or request.url.path.endswith((".js",".html",".css")):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -109,25 +116,30 @@ def get_dataset(identifier, owner):
         return item["data"]
 
 
-def add_dataset(raw, name, owner, *, reference=False):
+def add_dataset(raw, name, owner, *, reference=False, keep_dataset_id=None):
     # Parsing expands CSV bytes into arrays/objects; serialize this peak across
     # uploads and demo requests, including synchronous worker threads.
     if not dataset_parse_slot.acquire(blocking=False):
         raise HTTPException(503, "Another CSV is being parsed. Please retry shortly.")
     try:
-        return _add_dataset(raw, name, owner, reference=reference)
+        return _add_dataset(raw, name, owner, reference=reference, keep_dataset_id=keep_dataset_id)
     finally:
         dataset_parse_slot.release()
 
 
-def _add_dataset(raw, name, owner, *, reference=False):
+def _add_dataset(raw, name, owner, *, reference=False, keep_dataset_id=None):
     try:
         data = read_csv(raw, name)
     except (ValueError, UnicodeError) as exc:
         raise HTTPException(422, str(exc))
+    # Preserve exact CSV bytes for export without retaining a full second
+    # waveform representation alongside the parsed frame throughout a chat.
+    packed_csv = zlib.compress(raw, level=1)
     identifier = uuid.uuid4().hex
     with lock:
         pinned = {j['dataset_id'] for j in jobs.values() if j.get('status') in {'queued','running'}}
+        if keep_dataset_id:
+            pinned.add(keep_dataset_id)
         owned = [k for k,v in datasets.items() if v['owner']==owner and bool(v.get('reference'))==reference]
         previous = None
         if len(owned) >= (1 if reference else 2):
@@ -139,7 +151,7 @@ def _add_dataset(raw, name, owner, *, reference=False):
             raise HTTPException(503, "服务器数据容量已满，请删除不用的数据或稍后重试。")
         if previous:
             del datasets[previous]
-        datasets[identifier] = {"owner": owner, "data": data, "raw": raw, "created": time.time(), "size": size, "reference": reference}
+        datasets[identifier] = {"owner": owner, "data": data, "csv_zlib": packed_csv, "created": time.time(), "size": size, "reference": reference}
     return {"dataset_id": identifier, "filename": data.name, "columns": list(data.frame.columns),
             "rows": len(data.frame), "sha256": data.sha256, "suggested_mapping": suggest_mapping(data)}
 
@@ -158,7 +170,7 @@ def health():
 
 
 @app.post("/api/datasets")
-async def upload(file: UploadFile = File(...), owner: str = Depends(session), reference: bool = False):
+async def upload(file: UploadFile = File(...), owner: str = Depends(session), reference: bool = False, keep_dataset_id: str | None = None):
     throttle(owner, "upload", 8)
     try:
         if not (file.filename or "").lower().endswith(".csv"):
@@ -166,7 +178,7 @@ async def upload(file: UploadFile = File(...), owner: str = Depends(session), re
         raw = await file.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
             raise HTTPException(413, "CSV 超过 32 MB。")
-        return add_dataset(raw, Path(file.filename).name, owner, reference=reference)
+        return add_dataset(raw, Path(file.filename).name, owner, reference=reference, keep_dataset_id=keep_dataset_id)
     finally:
         await file.close()
 
@@ -211,8 +223,8 @@ def download_csv(identifier: str, owner: str = Depends(session)):
     # Preserve original bytes (encoding, separators and hash) for browser archives.
     with lock:
         get_dataset(identifier, owner)
-        raw = datasets[identifier]["raw"]
-    return Response(raw, media_type="text/csv", headers={"Cache-Control": "no-store"})
+        packed_csv = datasets[identifier]["csv_zlib"]
+    return Response(zlib.decompress(packed_csv), media_type="text/csv", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/analyze")
@@ -330,9 +342,12 @@ def completed_experiments(owner: str = Depends(session)):
 
 
 def local_plecs_access(request):
-    if os.getenv('RENDER') or os.getenv('APP_ENV') == 'production' or request.client.host not in {'127.0.0.1', '::1', 'testclient'}:
+    check_local_plecs_access(request.client.host if request.client else None, request.headers.get('origin'))
+
+
+def check_local_plecs_access(host, origin):
+    if os.getenv('RENDER') or os.getenv('APP_ENV') == 'production' or host not in {'127.0.0.1', '::1', 'testclient'}:
         raise HTTPException(403, '本地 PLECS 功能需要连接本机后端。')
-    origin = request.headers.get('origin')
     if origin and origin.rstrip('/') not in origins:
         raise HTTPException(403, '不允许的页面来源')
 
@@ -403,6 +418,28 @@ def get_plecs_settings(request: Request, owner: str = Depends(session)):
     return plecs_local.settings(owner)
 
 
+@app.get('/api/plecs/status')
+def local_plecs_status(request: Request, owner: str = Depends(session)):
+    local_plecs_access(request)
+    return {'ready':plecs_local.listening()}
+
+
+class LocalCsvSelection(BaseModel):
+    relative_path: str = Field(min_length=1,max_length=4096)
+    id: str = Field(pattern=r'^local-csv:[a-f0-9]{64}$')
+
+
+@app.post('/api/local-csv/file')
+def selected_csv(body: LocalCsvSelection, request: Request, owner: str = Depends(session)):
+    local_plecs_access(request)
+    throttle(owner,'local-csv',16)
+    try:
+        raw = local_csv.read(owner,body.relative_path,body.id)
+    except (ValueError,OSError) as exc:
+        raise HTTPException(422,'所选 CSV 已变化、不可读或超出限制，请重新搜索。') from exc
+    return Response(raw,media_type='text/csv',headers={'Cache-Control':'no-store'})
+
+
 @app.post('/api/plecs/settings')
 def set_plecs_settings(body: PlecsSettings, request: Request, owner: str = Depends(session)):
     local_plecs_access(request)
@@ -410,6 +447,7 @@ def set_plecs_settings(body: PlecsSettings, request: Request, owner: str = Depen
         plecs_local.configure(owner, body.executable, body.model_directory)
         state = plecs_local.settings(owner)
         state['analysis_binding'] = body.analysis_binding.model_dump() if body.analysis_binding else None
+        state['direct_access'] = True
         plecs_local.save(owner,state)
         return state
     except ValueError as exc:
@@ -418,12 +456,34 @@ def set_plecs_settings(body: PlecsSettings, request: Request, owner: str = Depen
 
 @app.post("/api/chat")
 async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(session)):
+    return await chat_runner(request, owner)(body)
+
+
+def chat_runner(request, owner):
+    # Durable work outlives the HTTP request. Capture only access-check inputs,
+    # so Starlette's raw and decoded request body can be released after the POST.
+    return partial(run_chat, owner=owner, host=request.client.host if request.client else None,
+                   origin=request.headers.get('origin'))
+
+
+async def run_chat(body, *, owner, host, origin):
     throttle(owner, "chat", 10)
     control_cache = None
     model_context = json.dumps([body.dataset_id, body.result_id if body.saved_result else None, body.circuit_filename], ensure_ascii=False)
+    def uses_bridge():
+        if not os.getenv('RENDER') and os.getenv('APP_ENV') != 'production' and host in {'127.0.0.1','::1','testclient'}:
+            if plecs_local.settings(owner).get('direct_access'):
+                return False
+        return plecs_bridge.status(owner)['paired']
     async def invoke(name, arguments=None):
         nonlocal control_cache
         try:
+            if name == 'search_local_csv':
+                check_local_plecs_access(host,origin)
+                return await run_in_threadpool(local_csv.search,owner,**(arguments or {}))
+            if name == 'verify_local_csv_selection':
+                check_local_plecs_access(host,origin)
+                return await run_in_threadpool(local_csv.verify_selection,owner,**arguments)
             if name == 'get_diagnostic_evidence':
                 from .agent_policy import evidence
                 job = jobs.get(body.result_id)
@@ -440,7 +500,7 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                     if any(job['status'] in {'queued','running'} for job in jobs.values()):
                         return {'status':'unavailable','error':'等待正在运行的辨识任务完成后再评价仿真对照。'}
                 identifier = (arguments or {}).get('experiment_id','')
-                settings = plecs_bridge.settings(owner) if plecs_bridge.status(owner)['paired'] else plecs_local.settings(owner)
+                settings = plecs_bridge.settings(owner) if uses_bridge() else plecs_local.settings(owner)
                 simulation_analysis.confirm_binding(owner,identifier,body.result_id,settings.get('analysis_binding'))
                 return await simulation_analysis.evaluate_async(owner,identifier,body.result_id)
             if name == 'read_plecs_evaluation':
@@ -458,13 +518,13 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
             if name in plecs_bridge.TOOLS:
                 payload = {'tool':name,'arguments':arguments or {},'context':model_context,
                            'result_id':body.result_id,'fit_options':body.options.model_dump()}
-                remote = plecs_bridge.status(owner)['paired']
+                remote = uses_bridge()
                 if remote:
                     settings = plecs_bridge.settings(owner)
                     payload['settings'] = settings
                     output = await plecs_bridge.dispatch(owner,payload)
                 else:
-                    local_plecs_access(request)
+                    check_local_plecs_access(host, origin)
                     settings = plecs_local.settings(owner)
                     output = await run_in_threadpool(plecs_execution.execute,owner,payload)
                 if name == 'run_plecs_experiment':
@@ -548,13 +608,18 @@ async def chat_route(body: ChatRequest, request: Request, owner: str = Depends(s
                     return {**existing, "resumed": True, "configuration_changed": True}
             return {"error": exc.detail if isinstance(exc, HTTPException) else str(exc)}
         return None
-    return await chat.answer(body, invoke)
+    try:
+        check_local_plecs_access(host,origin)
+        local_files = True
+    except HTTPException:
+        local_files = False
+    return await chat.answer(body, invoke, local_files=local_files)
 
 
 @app.post('/api/agent/tasks')
 async def start_agent_task(body: ChatRequest, request: Request, owner: str = Depends(session)):
     try:
-        return agent_tasks.launch(owner,body,lambda value:chat_route(value,request,owner))
+        return agent_tasks.launch(owner,body,chat_runner(request,owner))
     except ValueError as exc:
         raise HTTPException(409,str(exc))
 
@@ -622,7 +687,7 @@ async def resume_agent(identifier: str, request: Request, owner: str = Depends(s
     if current['state'] not in {'interrupted','failed','cancelled'}:
         raise HTTPException(409,'Only interrupted tasks may be resumed')
     try:
-        return agent_tasks.launch(owner,None,lambda body:chat_route(body,request,owner),identifier,resume=True)
+        return agent_tasks.launch(owner,None,chat_runner(request,owner),identifier,resume=True)
     except ValueError as exc:
         raise HTTPException(409,str(exc))
 
@@ -642,7 +707,7 @@ def copy_analysis(identifier: str, owner: str = Depends(session)):
             raise HTTPException(404, "实验结果已过期，无法复制到新对话。请重新辨识后再试。")
         copied = json.loads(json.dumps(source))
         target = str(uuid.uuid4())
-        dataset = add_dataset(stored["raw"], stored["data"].name, target)
+        dataset = add_dataset(zlib.decompress(stored["csv_zlib"]), stored["data"].name, target)
         if len(jobs) >= 24:
             removable = next((key for key, job in jobs.items() if key != identifier and job["status"] not in ("queued", "running")), None)
             if removable:
@@ -652,6 +717,20 @@ def copy_analysis(identifier: str, owner: str = Depends(session)):
         copied["config"]["dataset_id"] = dataset["dataset_id"]
         jobs[job_id] = copied
     return {"session_id": target, "dataset": dataset, "job_id": job_id}
+
+
+# Version the local interface's scripts and styles just as the Pages build does.
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+def frontend_index():
+    folder = ROOT / 'frontend'
+    def version(match):
+        filename = match['file']
+        digest = hashlib.sha256((folder/filename).read_bytes()).hexdigest()[:12]
+        return f'{match["attr"]}="./{filename}?v={digest}"'
+    html = re.sub(r'(?P<attr>src|href)="\./(?P<file>[\w./-]+\.(?:js|css))(?:\?[^"]*)?"',
+                  version,(folder/'index.html').read_text(encoding='utf-8'))
+    return Response(html,media_type='text/html')
 
 
 # Local convenience; GitHub Pages deploys only this directory, never backend or .env.

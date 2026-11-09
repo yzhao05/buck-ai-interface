@@ -5,6 +5,7 @@ import re
 import asyncio
 from .agent_policy import Budget, evidence
 from . import harness_runtime
+from .local_csv import TOOL as LOCAL_CSV_TOOL
 from .diagnosis_notebook import Notebook, TOOLS as DIAGNOSIS_TOOLS
 import hashlib
 import secrets
@@ -148,14 +149,14 @@ for tool in TOOLS:
             "required": ["query"], "additionalProperties": False}
 
 
-async def answer(request, invoke):
+async def answer(request, invoke, *, local_files=False):
     try:
-        return await _answer(request, invoke)
+        return await _answer(request, invoke, local_files=local_files)
     except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError, AttributeError, TimeoutError) as exc:
         return provider_failure(exc)
 
 
-async def _answer(request, invoke):
+async def _answer(request, invoke, *, local_files=False):
     key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not key:
         return provider_failure(missing=True)
@@ -166,6 +167,11 @@ async def _answer(request, invoke):
     # Scope and capabilities come from explicit UI state, never wording.
     current_only = request.current_result_analysis
     result_scoped = current_only
+    if request.ui_context:
+        # Only a search in this turn can admit a local file. Browser catalogs
+        # are authoritative only for their own (uploaded/history) assets.
+        catalog = [item for item in request.ui_context.catalog if not item.get('id','').startswith('local-csv:')]
+        request = request.model_copy(update={'ui_context':request.ui_context.model_copy(update={'catalog':catalog})})
     route = {"task": "general", "label": "自主 Agent", "secondary_tasks": [], "mode": "agent"}
     conversation = ConversationIndex([] if result_scoped else request.conversation_messages)
     library = ResultLibrary([] if result_scoped else request.result_library, request.result_id)
@@ -178,6 +184,8 @@ async def _answer(request, invoke):
     task_tools.append(EVALUATE_TOOL)
     if request.ui_context and not result_scoped:
         task_tools.extend([CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL])
+        if local_files:
+            task_tools.append(LOCAL_CSV_TOOL)
     allowed_tools = {t['function']['name'] for t in task_tools}
     if not request.enable_diagnostic_controls:
         allowed_tools.discard('run_diagnostic_controls')
@@ -253,6 +261,10 @@ async def _answer(request, invoke):
     if request.ui_context and not result_scoped:
         messages[0]['content'] += "\n配置工具语义说明（按需选择工具，无需每轮调用）：\n" + CONFIG_PROMPT + "\n" + PLAN_PROMPT
     ui_action = None
+    local_candidates = {}
+    if 'search_local_csv' in allowed_tools:
+        messages[0]['content'] += '\n本地文件搜索由你规划。search_local_csv 支持浏览、关键词和分页；文件名只是候选证据，结合用户指令、相对路径和上下文判断。零命中可换词或浏览，不要据一次查询断定文件不存在。用户要求加载且能确定文件时，用本次搜索返回的 ID 提交导入，不必要求手动上传。证据不足时询问；仅加载不启动辨识。界面确认前只能说明已提交。'
+        messages[0]['content'] += '\n历史里的前端报错只说明当时页面没有应用操作，不能作为文件已移动、空文件或权限不足的证据。用户再次要求加载时，把它当成本次授权，重新搜索并用本轮候选提交；即使 ID 与上次相同也有效。配置工具会在提交前实际读取本地 CSV；只有本轮工具报错才能据此解释读取失败。'
     plecs_catalog_read = False
     plecs_catalog = {}
     experiment_reports = []
@@ -275,8 +287,29 @@ async def _answer(request, invoke):
             }:
                 raise ValueError('A UI action is pending; apply it before configuration-dependent tools or another mutation')
             if name in {'configure_identification','propose_identification_plan','cancel_pending_identification'}:
-                ui_action = agent_action(request, name, arguments)
+                proposal = agent_action(request, name, arguments)
+                if proposal and local_candidates:
+                    selected = [proposal.get('assets',{}).get('csv_id'),proposal.get('analysis',{}).get('reference_csv_id')]
+                    files = []
+                    for key in dict.fromkeys(selected):
+                        if key not in local_candidates:
+                            continue
+                        candidate = local_candidates[key]
+                        receipt = await invoke('verify_local_csv_selection',{'relative_path':candidate['relative_path'],'id':key})
+                        if receipt.get('error'):
+                            raise ValueError(receipt['error'])
+                        if not isinstance(receipt.get('bytes'),int) or receipt['bytes'] <= 0 or not re.fullmatch('[0-9a-f]{64}',receipt.get('sha256') or ''):
+                            raise ValueError('CSV verification did not confirm readable, nonempty content')
+                        files.append({**candidate,**receipt})
+                    proposal['local_csv_files'] = files
+                ui_action = proposal
                 output = {'status':'pending_ui' if ui_action else 'no_action', 'ui_action':ui_action}
+            elif name == 'search_local_csv':
+                output = await invoke(name,arguments)
+                for item in output.get('files',[]):
+                    if item['id'] not in local_candidates:
+                        local_candidates[item['id']] = item
+                        request.ui_context.catalog.append({'id':item['id'],'kind':'csv','name':item['name']})
             elif name == 'read_diagnosis':
                 output = notebook.data
             elif name == 'record_diagnosis':
@@ -366,7 +399,9 @@ async def _answer(request, invoke):
                 output = active_job
             else:
                 if name=='start_identification':
-                    require_execution_selection(arguments.get('execution_selection'),[request.options.method],[request.options.pwm_source])
+                    selected=require_execution_selection(arguments.get('execution_selection'),[request.options.method],[request.options.pwm_source])
+                    if len(set(selected['methods']))>1 or len(set(selected['pwm_sources']))>1:
+                        raise ValueError('This tool starts one fit only; multiple selections require an identification plan')
                 output = await invoke(name)
                 if name == 'get_identification_result':
                     output = analysis_result(output)
