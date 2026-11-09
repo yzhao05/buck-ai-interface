@@ -5,9 +5,9 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
-ALLOWED_DIRS = {"backend", "frontend", "examples", "tests", ".github"}
+ALLOWED_DIRS = {"backend", "frontend", "examples", "tests", ".github", "deploy/modelscope"}
 ALLOWED_FILES = {".env.example", ".gitignore", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md",
-                 "render.yaml", "requirements.txt", "requirements-lock.txt", "requirements-dev.txt",
+                 "requirements.txt", "requirements-lock.txt", "requirements-dev.txt",
                  "requirements-pann.txt", "start-local.ps1", "启动界面.cmd"}
 
 

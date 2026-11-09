@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from .deployment import agent_capacity
 import sqlite3
 import threading
 import time
@@ -96,7 +97,7 @@ def launch(owner,body,runner,identifier=None,resume=False):
         active = db.execute("SELECT 1 FROM tasks WHERE owner=? AND state='running' LIMIT 1",(owner,)).fetchone()
     if active:
         raise ValueError('This conversation already has an active Agent task')
-    if len(running)>=int(os.getenv('AGENT_MAX_ACTIVE_TASKS','1' if os.getenv('RENDER') else '2')):
+    if len(running)>=agent_capacity():
         raise ValueError('Agent capacity is busy; wait for an active task to finish')
     identifier = identifier or uuid.uuid4().hex
     can_restart_session = True

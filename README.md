@@ -1,6 +1,6 @@
 # Buck Lab · AI 实验工作台
 
-面向 ST4001 的 Buck 变换器分析原型：PLECS CSV → 波形检查 → L/C/R 辨识 → 留出验证 → DeepSeek 对话。采用 **GitHub Pages 静态前端 + Render FastAPI 后端**，本地也可以一条命令启动。
+面向 ST4001 的 Buck 变换器分析原型：PLECS CSV → 波形检查 → L/C/R 辨识 → 留出验证 → DeepSeek 对话。采用 **魔搭创空间托管的 FastAPI 后端和网页前端，也支持从 GitHub Pages 访问后端**，本地也可以一条命令启动。
 
 ## 本地运行
 
@@ -16,7 +16,7 @@
 
 普通提问时，助手会收到当前会话各次实验的参数摘要，以及与右侧结果列表同源的目录：名称、显示时间、从新到旧的序号、精确结果 ID、方法、PWM 来源和当前选中项。`get_experiment_history` 返回此目录，`read_experiment_results` 按 Agent 选择的一个或多个精确 ID 读取已有快照中的计算配置、映射、参数、误差和诊断，再进行对比。详细快照随请求保存在后端任务中，按工具读取才进入模型上下文；不直接把全部详细结果塞进提示词。同名或同 CSV 的多次辨识不会合并，不能唯一定位时询问用户；每次结果只使用自己的真值，后端重新计算相对误差。缺少的原始 CSV、完整波形或训练轨迹明确说明，不能假定各次工况相同。读取不切换右侧选中项、不修改左侧配置、不重跑辨识，也不依赖临时任务缓存。结果分析按钮仍只绑定右侧当前选中结果；在聊天中要求对比时则可读取当前会话列表的其他记录。检索与读取顺序由 Agent 自主选择，不按提问关键词本地路由。DeepSeek 不可用时返回服务错误，已有记录仍可查看。
 
-更新后会尝试补回当前会话在后端缓存中尚存的已完成实验；旧缓存已经过期、进程已经重启或任务被淘汰时，无法自动还原此前未归档的结果。每会话最多同步 200 次实验摘要，仍受原有 8 MiB 会话档案上限约束，超限会提示保存失败而不会自动删除旧实验。本次新增存储字段和恢复接口需要同时更新前端与后端，无新增环境变量；Render 长期备份仍依赖既有持久磁盘配置。
+更新后会尝试补回当前会话在后端缓存中尚存的已完成实验；旧缓存已经过期、进程已经重启或任务被淘汰时，无法自动还原此前未归档的结果。每会话最多同步 200 次实验摘要，仍受原有 8 MiB 会话档案上限约束，超限会提示保存失败而不会自动删除旧实验。本次新增存储字段和恢复接口需要同时更新前端与后端，无新增环境变量；云端长期备份依赖归档目录所在的持久存储。
 
 在本文件所在文件夹双击 `启动界面.cmd`，保持窗口打开，然后浏览器访问：
 
@@ -84,7 +84,7 @@ Agent 回答不固定标题或表格模板：完整结果分析保留预测 L/C�
 
 后端档案默认写入 `runtime/archive/archive.sqlite3`（已由 `.gitignore` 排除），可通过 `ARCHIVE_DIR` 修改。默认每份私有档案 CSV 上限 512 MiB（`ARCHIVE_MAX_BYTES`），单个 CSV 32 MiB；每个会话最多 10000 条消息、8 MiB 元数据。空间不足时拒绝新写入，不自动淘汰旧档案。SQLite 本地文件在进程重启后保留；云端是否跨部署保留取决于是否配置持久存储。
 
-**Render 双端长期保存必须配置持久磁盘**：当前 `render.yaml` 仍为免费实例，不会自动购买或挂载磁盘。将服务改为支持磁盘的付费实例，在 Disk 中挂载 `/var/data`，设置 `ARCHIVE_DIR=/var/data/buck-archive`，再部署前后端。仅添加环境变量不等于挂载磁盘。免费实例的文件系统在重启/部署时会丢失，页面会提示后端持久存储未就绪；此时浏览器副本仍能补回，但不能作为独立长期备份。参见 [Render 持久磁盘说明](https://render.com/docs/disks)。先完成磁盘配置，再执行首次正式同步；已有 SQLite 档案迁移时应停服备份整个档案目录（包括 WAL 文件），避免复制不一致的数据库。
+**云端归档的长期保存取决于实际挂载的存储。** 魔搭镜像默认将归档写入 `/mnt/workspace/buck-lab/archive`，Agent 任务和仿真结果写入 `/mnt/workspace/buck-lab/agent`。请核对这两个目录所在存储的持久性。迁移已有 SQLite 档案时，应停服后备份整个档案目录（包括 WAL 文件）。
 
 消息按独立条目保存，旧标签页保存或关闭不会用旧副本覆盖新增消息。未确认的列映射按草稿恢复，需点击“应用并检查数据”；辨识结果只有在文件指纹、映射和参数配置一致时才恢复。
 
@@ -138,31 +138,14 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 
 已删除 `task_router.py`、配置模块的旧分类/解析入口及其关键词规则；配置适配器只验证结构、取值与资源，不重新解释原句。旧环境变量 `DEEPSEEK_ROUTER_MODEL` 已废弃。
 
-## 从零部署 GitHub Pages + Render
+## 部署到魔搭创空间
 
-**只将 `buck-ai-interface` 文件夹作为新仓库根目录；不要上传整个 ST4001、虚拟环境、reference 或 .env。**
-
-1. 在 GitHub 新建仓库，例如 `buck-ai-interface`。把本项目文件提交到其 `main` 分支。`.github`、`.gitignore` 等隐藏文件也要保留。
-2. 在 Render 选择 **New → Blueprint**，连接这个仓库，使用根目录 `render.yaml`。也可手动建立 Python Web Service：构建命令 `pip install -r requirements-lock.txt`，启动命令 `uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1`，健康检查 `/api/health`。
-3. Render 环境变量设置：
-
-   | 变量 | 值 |
-   |---|---|
-   | `DEEPSEEK_API_KEY` | 自己的 DeepSeek Key；留空禁用 AI 问答并显示英文错误提醒 |
-   | `DEEPSEEK_MODEL` | `deepseek-flash`，或账户支持的模型 |
-   | `APP_ENV` | `production` |
-   | `APP_ACCESS_TOKEN` | Blueprint 自动生成；手动部署则设置至少 20 字符的应用口令 |
-   | `CORS_ORIGINS` | `https://你的用户名.github.io`，**不包含仓库路径和结尾斜杠** |
-   | `SOURCE_URL` | `https://github.com/你的用户名/buck-ai-interface`，应提供对应版本完整源码 |
-   | `PYTHON_VERSION` | `3.13.5` |
-
-4. Render 成功后记下 `https://你的服务.onrender.com`。先访问它的 `/api/health` 确认 `status: ok`。
-5. GitHub 仓库 **Settings → Secrets and variables → Actions → Variables** 新建 `RENDER_API_URL`，值为上述服务地址。它是公开地址，不是 Secret。不要在 GitHub Variables 中放 DeepSeek Key。
-6. GitHub **Settings → Pages → Source** 选择 **GitHub Actions**。在 Actions 手动运行 `Deploy interface to GitHub Pages`。该流程只发布 `frontend/`。
-7. 打开 Pages 地址，点“连接设置”，输入 Render 中的 `APP_ACCESS_TOKEN`，点击“保存并连接”。这是你的应用口令，不是 DeepSeek Key。当前浏览器会自动记住口令，刷新或下次打开时自动使用；换浏览器、无痕模式或清除网站数据后需要重新输入。口令按当前项目路径和后端地址分别保存，切换后端不会沿用另一个后端的口令。在“连接设置”点击“清除已记住的口令”可以删除记忆；Render 口令变更后在此重新填写并保存。
-8. 加载示例、辨识、提问并导出报告，确认整条链路。
-
-也可直接在页面“连接设置”填写后端地址；地址保存在当前浏览器中，会覆盖 config.js 的默认地址。换后端前先清除当前数据。Render 的资源配额或休眠可能导致首次请求等待，页面会显示连接/超时状态。
+1. 本项目的魔搭创空间为 [yuzhao05/buck-lab](https://www.modelscope.cn/studios/yuzhao05/buck-lab)。在 GitHub 仓库的 Actions Secrets 中设置有该创空间写权限的 `MODELSCOPE_TOKEN`。
+2. 在创空间部署设置中添加密文变量 `APP_ACCESS_TOKEN`（至少 20 个字符）和 `DEEPSEEK_API_KEY`。前者用于登录 Buck Lab，后者用于后端请求 DeepSeek。模型名称可用 `DEEPSEEK_MODEL` 配置。
+3. 推送到 GitHub 的 `main` 后，`Deploy Buck Lab to ModelScope` 工作流从该提交打包代码，更新创空间的 Dockerfile、启动脚本和应用包。镜像安装 CPU 版 PyTorch，以单个 Uvicorn worker 监听 7860 端口。
+4. 创空间启动后，打开实际运行的应用，在该应用地址后访问 `/api/health`，确认返回 `status: ok`。从创空间内打开前端时默认连接同一地址。在连接设置中输入应用访问口令并保存。浏览器会按后端地址记住所用口令。
+5. 如需从 GitHub Pages 打开前端，在仓库 Actions Variables 设置 `MODELSCOPE_API_URL` 为创空间**实际应用的 HTTPS 地址**，并将创空间的 `CORS_ORIGINS` 设为 Pages 站点来源，例如 `https://你的用户名.github.io`。在 GitHub 的 Pages 设置中选择 GitHub Actions 并运行 Pages 发布工作流。连接设置中手动保存的地址优先于发布时写入的默认地址。
+6. 加载示例并检查波形、辨识结果和聊天。若请求超时，可以先查看创空间运行状态及后端日志。前端先向所选后端查询 `/api/health`，再按该服务公布的请求头发送应用口令。魔搭镜像使用 `X-Buck-Authorization`，本机默认使用 `Authorization`。普通请求和 Agent 事件流共用这一设置。
 
 ## 已实现
 
@@ -198,7 +181,7 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-仅当本地 PLECS 源模型有变化时，重新核对电路并运行 `tests/build_plecs_evidence.py` 更新证据；它只读取模型文本，不执行初始化命令。知识层随后端部署更新，上传 GitHub 后需要等待 Render 重新部署。
+仅当本地 PLECS 源模型有变化时，重新核对电路并运行 `tests/build_plecs_evidence.py` 更新证据；它只读取模型文本，不执行初始化命令。知识层随后端部署更新，上传 GitHub 后需要等待 魔搭创空间完成部署。
 
 ## 三列 CSV：固定已知 R 识别 L、C
 
@@ -267,7 +250,7 @@ PWM 列为可选项，可与时间、电流、电压一起放在同一 CSV 中�
 
 两者均按时间分训练/留出并连续验证；PANN 联合模式的验证初态来自训练段估计，因此波形误差对比也包含初态策略的影响。切换方法只修改待提交设置，右侧保留原方法的结果，直到再次开始辨识；选择随会话保存。新加权积分使用独立的 `weighted_integral` 标识；旧 `integral` API 仍保留原算法供复现，旧会话恢复到新选择时不会把旧结果冒充新方法结果。
 
-默认 Render 只安装轻量依赖。若需要 PANN，在具备足够内存的后端环境运行：
+魔搭创空间镜像已安装 CPU 版 PyTorch，可运行 PANN。本地后端需要安装 PANN 依赖时运行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-pann.txt
@@ -282,7 +265,7 @@ PWM 列为可选项，可与时间、电流、电压一起放在同一 CSV 中�
 - 排队和运行中的任务及其数据不会因临时缓存 TTL 被清理；结束后从完成时刻重新计算临时缓存保留时间。前端仍保留单次网络请求超时以提示断网，这不会终止后端训练；聊天 API、数据库等待和测试脚本超时不属于训练限时。旧报告中的 `time_budget` 是历史事实，不改写。取消代码内限时不改变托管平台自身的重启或资源限制。更新前端和后端后生效，无需新增环境变量。
 - 连续前向验证只在所选区间起点使用首窗口估计状态，后续和留出段均不重置。参数真值和留出测量不参与初值/轮次选择。**低训练损失不保证参数准确，PANN 微调也可能比初始化偏差更大。**
 
-本地 Case14 的干净初值替换只用于诊断；Case15/16 支持尝试联合状态估计，但其完整控制/反馈模型和自主闭环验证没有搬入当前接口。参考汇总与 SHA-256 见 [噪声实验来源](backend/knowledge_base/noise_evidence.json)。Case17 含噪辨识尚未完成，不作为验证成功证据。
+本地 Case14 的干净初值替换只用于诊断。Case15/16 的历史实验供联合初值估计参考。当前界面在用户确认控制器配置后支持 PWM 重建和自主闭环验证，历史实验的误差仍须在当前配置上重新测量。参考汇总与 SHA-256 见 [噪声实验来源](backend/knowledge_base/noise_evidence.json)。Case17 含噪辨识尚未完成，不作为验证成功证据。
 
 本接口的成对重测由 `tests/benchmark_pann_noise.py` 执行，读取已有含噪归档，不运行新的 PLECS 仿真。真实参数只在拟合结束后计算误差；保留所有指定种子，见[完整重测记录与限制](tests/evidence/README.md)。此项只检查 LC（固定 R）和训练段参数误差，不等同于独立工况、LCR 或硬件验证。重测示例：
 
@@ -291,7 +274,7 @@ $env:PANN_PYTHON = 'D:\开学作业\ST4001\PANN-main\.venv\Scripts\python.exe'
 .\.venv\Scripts\python.exe tests/benchmark_pann_noise.py 'D:\开学作业\ST4001\仿真\buck_converter_with_parameter_sweep\test\results\case16a\training_inputs.npz' --truth-l-uh 60 --truth-c-uf 500 --epochs 200 --output runtime/noise-recheck.json
 ```
 
-这台电脑已有 `PANN-main/.venv`，本地 `.env` 已用 `PANN_PYTHON` 指向该解释器。后端通过隐藏子进程调用原有 PyTorch 环境，无需改动其依赖；不传递 DeepSeek Key 或应用口令。若迁移电脑，更新或清空这个本地路径。Render 不设置该变量，可选安装 torch 后在服务进程内运行。
+这台电脑已有 `PANN-main/.venv`，本地 `.env` 已用 `PANN_PYTHON` 指向该解释器。后端通过隐藏子进程调用原有 PyTorch 环境，无需改动其依赖；不传递 DeepSeek Key 或应用口令。若迁移电脑，更新或清空这个本地路径。魔搭镜像直接使用容器内的 PyTorch。
 
 ## 参数真值对照
 
@@ -354,7 +337,7 @@ backend/knowledge.py      可检查的检索资料与来源
 backend/knowledge_base/   功率/控制公式、完整手册与 PLECS 证据
 examples/                 真实 PLECS CSV 与来源记录
 tests/                    数值、数据泄漏、API 与隔离测试
-render.yaml               Render 部署配置
+deploy/modelscope/        魔搭创空间 Dockerfile 和启动脚本
 .github/workflows/        Pages 发布与后端测试
 reference/                本地解压的 PE-GPT 参考源码，不提交
 ```
@@ -367,7 +350,7 @@ reference/                本地解压的 PE-GPT 参考源码，不提交
 node --check frontend/app.js
 ```
 
-来源与许可证见 `THIRD_PARTY_NOTICES.md` 和 `LICENSE`。部署步骤参照 [GitHub Pages 官方文档](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) 和 [Render FastAPI 文档](https://render.com/docs/deploy-fastapi)。
+来源与许可证见 `THIRD_PARTY_NOTICES.md` 和 `LICENSE`。部署步骤参照 [GitHub Pages 官方文档](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) 和 [魔搭部署工作流](.github/workflows/modelscope.yml)。
 
 右侧“参数辨识”标题旁的下箭头列出本会话已保存的辨识结果，按时间从新到旧排序，名称与 JSON 导出文件名一致；同名项可按时间、LC/LCR 模式及记录 ID 区分。选择记录后恢复该次预测参数、真值对照、诊断及导出/助手分析目标，不改变左侧待提交设置。刷新后恢复所选记录。后端任务缓存过期时仍可查看持久保存的数值摘要；摘要不含完整波形和逐轮训练记录，上方波形仍属于当前导入 CSV。选择历史结果后可在本对话分析，也可将摘要复制到新对话分析，无需重新辨识。聊天接口对刚完成与历史选中的结果统一以只读 `saved_result` 传递右侧显示的快照，包含该次预测参数、实际计算配置、映射与当前真值对照，并校验结果 ID、配置及映射。快照保存在 Agent 任务请求中，后端重启或任务缓存失效后恢复仍使用提交时绑定的结果；若右侧已切换到其他结果，恢复入口会提示重新选择，不混用结果。新对话分析遇到原任务缓存过期时同样可复制当前快照，不重跑辨识。旧版已经提交且未携带快照的任务不能凭空恢复数值，应重新点击右侧“让助手分析结果”提交快照。原始 CSV 或完整训练轨迹缺失只影响需要这些材料的诊断，不阻止分析快照已有数据；分析中标明其为会话快照来源，不冒充新计算。需同步部署前端与后端，无新增环境变量。
 
@@ -454,15 +437,15 @@ Harness 使用 **DeepSeek Messages API**。聊天不再单独调用分类/配置
 
 前端通过 `/api/agent/tasks` 和 NDJSON 事件流展示工具状态、回答增量（不显示内部推理）。可追加指令、停止任务、找回断线任务。后台中断后显式恢复官方 Harness 会话和证据账本；已完成实验复用结果，已发出但状态未知的实验不自动重复。界面配置提案在刷新后不会自动应用到已变化的表单。原始 CSV 后端缓存过期时，仍需恢复数据才能继续依赖它的计算。
 
-持久数据：`runtime/harness`（官方会话/诊断证据）、`runtime/agent_tasks`（任务与流式事件）、`runtime/bridge`（配对及一次领取队列）、`runtime/simulation_analysis`（回传波形/误差比较）。可用 `AGENT_RUNTIME_DIR=/var/data/buck-agent` 将这些目录放入已挂载的持久卷；Render 免费实例的临时文件不能保证跨部署恢复。只运行一个 Uvicorn worker，Agent 并发上限默认在 Render 为 1、本地为 2，可用 `AGENT_MAX_ACTIVE_TASKS` 覆盖；普通表单辨识沿用原队列。仿真重辨识使用云端/本机后端的 PANN 安装，不要求连接器电脑安装 PyTorch。
+持久数据：`runtime/harness`（官方会话/诊断证据）、`runtime/agent_tasks`（任务与流式事件）、`runtime/bridge`（配对及一次领取队列）、`runtime/simulation_analysis`（回传波形/误差比较）。魔搭镜像设置 `AGENT_RUNTIME_DIR=/mnt/workspace/buck-lab/agent`。跨部署恢复需要该目录位于持久存储上。只运行一个 Uvicorn worker，Agent 并发上限默认在魔搭镜像中为 1、本地为 2，可用 `AGENT_MAX_ACTIVE_TASKS` 覆盖；普通表单辨识沿用原队列。仿真重辨识使用云端/本机后端的 PANN 安装，不要求连接器电脑安装 PyTorch。
 
 连接器在任务预算结束后仍可回传已执行结果（24 小时以内），通过 `get_plecs_job_result` 读取；恢复排查时先接回旧结果，不为获取结果重跑仿真。连接器进程重启后，用同一服务器地址、会话 ID 和原配对码启动，会补传已保存但未送达的结果；执行中崩溃且没有保存结果时报告状态不确定，不重新执行。重新生成配对码会撤销旧连接器权限，并取消旧配对尚未完成的任务，包括状态不确定的任务。
 
 普通表单发起的 PANN 训练按设置轮数完成；Agent 工具发起的仿真重辨识另外受任务预算和单次最多 150 秒限制。中断后若完整评价已保存，恢复时直接读取；没有完成记录则说明不确定，不把旧尝试的回答当作本次成功结果。
 
-验证：`python -m pytest tests/test_harness_integration.py -q` 包括**真实官方 SDK + 本地模拟 Messages 服务**的 MCP 调用、流式回答、会话恢复及默认工具禁用，也包含桥接配对隔离、一次领取、结果重传、假设记录和误差计算测试。测试不代表已通过真实 DeepSeek、Render 或用户本机电路的端到端验收。
+验证：`python -m pytest tests/test_harness_integration.py -q` 包括**真实官方 SDK + 本地模拟 Messages 服务**的 MCP 调用、流式回答、会话恢复及默认工具禁用，也包含桥接配对隔离、一次领取、结果重传、假设记录和误差计算测试。测试不代表已通过真实 DeepSeek、魔搭创空间或用户本机电路的端到端验收。
 
-2026-11-06 另完成本机真实 PLECS RPC 检查：使用 `case17 originalplecs.plecs` 的独立副本，将 C1 从 0.001 F 改为 0.0011 F，基线与干预均返回两个通道、2001 个采样点，原文件 SHA-256 不变。该次只验证真实仿真链路，没有验证自动参数重辨识：此模型的 L 使用 `varL` 表达式，而当前登记仅支持数值常量，且输出端口尚未作物理量绑定。现有常量模型的自动误差比较通过本地桥接集成测试；真实 DeepSeek + Render + 本机连接器的完整链路仍待部署后验收。
+2026-11-06 另完成本机真实 PLECS RPC 检查：使用 `case17 originalplecs.plecs` 的独立副本，将 C1 从 0.001 F 改为 0.0011 F，基线与干预均返回两个通道、2001 个采样点，原文件 SHA-256 不变。该次只验证真实仿真链路，没有验证自动参数重辨识：此模型的 L 使用 `varL` 表达式，而当前登记仅支持数值常量，且输出端口尚未作物理量绑定。现有常量模型的自动误差比较通过本地桥接集成测试；该次测试未覆盖真实 DeepSeek、云端后端与本机连接器的完整链路。
 
 官方参考：[Python SDK](https://github.com/deepseek-ai/deepseek-harness/blob/master/python/sdk/README.md)、[MCP 工具接入](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/mcp/mcp-client/README.md)。
 
@@ -475,7 +458,7 @@ Harness 使用 **DeepSeek Messages API**。聊天不再单独调用分类/配置
 - 知识与会话检索工具执行 Agent 提供的查询及分页参数，返回原文与来源；本地词项索引负责匹配排序，不决定是否应检索，不生成兜底答案。配置工具仅输出待应用动作，前端校验数据/配置版本、范围、文件归属和幂等性后执行。取消等待确认或后续辨识也是 Agent 的显式工具动作。
 - 数值工具使用确定性算法及经过约束的实验执行器；类型、数值范围、归属、资源预算、上下文绑定与防重放仍由代码强制检查。这些检查不解析用户的自然语言。
 - PLECS 工具分离副作用：`check_plecs_connection` 只探测 RPC，`connect_plecs` 必要时启动，`search_plecs_models` 只列文件名/路径，`select_plecs_model` 才读取并登记文件，`open_plecs_model` 打开副本，`run_plecs_experiment` 才仿真。搜索词由 Agent 提供；选择路径限于配置的模型目录，允许引用搜索结果或先前上下文，不要求本条消息重复路径。
-- 本地后端可直接调用本机执行器；Render 经已配对的出站连接器队列调用同一执行器，再通过本机 PLECS RPC 通信。云端本身不能访问本机磁盘。
+- 本地后端可直接调用本机执行器；魔搭后端经已配对的出站连接器队列调用同一执行器，再通过本机 PLECS RPC 通信。云端本身不能访问本机磁盘。
 
 `node tests/browser-agent-adapter.cjs` 验证前端不依措辞删上下文、附图保留配置能力、Agent 取消、结果/表单分离和显式分析范围。`tests/test_chat_adapter.py` 验证同一工具集覆盖快速/思考模式、结构化参数校验、按需证据读取和 PLECS 只读操作无附带启动/读取。测试使用模拟模型，不代表真实模型对所有表达都能理解正确。当前 Windows 运行时启动目录修复已通过快速/思考两种模式的真实 SDK 会话落盘与跨进程恢复测试；测试遍历使用 Windows 长路径前缀，避免将超长路径下已存在的会话误报为缺失。模型上游仍使用本地模拟服务，旧的未落盘会话不因此恢复。
 
@@ -484,6 +467,6 @@ Harness 使用 **DeepSeek Messages API**。聊天不再单独调用分类/配置
 
 本轮循环审查补充：任务找回优先返回正在运行的任务（包括恢复的较早任务）；浏览器缓存任务 ID 返回 404 时改查后端最新任务，浏览器存储不可用不阻断已提交任务的流式跟踪。波形工具读取失败返回工具错误，Agent 可以说明缺失并继续检索。PLECS 登记保留模型真实 TimeSpan，超过 0.1 秒仅阻止自动实验，不静默缩短时段，仍允许打开副本。实验去重同时核对已登记模型的源文件 SHA-256；同路径重新登记的新电路不会复用已知旧版本的实验结果，未完成实验仍保留防重跑记录。
 
-Render 内存排查（2026-11-07）：Agent 与 PLECS 队列的 SQLite 连接在事务退出时显式关闭；CSV 解析不再构造完整 Unicode 文本及 StringIO 副本，解析峰值全局串行；正在辨识的数据不会被上传替换移出缓存而脱离容量统计。Harness 实际运行入口限制并发，覆盖任务接口及直接聊天接口。使用默认并发时无需额外配置环境变量。资源繁忙返回明确错误，不更改 Agent 语义决策。
+云端容器内存排查（2026-11-07）：Agent 与 PLECS 队列的 SQLite 连接在事务退出时显式关闭；CSV 解析不再构造完整 Unicode 文本及 StringIO 副本，解析峰值全局串行；正在辨识的数据不会被上传替换移出缓存而脱离容量统计。Harness 实际运行入口限制并发，覆盖任务接口及直接聊天接口。使用默认并发时无需额外配置环境变量。资源繁忙返回明确错误，不更改 Agent 语义决策。
 
-Agent 运行期间每 15 秒记录 `Container memory`，在支持 cgroup v2 的 Linux 容器中包含 used_mib、peak_mib、limit_mib，统计包含 Harness 子进程。结合 Render 的重启时间与 Metrics 判定实际峰值；本地测试不能保证 512 MB 能承载所有工作负载。内存日志不包含问题、密钥或电路路径。
+启用容器内存监控时，Agent 每 15 秒记录 `Container memory`，在支持 cgroup v2 的 Linux 容器中包含 used_mib、peak_mib、limit_mib，统计包含 Harness 子进程。结合容器重启时间与运行日志判定实际峰值；本地测试不能保证 512 MB 能承载所有工作负载。内存日志不包含问题、密钥或电路路径。

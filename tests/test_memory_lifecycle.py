@@ -66,8 +66,9 @@ def test_heartbeat_does_not_load_saved_analysis_request(tmp_path, monkeypatch):
     assert agent_tasks.read('owner','task')['analysis_result_id'] == 'fit'
 
 
-def test_render_guard_closes_running_harness_and_allows_retry(tmp_path, monkeypatch):
-    monkeypatch.setenv('RENDER', 'true')
+def test_studio_guard_closes_running_harness_and_allows_retry(tmp_path, monkeypatch):
+    monkeypatch.delenv('RENDER', raising=False)
+    monkeypatch.setenv('APP_ENV', 'production')
     monkeypatch.setattr(memory_usage, 'CGROUP', tmp_path)
     mib = 1024 * 1024
     (tmp_path/'memory.max').write_text(str(512*mib))

@@ -26,17 +26,19 @@ jobs:
           for file in frontend/*.js; do node --check "$file"; done
       - name: Set public backend address
         env:
-          RENDER_API_URL: ${{ vars.RENDER_API_URL }}
+          BACKEND_API_URL: ${{ vars.MODELSCOPE_API_URL || vars.RENDER_API_URL }}
+          STUDIO_BACKEND: ${{ vars.MODELSCOPE_API_URL != '' }}
           REPOSITORY: ${{ github.repository }}
         run: |
           node - <<'JS'
           const fs = require('fs');
-          const apiBaseUrl = process.env.RENDER_API_URL || '';
+          const apiBaseUrl = process.env.BACKEND_API_URL || '';
           if (apiBaseUrl && new URL(apiBaseUrl).protocol !== 'https:') {
-            throw new Error('RENDER_API_URL must be HTTPS');
+            throw new Error('Backend app URL must be HTTPS');
           }
           fs.writeFileSync('frontend/config.js', 'window.BUCK_CONFIG = ' + JSON.stringify({
             apiBaseUrl,
+            studioBackend: process.env.STUDIO_BACKEND === 'true',
             sourceUrl: 'https://github.com/' + process.env.REPOSITORY
           }) + ';\n');
           JS

@@ -1,6 +1,6 @@
 FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
-    APP_ENV=production DEEPSEEK_MODEL=deepseek-flash \
+    APP_ENV=production BUCK_APP_AUTH_HEADER=X-Buck-Authorization DEEPSEEK_MODEL=deepseek-flash \
     AGENT_RUNTIME_DIR=/mnt/workspace/buck-lab/agent ARCHIVE_DIR=/mnt/workspace/buck-lab/archive \
     AGENT_MAX_ACTIVE_TASKS=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 WORKDIR /app

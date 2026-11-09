@@ -37,6 +37,11 @@ function localPlecsConfig(){try{return JSON.parse(savedValue(`buck-plecs:${base}
 function isLocalBackend(url){
   try{return ['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname);}catch{return false;}
 }
+const backendAuthHeaders = new Map();
+function appTokenHeader(){
+  const fallback = config.studioBackend && base === config.apiBaseUrl ? 'X-Buck-Authorization' : 'Authorization';
+  return backendAuthHeaders.get(base) || fallback;
+}
 function updatePlecsControls(){
   const direct=isLocalBackend($("api-url").value.trim());
   $("plecs-direct-note").hidden=!direct;
@@ -121,11 +126,11 @@ function errorText(body) {
   return "请求失败，请检查后端服务。";
 }
 async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = ""} = {}) {
-  if (!base) throw new Error("请先在连接设置中填写 Render 后端地址，或本地启动后端。");
+  if (!base) throw new Error("请在连接设置中填写魔搭创空间的应用地址，或启动本地后端。");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   const headers = {"X-Session-ID": sessionId};
-  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  if (accessToken && path !== "/api/health") headers[appTokenHeader()] = `Bearer ${accessToken}`;
   if (archiveCode) headers["X-Archive-Key"] = archiveCode;
   if (body && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
   try {
@@ -136,7 +141,7 @@ async function api(path, {method = "GET", body, timeout = 90000, asBlob = false,
     if (!response.ok) throw Object.assign(new Error(errorText(data)), {status:response.status});
     return data;
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("请求超时。Render 服务可能正在唤醒，请稍后重试。");
+    if (error.name === "AbortError") throw new Error("后端未在规定时间内响应，请稍后重试。");
     if (error instanceof TypeError) throw new Error("无法连接后端。请检查服务地址、启动状态及 CORS_ORIGINS 设置。");
     throw error;
   } finally { clearTimeout(timer); }
@@ -200,10 +205,18 @@ function controls() {
   renderIdentificationPlan();
 }
 async function connect() {
+  const address = base;
   $("connection-status").className = "status";
   $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("正在连接"));
   try {
     const health = await api("/api/health", {timeout: 60000});
+    if (address !== base) return false;
+    if (typeof health?.chat_mode !== "string") throw new Error("该地址未返回 Buck Lab 服务状态，请填写实际运行应用的地址。");
+    if (['Authorization','X-Buck-Authorization'].includes(health.app_auth_header)) {
+      backendAuthHeaders.set(address,health.app_auth_header);
+    } else {
+      backendAuthHeaders.delete(address);
+    }
     archiveEnabled=Boolean(health.archive_enabled); archivePersistent=Boolean(health.archive_persistent);
     if (!archiveEnabled) syncStatus("此后端尚未启用双向同步，请更新后端。");
     state.connected = true;
@@ -222,6 +235,7 @@ async function connect() {
     else notice();
     return true;
   } catch (error) {
+    if (address !== base) return false;
     state.connected = false;
     $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("尚未连接"));
     ui($("chat-mode"), "等待连接分析后端");

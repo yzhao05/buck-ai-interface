@@ -67,9 +67,23 @@ def test_file_integrity_clear_generation_and_missing_replica(client):
     assert client.get(file_url).status_code==404
 
 
-def test_render_without_persistent_disk_is_reported(client, monkeypatch):
-    monkeypatch.setenv("RENDER","true")
+def test_studio_without_persistent_disk_is_reported(client, monkeypatch):
+    monkeypatch.delenv("RENDER",raising=False)
+    monkeypatch.setenv("APP_ENV","production")
     monkeypatch.delenv("ARCHIVE_DIR",raising=False)
     health=client.get("/api/health").json()
     assert health["archive_enabled"] is True
     assert health["archive_persistent"] is False
+
+
+def test_archive_uses_closest_mount_including_bind_mounts(tmp_path):
+    from backend.deployment import archive_on_volume
+    volume = tmp_path / 'space with gaps'
+    mounts = tmp_path / 'mountinfo'
+    point = volume.as_posix().replace(' ', r'\040')
+    root = '1 0 8:1 / / rw - ext4 disk rw\n'
+    bind = f'2 1 8:1 /studio {point} rw - ext4 disk rw\n'
+    mounts.write_text(root + bind + f'3 2 0:2 / {point}/cache rw - tmpfs tmpfs rw\n',encoding='utf-8')
+    assert archive_on_volume(volume / 'archive', mounts)
+    assert not archive_on_volume(volume / 'cache' / 'archive', mounts)
+    assert not archive_on_volume(tmp_path / 'other', mounts)

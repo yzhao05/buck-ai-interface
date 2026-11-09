@@ -37,10 +37,14 @@ from .report import ReportRequest, build_pdf
 
 from . import archive
 from . import local_csv
+from .deployment import archive_on_volume, hosted
 from .memory_usage import log_memory
 archive.store = archive.ArchiveStore(os.getenv("ARCHIVE_DIR") or ROOT / "runtime" / "archive")
 TOKEN = os.getenv("APP_ACCESS_TOKEN", "")
-if (os.getenv("APP_ENV") == "production" or os.getenv("RENDER")) and len(TOKEN) < 20:
+APP_TOKEN_HEADER = os.getenv("BUCK_APP_AUTH_HEADER", "Authorization")
+if APP_TOKEN_HEADER not in {"Authorization", "X-Buck-Authorization"}:
+    raise RuntimeError("Unsupported BUCK_APP_AUTH_HEADER")
+if hosted() and len(TOKEN) < 20:
     raise RuntimeError("Production requires APP_ACCESS_TOKEN of at least 20 characters.")
 app = FastAPI(title="Buck Lab API", version="0.1.0")
 origins = [s.strip().rstrip("/") for s in os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5500,http://127.0.0.1:5500").split(",") if s.strip()]
@@ -62,7 +66,7 @@ async def size_limit(request: Request, call_next):
     # Reject missing/incorrect credentials before parsing an upload body.
     bridge_worker = request.url.path in {'/api/bridge/claim', '/api/bridge/heartbeat'} or request.url.path.startswith('/api/bridge/complete/')
     if TOKEN and request.url.path.startswith("/api/") and request.url.path != "/api/health" and not bridge_worker and request.method != "OPTIONS":
-        if not hmac.compare_digest(request.headers.get("authorization", ""), "Bearer " + TOKEN):
+        if not hmac.compare_digest(request.headers.get(APP_TOKEN_HEADER, "").encode(), ("Bearer " + TOKEN).encode()):
             return JSONResponse(status_code=401, content={"detail": "访问口令不正确，请在连接设置中输入后端 APP_ACCESS_TOKEN。"})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -163,10 +167,10 @@ def compact(data):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "0.1.0", "chat_mode": "deepseek" if os.getenv("DEEPSEEK_API_KEY", "").strip() else "unavailable",
-            "model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "requires_token": bool(TOKEN),
+            "model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "requires_token": bool(TOKEN), "app_auth_header": APP_TOKEN_HEADER,
             "pann_available": pann_available(),
             "source_url": os.getenv("SOURCE_URL", ""), "archive_enabled": True,
-            "archive_persistent": not bool(os.getenv("RENDER")) or (bool(os.getenv("ARCHIVE_DIR")) and any(os.path.ismount(p) for p in [archive.store.directory, *archive.store.directory.parents] if str(p) not in ("/", ".")))}
+            "archive_persistent": not hosted() or archive_on_volume(archive.store.directory)}
 
 
 @app.post("/api/datasets")
@@ -346,7 +350,7 @@ def local_plecs_access(request):
 
 
 def check_local_plecs_access(host, origin):
-    if os.getenv('RENDER') or os.getenv('APP_ENV') == 'production' or host not in {'127.0.0.1', '::1', 'testclient'}:
+    if hosted() or host not in {'127.0.0.1', '::1', 'testclient'}:
         raise HTTPException(403, '本地 PLECS 功能需要连接本机后端。')
     if origin and origin.rstrip('/') not in origins:
         raise HTTPException(403, '不允许的页面来源')
@@ -471,7 +475,7 @@ async def run_chat(body, *, owner, host, origin):
     control_cache = None
     model_context = json.dumps([body.dataset_id, body.result_id if body.saved_result else None, body.circuit_filename], ensure_ascii=False)
     def uses_bridge():
-        if not os.getenv('RENDER') and os.getenv('APP_ENV') != 'production' and host in {'127.0.0.1','::1','testclient'}:
+        if not hosted() and host in {'127.0.0.1','::1','testclient'}:
             if plecs_local.settings(owner).get('direct_access'):
                 return False
         return plecs_bridge.status(owner)['paired']
@@ -738,4 +742,4 @@ app.include_router(archive.router)
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")
 # Added last so CORS also wraps auth and payload-limit error responses.
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "DELETE"],
-                   allow_headers=["Authorization", "Content-Type", "X-Session-ID", "X-Archive-Key"], allow_credentials=False)
+                   allow_headers=[APP_TOKEN_HEADER, "Content-Type", "X-Session-ID", "X-Archive-Key"], allow_credentials=False)

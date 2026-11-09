@@ -39,7 +39,7 @@ def provider_failure(exc=None, *, missing=False, **metadata):
     elif isinstance(exc, SessionRestoreError):
         code = 'harness_session_unavailable'
         message = ('The saved Agent session is missing. This task already attempted tools. Check the saved results before starting another task.'
-                   if str(exc)=='missing_after_tools' else 'The backend could not restore the saved Harness session. Check the Render logs before retrying.')
+                   if str(exc)=='missing_after_tools' else 'The backend could not restore the saved Harness session. Check the backend logs before retrying.')
     elif isinstance(exc, HarnessTurnError):
         metadata['finish_reason'] = exc.reason
         code = 'output_token_limit' if exc.reason == 'max-tokens' else 'harness_incomplete'
@@ -78,7 +78,7 @@ def provider_failure(exc=None, *, missing=False, **metadata):
         message = 'The backend could not communicate with the AI service. Check the backend network and provider endpoint.'
     else:
         code = "provider_failed"
-        message = "The backend could not finish the Agent task. Check the Render logs for the Agent failure."
+        message = "The backend could not finish the Agent task. Check the backend logs for the Agent failure."
     logging.getLogger('uvicorn.error').warning(
         'Agent failure: code=%s exception=%s cause=%s http_status=%s', code,
         type(exc).__name__ if exc else 'none',

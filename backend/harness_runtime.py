@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+from .deployment import agent_capacity, hosted
 import secrets
 import codecs
 import threading
@@ -23,7 +24,7 @@ from .memory_usage import log_memory, low_headroom, memory_readings
 scope = contextvars.ContextVar('harness_scope', default=None)
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'harness'
 active = {}
-runtime_slots = threading.BoundedSemaphore(int(os.getenv('AGENT_MAX_ACTIVE_TASKS', '1' if os.getenv('RENDER') else '2')))
+runtime_slots = threading.BoundedSemaphore(agent_capacity())
 
 
 class Gateway:
@@ -201,7 +202,7 @@ async def run(messages, tools, invoke, budget):
         raise AgentCapacityError('Agent capacity is busy; wait for an active task to finish')
     work = None
     try:
-        if not os.getenv('RENDER'):
+        if not hosted():
             return await _run(messages, tools, invoke, budget)
         next_log = 0
         loop = asyncio.get_running_loop()

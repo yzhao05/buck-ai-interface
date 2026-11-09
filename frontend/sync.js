@@ -168,7 +168,7 @@ async function synchronizeArchive({preferRemote=false,background=false}={}) {
       missing=(await reconcileFiles(saved,(saved.file_epoch || 0)===(merged.record.file_epoch || 0) ? merged.files : [])) || missing;
     }
     archiveBootstrap=false; archiveLastSuccess=Date.now();
-    syncStatus(missing ? "对话与实验记录已同步；部分 CSV 两端均无有效副本，请重新上传。" : archiveAgain ? "本轮同步完成，新修改将继续备份。" : archivePersistent ? "对话、实验记录和 CSV 已同步" : "已同步；Render 尚未配置持久磁盘，后端副本可能随重启丢失。");
+    syncStatus(missing ? "对话与实验记录已同步；部分 CSV 两端均无有效副本，请重新上传。" : archiveAgain ? "本轮同步完成，新修改将继续备份。" : archivePersistent ? "对话、实验记录和 CSV 已同步" : "已同步。后端尚未确认归档目录使用持久存储，重启后可能需要从浏览器恢复。");
   } catch(error) {
     failed=true;
     syncStatus("同步未完成，本地数据保留；连接恢复后会重试："+error.message);

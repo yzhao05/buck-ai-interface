@@ -12,7 +12,7 @@ window.BuckHarness = (()=>{
     status(tr(label));
     window.BuckMarkdown.render(document.getElementById('agent-preview'),text);
   }
-  const headers=()=>({'X-Session-ID':sessionId,...(accessToken?{Authorization:`Bearer ${accessToken}`}:{})});
+  const headers=()=>({'X-Session-ID':sessionId,...(accessToken?{[appTokenHeader()]:`Bearer ${accessToken}`}:{})});
   function taskError(taskState,id){
     return Object.assign(new Error(taskState),{taskState,agentTaskId:id});
   }

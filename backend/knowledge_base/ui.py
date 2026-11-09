@@ -170,8 +170,8 @@ entry('reports', '导出报告文件夹 / 分别下载 PDF 和 JSON', 'download-
       '导出 报告 保存位置 下载 PDF JSON 文件夹 export report folder download',
       '导出当前选中辨识结果。浏览器支持目录选择时，选保存位置后生成同名文件夹、PDF与JSON。否则报告保存位置窗口说明限制，可确认分别下载同名两文件，不生成ZIP；具体下载位置由浏览器决定，可在浏览器设置开启下载前询问。关闭窗口取消此选择，不删除已有文件。PDF用于阅读，JSON保留结构化结果；不自动产生新的辨识。', 'frontend/report-files.js')
 entry('settings', '连接设置：后端地址 / 保存并连接 / 关闭', 'open-settings settings-dialog settings-form close-settings api-url settings-status',
-      '连接设置 后端地址 保存并连接 localhost Render server backend settings',
-      '填写分析服务http(s)地址，本地启动可自动连接；HTTPS页面需HTTPS后端。保存并连接校验设置、连接服务并同步备份。切换后端前需清除当前数据，忙碌时禁止切换。关闭×只关窗口。这里不是填写DeepSeek模型API地址；连接后端不等于PLECS已在线。')
+      '连接设置 后端地址 保存并连接 localhost 魔搭 创空间 ModelScope Studio server backend settings',
+      '从魔搭创空间打开应用时默认连接该应用地址，本地启动时默认连接本机。GitHub Pages 可在此填写创空间实际运行的 HTTPS 应用地址，可通过该地址下的 /api/health 检查后端。保存并连接会校验设置、连接服务并同步备份。切换后端前需清除当前数据，忙碌时禁止切换。关闭×只关窗口。PLECS 连接状态在连接器区域单独检查。')
 entry('access-token', '应用访问口令 / 清除已记住的口令', 'access-token forget-access-token',
       '应用口令 访问口令 APIKey 密钥 token password forget',
       '填写后端APP_ACCESS_TOKEN，本地未配置可留空；不是DeepSeek API Key，后者仅在后端环境变量配置。保存后浏览器按后端地址记住口令；清除已记住口令仅删除当前浏览器对应后端凭据，不改服务器口令、不删除历史或恢复码。解释时不需要用户提供密钥内容。')
