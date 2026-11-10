@@ -141,6 +141,7 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 ## 部署到魔搭创空间
 
 1. 本项目的魔搭创空间为 [yuzhao05/buck-lab](https://www.modelscope.cn/studios/yuzhao05/buck-lab)。在 GitHub 仓库的 Actions Secrets 中设置有该创空间写权限的 `MODELSCOPE_TOKEN`。
+   若部署日志在 `Cloning into 'studio'` 后显示 `HTTP Basic: Access denied`，请核对该魔搭账号的创空间访问权限，在 GitHub 仓库 **Settings → Secrets and variables → Actions → Secrets** 编辑 `MODELSCOPE_TOKEN`，然后重跑失败的部署作业。此令牌用于发布，Buck Lab 的 `APP_ACCESS_TOKEN` 用于工作台访问。
 2. 在创空间部署设置中添加密文变量 `APP_ACCESS_TOKEN`（至少 20 个字符）和 `DEEPSEEK_API_KEY`。前者用于登录 Buck Lab，后者用于后端请求 DeepSeek。模型名称可用 `DEEPSEEK_MODEL` 配置。
 3. 推送到 GitHub 的 `main` 后，`Deploy Buck Lab to ModelScope` 工作流将该提交的 `backend/`、`frontend/`、`examples/`、依赖清单、许可文件、Dockerfile 和启动脚本直接同步到创空间，保留创空间自己的 README 和配置。推送前会从 Git 暂存内容重新导出并核对构建文件。Docker 先复制 `requirements-lock.txt` 安装依赖和 CPU 版 PyTorch，再复制应用文件，以单个 Uvicorn worker 监听 7860 端口。
    PDF 报告字体超过创空间普通 Git 文件的 10 MiB 限额。发布时仅对该字体做无损 gzip 压缩，镜像构建时解压并校验原始 SHA-256。工作流在推送前检查暂存快照中的文件大小和 LFS 指针。

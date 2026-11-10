@@ -3,6 +3,15 @@ name: Deploy Buck Lab to ModelScope
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/modelscope.yml'
+      - 'deploy/modelscope/**'
+      - 'backend/**'
+      - 'frontend/**'
+      - 'examples/**'
+      - 'requirements-lock.txt'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
   workflow_dispatch:
 
 permissions:
@@ -54,22 +63,25 @@ jobs:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
         run: |
           set -euo pipefail
-          : "${MODELSCOPE_TOKEN:?请在 GitHub 添加 MODELSCOPE_TOKEN}"
-
+          if [[ -z "${MODELSCOPE_TOKEN:-}" || "$MODELSCOPE_TOKEN" =~ [[:space:]] ]]; then
+            echo '::error::请在仓库 Actions Secrets 中填写有效的 MODELSCOPE_TOKEN，并去掉空格或换行。'
+            exit 1
+          fi
+          studio_url=https://www.modelscope.cn/studios/yuzhao05/buck-lab.git
+          # Authenticate the initial private Git request, including on gateways
+          # that reject it before Git can prompt. Do not store credentials in origin.
+          basic=$(printf 'oauth2:%s' "$MODELSCOPE_TOKEN" | base64 -w0)
+          printf '::add-mask::%s\n' "$basic"
+          export MODELSCOPE_GIT_AUTH_HEADER="Authorization: Basic $basic"
           export GIT_TERMINAL_PROMPT=0
-          export GIT_ASKPASS="$RUNNER_TEMP/modelscope-askpass"
-          trap 'rm -f "$GIT_ASKPASS"' EXIT
-          cat > "$GIT_ASKPASS" <<'SH'
-          #!/bin/sh
-          case "$1" in
-            *Username*) printf '%s\n' oauth2 ;;
-            *) printf '%s\n' "$MODELSCOPE_TOKEN" ;;
-          esac
-          SH
-          chmod 700 "$GIT_ASKPASS"
-
-          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch master \
-            https://oauth2@www.modelscope.cn/studios/yuzhao05/buck-lab.git studio
+          studio_git() {
+            git -c credential.helper= -c http.followRedirects=false \
+              --config-env="http.${studio_url}.extraHeader=MODELSCOPE_GIT_AUTH_HEADER" "$@"
+          }
+          if ! GIT_LFS_SKIP_SMUDGE=1 studio_git clone --depth 1 --branch master "$studio_url" studio; then
+            echo '::error::无法读取私有创空间。若上方为 Authentication failed，请更新仓库 Actions Secret MODELSCOPE_TOKEN，并确认令牌所属账号可以访问 yuzhao05/buck-lab。'
+            exit 1
+          fi
           cd studio
           git config user.name "GitHub Actions"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -103,4 +115,7 @@ jobs:
             exit 0
           fi
           git commit -m "Deploy GitHub commit $GITHUB_SHA"
-          git push origin HEAD:master
+          if ! studio_git push origin HEAD:master; then
+            echo '::error::已读取创空间，但推送失败。若上方为权限错误，请确认令牌所属账号有该创空间的写权限。'
+            exit 1
+          fi
