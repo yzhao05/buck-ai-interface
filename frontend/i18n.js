@@ -2,14 +2,38 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "关闭辨识计划卡片": "Close identification plan card",
+    "正在恢复 Agent 任务…": "Recovering Agent task…",
+    "Agent 任务进度与恢复": "Agent task progress and recovery",
+    "Harness 任务进度与恢复": "Harness task progress and recovery",
+    "追加指令": "Follow-up instruction",
+    "补充排查方向或停止条件": "Add a diagnostic step or stopping condition",
+    "发送追加指令": "Send instruction",
+    "停止任务": "Stop task",
+    "找回 / 恢复任务": "Find / Resume task",
+    "正在执行：": "Running: ",
+    "正在准备 Agent 任务": "Preparing Agent task",
+    "正在恢复 Agent 任务": "Recovering Agent task",
+    "DeepSeek Harness 已接管工具调度": "DeepSeek Harness is coordinating tool calls",
+    "先前的 Harness 会话未保存，正在用本次请求重新建立会话。": "The previous Harness session was not saved. Starting a session with this request.",
+    "任务已完成": "Task complete",
+    "任务未完成，可查看已保存证据": "Task incomplete. Saved evidence is available.",
+    "任务已中断，可恢复": "Task interrupted. You can resume it.",
+    "没有可恢复的 Agent 任务": "No Agent task to resume",
+    "追加指令已送达 Harness": "Instruction sent to Harness",
+    "正在停止任务…": "Stopping task…",
+    "自主 Agent": "Autonomous Agent",
     "生成本机连接器配对码": "Generate a local connector pairing code",
     "请等待当前任务结束后重新配对。": "Wait for the current task to finish before pairing again.",
     "请先保存并连接新后端，再生成配对码。": "Save and connect to the new backend before generating a pairing code.",
     "配对成功，但浏览器无法记住本机路径。": "Pairing succeeded, but the browser could not save the local paths.",
     "任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。": "Task restored. Send the configuration instruction again to apply it to the current settings.",
-    "在本机项目文件夹的 PowerShell 中运行以下命令。": "Run these commands in PowerShell from your local project folder.",
-    "程序提示时输入以下配对码。": "Enter this pairing code when prompted.",
+    "1. 在本机项目文件夹中打开 PowerShell，运行以下命令。": "1. Open PowerShell in your local project folder and run the commands below.",
+    "2. 看到 PLECS pairing token: 时，粘贴下方的 Buck Lab 配对码并按回车。": "2. At the PLECS pairing token: prompt, paste the Buck Lab pairing code below and press Enter.",
     "请保管配对码，重启连接器时复用。": "Keep the pairing code for reconnecting after a restart.",
+    "3. 如果出现 ModelScope SDK token for … 提示，请核对创空间 API 域名，粘贴有权访问该空间的魔搭账号的 SDK 访问令牌，再按回车。终端会隐藏输入。": "3. If you see ModelScope SDK token for …, check the Studio API hostname, paste the SDK access token for a ModelScope account with access to this Studio, and press Enter. Your input is hidden.",
+    "魔搭访问令牌页面": "ModelScope access token page",
+    "看到 PLECS companion connected. 后，保持终端打开，点击“检查连接器状态”。": "When you see PLECS companion connected., keep the terminal open and select Check connector status.",
     "等待界面应用操作": "Waiting for the interface to apply the action",
     "界面处理结果": "Interface action result",
     "界面操作失败": "Interface action failed",
@@ -53,7 +77,17 @@ window.BuckI18n = (() => {
     "连接中断，后台任务可能仍在运行。请点击“找回 / 恢复任务”重新连接。": "Connection interrupted. The task may still be running on the backend. Use Find / Resume task to reconnect.",
     "列映射已应用": "Column mapping applied", "默认接线图": "Default circuit diagram",
     "本机 PLECS 程序路径": "Local PLECS executable", "电路模型文件夹": "Circuit model folder",
-    "连接本机后端后可保存。助手需要仿真时会启动 PLECS，优先搜索下方模型文件夹；找不到唯一匹配时再询问。请预先启用 RPC，端口 1080。": "Save these settings on the local backend. When simulation is needed, the assistant starts PLECS and searches the model folder first, asking only if no unique match is found. Enable RPC on port 1080 beforehand.",
+    "本机后端可直接启动 PLECS；云端后端需运行下方本机连接器。助手优先搜索模型文件夹，找不到唯一匹配时再询问。请预先启用 RPC，端口 1080。": "The local backend can start PLECS directly. For a cloud backend, run the local connector below. The assistant searches the model folder and asks you to select a model if it cannot find a unique match. Enable RPC on port 1080 first.",
+    "仿真结果自动辨识绑定": "Identification settings for simulation results",
+    "按 PLECS 顶层 Output 端口顺序填写；电流单位 A、电压单位 V，PWM 为 0/1。绑定只用于仿真对照，不改左侧配置。": "Enter the PLECS top-level Output port numbers. Use amperes for current, volts for voltage and 0/1 for PWM. These settings apply to the simulation comparison.",
+    "模型文件名": "Model filename",
+    "电流输出端口": "Current output port",
+    "电压输出端口": "Voltage output port",
+    "PWM 输出端口（可留空）": "PWM output port (optional)",
+    "电感参数键": "Inductance parameter key",
+    "电容参数键": "Capacitance parameter key",
+    "已核对端口物理量、单位、L/C 元件及当前辨识工况配置": "I have checked the port signals, units, L/C components and operating conditions for this identification.",
+    "此模型与当前数据来自同一电路和工况": "This model and the current data use the same circuit and operating conditions.",
     "自动搜索此文件夹及所有子文件夹中的 .plecs 文件。按上传文件名匹配；找不到或出现多个同名模型时，助手会请你确认。": "Search this folder and its subfolders for .plecs files matching the uploaded filename. The assistant asks when no match or multiple matches are found.",
     "请确认当前接线和参数一致；回复“确认”后继续此计划。": "Please confirm that the wiring and parameters match. Reply 'confirmed' to continue this plan.",
     "将继续已有辨识计划，并重新检查实验条件。": "Continuing the existing identification plan after checking its prerequisites.",
@@ -81,7 +115,6 @@ window.BuckI18n = (() => {
     "旧版计划已停止，请重新发送指令交由 DeepSeek 解析。已提交的计算仍会保存到实验历史。": "The old plan was stopped. Send the request again for DeepSeek to parse. Submitted calculations will still be saved in experiment history.",
     "计划解析版本不兼容，请更新前后端并重新发送指令。": "The plan format is incompatible. Update both frontend and backend, then send the request again.",
     "请映射实际 PWM 列后继续计划；如需改用重建 PWM，请取消本计划并重新发送指令。": "Map the actual PWM column, then continue. To use reconstructed PWM instead, cancel this plan and send a new request.",
-    "支持时选择保存位置并生成同名文件夹、PDF 和 JSON；不支持时会先说明原因，可选择分别下载两份文件。": "When supported, choose a location for a folder, PDF and JSON with matching names. Otherwise, we explain why and let you download the two files separately.",
     "报告保存位置": "Report save location",
     "当前页面不是安全环境，无法选择保存文件夹。请通过 HTTPS 或 localhost 打开网页。": "This page is not in a secure context, so folder selection is unavailable. Open it over HTTPS or localhost.",
     "当前浏览器未提供文件夹选择功能。可尝试在桌面版 Chrome 或 Edge 中打开此网页。": "This browser does not provide folder selection. Try opening this page in desktop Chrome or Edge.",
@@ -354,7 +387,6 @@ window.BuckI18n = (() => {
     "本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。": "This model omits the feedback sensing branch, ESR, winding resistance, dead time and device voltage drops. R is the constant equivalent load resistance over the selected interval.",
     "PANN 达到训练预算或最佳轮次在预算末端，不能视为已经充分收敛；请比较不同窗口长度和训练轮数。": "PANN reached its training budget or selected the final iteration. Convergence is not established; compare window lengths and training budgets.",
     "PANN 最佳结果出现在最后一次训练评估，尚不能确认充分收敛；请增加训练轮数或对照不同窗口长度。": "PANN achieved its best result at the final training evaluation. Full convergence is not confirmed; increase epochs or compare window lengths.",
-    "训练不设时间上限，按设置轮数执行；联合初值模式另有 50 轮状态预热。": "Training has no time limit and runs for the selected epochs; joint initial-state estimation adds 50 state warm-up epochs.",
     "当前为固定含噪测量初值的对照模式；Case14/15 表明该设置可能放大电容辨识偏差。": "This comparison mode fixes noisy measured initial states; Case14/15 indicate that it may amplify capacitance estimation bias.",
     "PANN 联合估计窗口初值与参数；连续验证仅采用首窗口同轮次估计初值，后续不重置到测量。": "PANN jointly estimates window initial states and parameters. Continuous validation uses the first window state from the same selected iteration, without later measurement resets.",
     "实际 PWM 频率与设置相差超过 15%，请核对开关频率及时间单位。": "Measured PWM frequency differs from the setting by over 15%. Check switching frequency and time units.",
@@ -373,7 +405,6 @@ window.BuckI18n = (() => {
     "最后 20% 时间段的统计，未自动认定为稳态。": "Statistics over the final 20% of the record; this interval is not automatically considered steady state.",
     "非均匀时间采样：统计使用时间加权；积分法保留原时间轴，PWM 按前值保持。": "Nonuniform sampling: statistics are time-weighted; integral estimation retains the original timestamps and PWM uses zero-order hold.",
     "PWM 开关状态（可选）": "PWM switching state (optional)",
-    "可在同一 CSV 中附带实际 0/1 PWM 列；没有该列时，可确认已知控制电路后重建开关信息。": "Optionally include an actual binary PWM column in the same CSV. Without it, confirm the known controller configuration to reconstruct switching states.",
     "自动：有 PWM 列则使用，否则重建": "Auto: use PWM column if mapped, otherwise reconstruct",
     "计算流程：重建 PWM 开关信息 → 固定 R 识别 L、C → 自主闭环验证。": "Workflow: reconstruct PWM switching states → identify L and C with fixed R → validate with autonomous closed-loop prediction.",
     "正在检查数据与电路配置…": "Checking data and circuit configuration…",
@@ -429,7 +460,6 @@ window.BuckI18n = (() => {
     "积分方程 · 轻量辨识": "Integral equations · Lightweight", "PANN · 需后端 PyTorch": "PANN · Requires PyTorch",
     "开始时间": "Start time", "结束时间": "End time", "起点": "Start", "终点": "End",
     "训练区间占比": "Training fraction", "前段训练": "Earlier segment: training", "后段留出验证": "Later segment: validation",
-    "选择恒定负载区间。R 指负载电阻，非 ESR。示例推荐 0～0.8 ms。": "Use a constant-load interval. R is load resistance, not ESR. Suggested example interval: 0–0.8 ms.",
     "开始参数辨识": "Start identification", "等待导入实验数据": "Waiting for data",
     "物理计算 × 专业知识 × AI 对话": "Physics × Engineering × AI",
     "AI 实验助手": "AI Lab Assistant", "正在检查服务": "Checking service", "清空对话": "Clear conversation",
@@ -442,11 +472,10 @@ window.BuckI18n = (() => {
     "如何根据仿真波形评估电容寿命？还缺哪些信息？": "How can simulation waveforms help assess capacitor lifetime? What information is still needed?",
     "向实验助手提问": "Ask the lab assistant", "询问波形、参数或实验计划…": "Ask about waveforms, parameters or experiment plans…",
     "未关联实验数据": "No dataset attached", "发送消息": "Send message",
-    "计算摘要、对话及随消息附加的图片将发送至已配置的 DeepSeek。": "Calculation summaries, conversations and images attached to messages are sent to the configured DeepSeek service.",
-    "项目来源 ↗": "Project source ↗", "波形与辨识结果": "Waveforms & results",
+    "波形与辨识结果": "Waveforms & results",
     "查看测量波形、模型预测与验证误差。": "Inspect measurements, model predictions and validation errors.",
     "退出参数辨识": "Exit identification", "退出参数辨识，返回对话": "Exit identification and return to chat",
-    "波形统计": "Waveform statistics", "平均输出电压": "Mean output voltage", "全段 · 时间加权": "Full record · Time-weighted",
+    "波形统计": "Waveform statistics", "平均输出电压": "Mean output voltage",
     "电感电流 RMS": "Inductor current RMS", "数据时长": "Record duration", "尚未导入数据": "No data imported",
     "波形观测": "Waveform viewer", "PLECS 导出 · 电流与电压": "PLECS export · Current & voltage",
     "全段": "Full record", "末 10 周期": "Last 10 cycles", "测量波形": "Measured", "模型预测": "Predicted",
@@ -557,17 +586,13 @@ window.BuckI18n = (() => {
     "左侧设置已更改。右侧保留上次结果，点击开始参数辨识后更新。": "Settings on the left have changed. Previous results remain on the right until you start identification again.",
     "抗噪加权积分 · 直接辨识":"Noise-aware weighted integral · Direct fit",
     "直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。":"Use the weighted-integral estimate directly, without PANN refinement or PyTorch.",
-    "从加权积分初值继续优化窗口状态和参数；不保证比积分结果更准确。":"Refine window states and parameters from the weighted-integral estimate; accuracy may not improve.",
     "自动（训练噪声）":"Auto (training noise)",
     "窗口初值":"Window initial states", "从含噪数据联合估计（推荐）":"Joint estimation from noisy data (recommended)",
     "固定测量初值（对照）":"Fixed measured states (comparison)", "窗口长度":"Window length", "训练轮数":"Training epochs",
     "1 个开关周期":"1 switching cycle", "2 个开关周期":"2 switching cycles", "3 个开关周期":"3 switching cycles",
-    "只用训练段估计初值；留出验证连续运行，不重置状态。窗口更长不一定更准确。":"Estimate states from training data only; validation runs continuously without resets. Longer windows are not always more accurate.",
     "历史会话":"Chat history", "新会话":"New conversation", "＋ 新建会话":"＋ New conversation",
-    "新建会话，保留当前历史":"New conversation, keep current history",
     "收起实验配置":"Collapse experiment settings", "展开实验配置":"Expand experiment settings",
     "收起历史会话":"Collapse chat history", "展开历史会话":"Expand chat history",
-    "清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。":"Before clearing browser data, keep your sync recovery code and confirm the backend backup is complete and its storage is persistent. Use the code to restore that copy later.",
     "立即同步":"Sync now", "等待同步":"Waiting to sync", "同步恢复码":"Sync recovery code",
     "正在核对并同步对话、实验记录和 CSV…":"Checking and syncing conversations, experiment records and CSV files…",
     "正在编辑，自动同步将在离开输入框后继续。":"Editing in progress. Automatic sync will resume after you leave the input field.",
@@ -593,12 +618,15 @@ window.BuckI18n = (() => {
     "历史对话已恢复；CSV 尚未恢复，请重试同步或重新上传原文件。":"Conversation restored; the CSV has not been restored yet. Retry sync or upload the original file again."
   });
   const patterns = [
+    [/^本次等待用时 (\d+(?:\.\d+)?) 秒$/, "Wait time: $1 s"],
+    [/^本次恢复用时 (\d+(?:\.\d+)?) 秒$/, "Recovery time: $1 s"],
+    [/^后台处理用时 (\d+(?:\.\d+)?) 秒$/, "Backend processing time: $1 s"],
+    [/^本次回复用时 (\d+(?:\.\d+)?) 秒$/, "Response time: $1 s"],
     [/^PWM 重建质量检查未通过：(\d+) 个完整周期，上升沿 (\d+)，下降沿 (\d+)，额外边沿 (\d+)，异常短脉冲 (\d+)，缺少边沿周期 (\d+)，占空比异常周期 (\d+)。已停止参数辨识；请核对去噪窗口、采样和控制电路。$/, "PWM reconstruction rejected: $1 complete cycles, $2 rising and $3 falling edges, $4 extra edges, $5 short pulses, $6 cycles missing edges and $7 duty violations. Identification stopped; check the smoothing window, sampling and controller."],
     [/^合并 (\d+) 个重复时间点，保留事件后的最后一行。$/, "Merged $1 duplicate timestamps, keeping the last post-event sample."],
     [/^同步未完成，本地数据保留；连接恢复后会重试：(.*)$/, (_, reason) => "Sync incomplete. Local data is retained and sync will retry after reconnection: " + translate(reason)],
     [/^(.+) 行 · CSV 已读取$/, "$1 rows · CSV loaded"],
     [/^已关联：(.+)$/, "Attached: $1"],
-    [/^(.+) 个有效采样点$/, "$1 valid samples"],
     [/^正在拟合与验证 · (.+) 秒$/, "Fitting & validating · $1 s"],
     [/^辨识完成 · 用时 (.+) 秒$/, "Identification complete · $1 s"],
     [/^(.+) 计算点 · (.+) 显示点（显示已抽样）$/, "$1 computation points · $2 displayed (downsampled)"],
@@ -617,7 +645,6 @@ window.BuckI18n = (() => {
     "输入真实电感": "Enter true inductance", "输入真实电容": "Enter true capacitance",
     "参数真值对照": "Parameter ground-truth comparison", "计算相对误差": "Calculate relative error",
     "电感相对误差": "Inductance relative error", "电容相对误差": "Capacitance relative error",
-    "相对误差 = |预测值 − 真实值| ÷ 真实值 × 100%。真实值仅用于结果对照，不参与训练。": "Relative error = |predicted − true| ÷ true × 100%. True values are used only for comparison, not training.",
     "真实电感和真实电容必须是大于 0 的有限数值，请检查单位。": "True inductance and capacitance must be finite positive values. Check the units.",
     "数值超出可计算范围，请检查真实值及单位。": "Values exceed the calculation range. Check the true values and units.",
     "已对照用户提供的真值，详见上方相对误差（真值未独立核验）": "Compared with user-provided ground truth; see relative errors above (ground truth not independently verified)",
@@ -663,8 +690,8 @@ window.BuckI18n = (() => {
   const storageKey = `buck-language:${new URL(".", location.href).pathname}`;
   let language = "zh";
   try { if (localStorage.getItem(storageKey) === "en") language = "en"; } catch { /* session-only choice */ }
-  const bindings = new Map();
-  const attributes = new Map();
+  const bindings = new WeakMap();
+  const attributes = new WeakMap();
   function translate(value) {
     const source = String(value ?? "");
     if (language === "zh") return source;
@@ -701,13 +728,13 @@ window.BuckI18n = (() => {
     language = next === "en" ? "en" : "zh";
     try { localStorage.setItem(storageKey,language); } catch { /* keep working without storage */ }
     document.documentElement.lang = language === "en" ? "en" : "zh-CN";
-    for (const [element, source] of bindings) {
-      if (!element.isConnected) { bindings.delete(element); continue; }
-      element.textContent = translate(source);
-    }
-    for (const [element, entries] of attributes) {
-      if (!element.isConnected) { attributes.delete(element); continue; }
-      for (const [name, source] of entries) element.setAttribute(name,translate(source));
+    // Only registered UI copy is translated. Detached messages and timer rows
+    // can be collected immediately, even if the user never switches language.
+    const live = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    for (let item = live.currentNode; item; item = live.nextNode()) {
+      if (bindings.has(item)) item.textContent = translate(bindings.get(item));
+      const entries = attributes.get(item);
+      if (entries) for (const [name, source] of entries) item.setAttribute(name,translate(source));
     }
     const button = document.getElementById("language-toggle");
     button.textContent = language === "zh" ? "EN" : "中文";
@@ -715,7 +742,7 @@ window.BuckI18n = (() => {
     button.title = button.getAttribute("aria-label");
     document.dispatchEvent(new CustomEvent("buck-language-change",{detail:{language}}));
   }
-  // Register only the initial application copy. Later user content is never scanned.
+  // Register initial application copy. Dynamic UI uses text(), node() or attr().
   const walker = document.createTreeWalker(document.documentElement,NodeFilter.SHOW_TEXT);
   for (let current = walker.nextNode(); current; current = walker.nextNode()) {
     if (/[\u4e00-\u9fff]/.test(current.textContent) && !current.parentElement.closest("script,style")) {

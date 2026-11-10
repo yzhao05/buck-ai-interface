@@ -130,7 +130,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .suggestions button { font-size: 11px; line-height: 1.8; padding: 15px 12px; align-items: center; }
 .workspace { --chat-control-gutter: max(28px, calc((100% - 760px) / 2)); }
-.chat-compose { margin: 12px var(--chat-control-gutter) 0; border-radius: 13px; container-type: inline-size; }
+.chat-compose { margin: 12px var(--chat-control-gutter) 8px; border-radius: 13px; container-type: inline-size; }
 .chat-compose textarea { font-size: 14px; padding: 17px 17px 8px; }
 .compose-bottom { display: grid; grid-template-columns: auto minmax(120px,130px) minmax(0,1fr) minmax(0,auto) 33px; gap: 10px; padding: 5px 14px 13px; align-items:center; }
 .compose-bottom #reasoning-mode { min-width:0; width:auto; margin:0; font-size:11px; height:32px; }
@@ -147,23 +147,23 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .compose-bottom span { font-size: 10px; min-width: 0; max-width: none; }
 .compose-bottom #chat-mode { text-align: right; white-space: normal; overflow-wrap: anywhere; color: #738b90; }
 .send-button { height: 33px; width: 33px; }
-.chat-footnote { font-size: 9px; margin: 14px 24px 22px; }
-.chat-footnote .icon-button { font-size: 15px; vertical-align: middle; }
-.chat-footnote a { margin-left: 5px; }
 .message { margin-bottom: 26px; }
 .message-content { font-size: 13px; line-height: 2; }
 .message-label { font-size: 10px; }
 .message-mode, .message-tools { font-size: 9px; }
+.reply-timer { margin-inline-start: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
 :is(.identification-open, .waveform-open) .chat-messages { padding: 30px 25px 22px; }
 :is(.identification-open, .waveform-open) .welcome h3 { font-size: 26px; }
 :is(.identification-open, .waveform-open) .suggestions { grid-template-columns: 1fr; }
 .workspace:is(.identification-open, .waveform-open) { --chat-control-gutter: 22px; }
 .main-panel .page-heading { align-items: flex-start; margin-bottom: 20px; }
 .main-panel .page-heading h2 { font-size: 20px; font-weight: 600; margin: 8px 0; }
-.main-panel .metrics-grid { gap: 8px; }
-.main-panel .metric { padding: 15px 12px; }
+.main-panel .metrics-grid { gap: 8px; margin-bottom: 14px; }
+.main-panel .metric { padding: 12px; }
+.main-panel .metric > span:first-child { display: block; font-size: 11px; line-height: 1.4; }
 .main-panel .metric .metric-symbol { display: none; }
-.main-panel .metric strong { font-size: 24px; }
+.main-panel .metric strong { margin: 6px 0 0; font-size: clamp(18px, 1.5vw, 24px); line-height: 1.2; }
+.main-panel #stat-points:empty { display: none; }
 .main-panel .card-heading { padding: 18px 16px 12px; }
 .main-panel .chart-legend { padding: 7px 16px 10px; }
 .main-panel .right-legend { display: none; }
@@ -187,6 +187,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .result-assessment dd { margin: 0; }
 .result-assessment p { color: var(--muted); margin-bottom: 0; }
 .result-assessment ul { padding-left: 20px; }
+.result-assessment #measurement-evidence-list { margin: 6px 0 0; }
 .truth-comparison { padding: 14px 16px; border-top: 1px solid var(--line); }
 .truth-comparison .unit-input input { min-width: 0; }
 .truth-comparison #truth-error { color: #a63e32; font-size: 12px; }
@@ -194,7 +195,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .parameter-error-values[hidden] { display: none; }
 .parameter-error-values span { display: block; color: var(--muted); font-size: 12px; }
 .parameter-error-values strong { display: block; margin-top: 5px; color: var(--teal); font-size: 17px; }
-.main-panel .result-actions { padding: 12px 16px; gap: 8px; }
+.main-panel .result-actions { padding: 12px 16px; gap: 8px; flex-wrap: wrap; }
 @media (min-width: 1700px) {
   .workspace { --sidebar-width: 278px; --analysis-width: minmax(480px, 1fr); }
   .workspace:is(.identification-open, .waveform-open) { grid-template-columns: var(--sidebar-width) minmax(500px, 1.2fr) var(--analysis-width); }
@@ -228,7 +229,6 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   .workspace, .workspace:is(.identification-open, .waveform-open) { --chat-control-gutter: 18px; }
   .chat-compose { margin-top: 10px; }
   .chat-compose textarea { font-size: 13px; }
-  .chat-footnote { font-size: 8px; margin: 12px 18px 17px; }
 }
 
 /* Each visible column owns its scroll; wheel input stays under the pointer. */
@@ -387,6 +387,9 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .compose-toggle:hover, .compose-attachments:hover { background: var(--teal-light); }
 .plan-summary { display: flex; align-items: center; gap: 4px; cursor: pointer; list-style: none; }
 .plan-summary::-webkit-details-marker { display: none; }
+.identification-plan { position: relative; }
+.identification-plan #plan-close { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; }
+#plan-close:not([hidden]) + details > .plan-summary { padding-right: 32px; }
 .plan-summary .compose-toggle { position: static; flex-shrink: 0; }
 .plan-summary .compose-toggle::before { content: "▶"; }
 .identification-plan details[open] > .plan-summary .compose-toggle::before { content: "▼"; }

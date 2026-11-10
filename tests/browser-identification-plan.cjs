@@ -14,6 +14,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.goto('http://127.0.0.1:8001');await ready();
   await send('请根据我上传的CASE16A_noise03_seed14.csv完成重建pwm下两种方式的参数识别');await paused();
   assert.match(await page.locator('#plan-note').innerText(),/没有找到指定 CSV/);assert.equal(fits.length,0);
+  assert(await page.locator('#plan-close').isHidden());
   await page.locator('#plan-cancel').click();
   // Archive the input in one conversation; the plan must find it from a new one.
   const csvPath=process.env.PLAN_CSV;
@@ -50,6 +51,11 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.equal(await page.evaluate(()=>readConversation(activeConversation.id).experiments.length),2);
   await page.locator('#language-toggle').click();
   assert(!/[\u3400-\u9fff]/.test(await page.locator('#identification-plan').innerText()));
+  await page.getByRole('button',{name:'Close identification plan card'}).click();
+  assert(await page.locator('#identification-plan').isHidden());
+  await page.reload();await ready();
+  assert(await page.locator('#identification-plan').isHidden());
+  assert.equal(await page.evaluate(()=>readConversation(activeConversation.id).experiments.length),2);
   assert.deepEqual(errors,[]);
   console.log('PASS: original request, missing CSV, historical CSV recovery, explicit circuit confirmation, refresh, two real methods at 200 epochs, separate saved results, English.');
  }finally{await browser.close();}

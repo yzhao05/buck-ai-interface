@@ -181,7 +181,6 @@ function controls() {
   $("csv-file").disabled = waiting;
   $("clear-data").disabled = waiting;
   $("send-chat").disabled = waiting || !state.connected || !activeConversation;
-  $("clear-chat").disabled = waiting;
   $("delete-chat").disabled = waiting;
   $("new-chat").disabled = waiting;
   document.querySelectorAll(".history-item").forEach(button => button.disabled = waiting);
@@ -198,9 +197,7 @@ function controls() {
     ? "当前配置已完成辨识。修改上方参数后可重新辨识。"
     : "左侧设置已更改。右侧保留上次结果，点击开始参数辨识后更新。");
   $("fixed-r-label").hidden = $("fit-mode").value !== "LC";
-  ui($("method-hint"), $("fit-method").value === "pann"
-    ? "从加权积分初值继续优化窗口状态和参数；不保证比积分结果更准确。"
-    : "直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。");
+  $("method-hint").hidden = $("fit-method").value !== "weighted_integral";
   for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction","pwm-source","controller-confirmed"]) $(id).disabled = waiting;
   renderIdentificationPlan();
 }
@@ -381,7 +378,7 @@ function displaySummary() {
   const summary = state.summary;
   function stat(id, value, unit) { $(id).replaceChildren(window.BuckI18n.node(fmt(value)), Object.assign(document.createElement("small"), {textContent:unit})); }
   stat("stat-voltage", summary.voltage.mean, "V"); stat("stat-current", summary.current.rms, "A"); stat("stat-duration", summary.duration_s*1000, "ms");
-  ui($("stat-points"), `${summary.rows.toLocaleString()} 个有效采样点`);
+  ui($("stat-points"), "");
   $("wave-subtitle").textContent = state.dataset.filename;
   $("chart-empty").hidden = true; $("chart-container").hidden = false;
 }
@@ -675,7 +672,35 @@ function message(role, content, mode = "", images = []) {
   $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
   return article;
 }
-function measurementLines(result) {
+function replyTimeLabel(seconds, label = "本次回复用时") {
+  return `${label} ${seconds.toFixed(2)} 秒`;
+}
+function startPendingReply(content, label) {
+  const pending = message("assistant", content);
+  const started = performance.now();
+  const text = pending.querySelector(".message-content");
+  text.classList.add("typing");
+  ui(text, content);
+  const timer = document.createElement("span");
+  timer.className = "message-mode reply-timer";
+  timer.setAttribute("role", "timer");
+  timer.setAttribute("aria-live", "off");
+  ui(timer, replyTimeLabel(0, label));
+  pending.querySelector(".message-label").append(timer);
+  const interval = setInterval(() => {
+    ui(timer, replyTimeLabel((performance.now() - started) / 1000, label));
+  }, 100);
+  let elapsed;
+  return () => {
+    if (elapsed === undefined) {
+      elapsed = (performance.now() - started) / 1000;
+      clearInterval(interval);
+      pending.remove();
+    }
+    return elapsed;
+  };
+}
+function measurementLines(result, {forExport = false} = {}) {
   const report=result?.measurement_diagnostics;
   if(!report)return [tr("此历史结果未记录噪声与残差诊断，重新辨识后可获得。")];
   const flags={bias:"残差均值偏置",slow_variation:"残差缓慢变化",correlated_residual:"相邻残差相关",edge_concentration:"残差在开关边沿集中"};
@@ -689,12 +714,12 @@ function measurementLines(result) {
     if(Number.isFinite(c.noise_sigma))text+=` · ${tr("估计噪声标准差")} ${fmt(c.noise_sigma,5)} ${c.unit} · RMSE / σ = ${fmt(c.rmse_to_noise_ratio,4)}`;
     text+=` · ${tr("残差均值")} ${fmt(c.residual_mean,5)} ${c.unit}`;
     if(c.flags.length)text+=" · "+c.flags.map(flag=>tr(flags[flag] || flag)).join(" / ");
-    else text+=" · "+tr("未触发形状筛查，不代表已通过白噪声检验");
+    else if(forExport)text+=" · "+tr("未触发形状筛查，不代表已通过白噪声检验");
     if(c.noise_above_application_threshold)text+=" · "+tr("估计噪声高于 5% 门槛，优先改善测量条件");
     lines.push(text);
   }
   if(report.edge_source!=="measured_heldout_PWM")lines.push(tr("没有实测留出 PWM，未评价开关边沿残差。"));
-  lines.push(tr("当前仅评价同记录后段；参数区间与新记录预测尚未验证。"));
+  if(forExport)lines.push(tr("当前仅评价同记录后段；参数区间与新记录预测尚未验证。"));
   return lines;
 }
 function displayPWMQuality(info){
@@ -785,9 +810,18 @@ function decorateResponse(article, response) {
       if(response.repeatability.omitted_groups)add("未展示分组数",`: ${response.repeatability.omitted_groups}`);
       article.append(box);
     }
-    if (response.route) {
+    const timing = [
+      [response.reply_elapsed_s, response.task_state ? "本次等待用时" : "本次回复用时"],
+      [response.recovery_elapsed_s, "本次恢复用时"],
+      [response.agent_budget?.elapsed_s, "后台处理用时"],
+    ].find(([seconds]) => Number.isFinite(seconds) && seconds >= 0);
+    if (response.route?.label || timing) {
       const task = document.createElement("div"); task.className = "message-tools message-task";
-      task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
+      if (response.route?.label) task.append(window.BuckI18n.node("任务："), window.BuckI18n.node(response.route.label));
+      if (timing) {
+        if (response.route?.label) task.append(" · ");
+        task.append(window.BuckI18n.node(replyTimeLabel(...timing)));
+      }
       if(response.ui_action?.parser==='deepseek')task.append(document.createTextNode(" · "),window.BuckI18n.node("DeepSeek 计划解析"));
       article.querySelector(".message-label").after(task);
     }
@@ -906,18 +940,20 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   const analysisMapping = analyzeResult ? state.result.mapping : state.mapping;
   let fitOptions;
   try { fitOptions = analyzeResult ? structuredClone(state.result.options) : options(); } catch { /* Invalid form drafts do not block chat. */ }
-  state.chatBusy = true; controls();
-  $("conversation-panel").classList.remove("is-empty");
-  $("chat-input").value = "";
-  $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
-  const userArticle=message("user", text,"",images);
-  const previousHistory = currentOnly ? [] : readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
-    .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000),...(m.images?.length?{images:m.images}:{})}));
-  const requestMessage=rememberMessage("user", text, analysisMeta ? {analysis_request:analysisMeta} : null,"",images);
-  setChatImages([]);persistConversation();
-  userArticle.dataset.messageId=requestMessage.id;
-  const pending = message("assistant", "正在读取实验上下文…"); pending.querySelector(".message-content").classList.add("typing"); ui(pending.querySelector(".message-content"),"正在读取实验上下文…");
+  state.chatBusy = true;
+  let finishPending;
   try {
+    controls();
+    $("conversation-panel").classList.remove("is-empty");
+    $("chat-input").value = "";
+    $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
+    const userArticle=message("user", text,"",images);
+    const previousHistory = currentOnly ? [] : readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
+      .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000),...(m.images?.length?{images:m.images}:{})}));
+    const requestMessage=rememberMessage("user", text, analysisMeta ? {analysis_request:analysisMeta} : null,"",images);
+    setChatImages([]);persistConversation();
+    userArticle.dataset.messageId=requestMessage.id;
+    finishPending = startPendingReply("正在读取实验上下文…");
     // Restore unanalysed input from UI state. A chat must not discard a displayed
     // result because its source cache expired; execution restores inputs in startFit.
     let datasetAvailable=Boolean(state.dataset);
@@ -963,13 +999,13 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       // Displayed result and editable form are separate contexts. The Agent chooses tools.
       experiments:currentOnly ? [] : chatExperiments(),result_library:currentOnly ? [] : chatResultLibrary(),
       identification_enabled:!currentOnly && !savedResult && state.identificationOpen && Boolean(fitOptions)});
-    pending.remove();
     if (response.mode === "provider_error") {
+      response.reply_elapsed_s = finishPending();
       const failureText = window.BuckHarness.replyText(response,response.provider_error);
       const article = message("assistant", failureText, "请求未完成");
       decorateResponse(article, response);
       const failedReply = rememberMessage("assistant", failureText, {
-        request_message_id:requestMessage.id, tool_calls:response.tool_calls,
+        request_message_id:requestMessage.id, route:response.route, reply_elapsed_s:response.reply_elapsed_s, tool_calls:response.tool_calls,
         agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,diagnosis:response.diagnosis,simulation_evaluations:response.simulation_evaluations,
         control_checks:response.control_checks, retrieved_sources:response.retrieved_sources,
         error_code:response.error_code,budget_reason:response.budget_reason,finish_reason:response.finish_reason,
@@ -986,11 +1022,12 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       response.ui_action_status=response.answer;
       window.BuckHarness.showOutcome(window.BuckHarness.replyText(response,response.answer),response.error_code?'界面操作失败':'界面处理结果');
     }
+    response.reply_elapsed_s = finishPending();
     const answer = window.BuckHarness.replyText(response,response.answer);
     const replyMode=response.mode === "deepseek" && !response.error_code ? "DeepSeek" : "请求未完成";
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
-    const savedReply=rememberMessage("assistant", answer, {route:response.route, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
+    const savedReply=rememberMessage("assistant", answer, {route:response.route, reply_elapsed_s:response.reply_elapsed_s, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
       error_code:response.error_code,
       agent_task_id:response.agent_task_id,diagnosis:response.diagnosis,request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
       repeatability:response.repeatability,
@@ -1001,12 +1038,22 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     article.dataset.messageId=savedReply.id;
     if (response.job_id) { invalidateResult(); void watchJob(response.job_id); }
   } catch (error) {
-    pending.remove();
-    const note=window.BuckHarness.taskNotice(error);
-    if(note){message('assistant',note.text,'任务状态');rememberMessage('assistant',note.text,note.response,'任务状态');}
-    else{window.alert("Chat request failed. Please check the backend connection and try again.");message("assistant",error.message,"请求未完成");rememberMessage("assistant",error.message,null,"请求未完成");}
+    const elapsed = finishPending?.();
+    const note = window.BuckHarness.taskNotice(error);
+    const text = note?.text || error.message;
+    const mode = note ? "任务状态" : "请求未完成";
+    const metadata = {...note?.response, reply_elapsed_s:elapsed};
+    const article = message("assistant",text,mode);
+    decorateResponse(article,metadata);
+    rememberMessage("assistant",text,metadata,mode);
+    if (!note) window.alert("Chat request failed. Please check the backend connection and try again.");
+  } finally {
+    finishPending?.();
+    state.chatBusy = false;
+    controls();
+    $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
+    startQueuedIdentificationPlan();
   }
-  finally { state.chatBusy = false; controls(); $("chat-messages").scrollTop = $("chat-messages").scrollHeight; startQueuedIdentificationPlan(); }
 }
 function svgNode(name, attrs = {}, text = null) {
   const el = document.createElementNS("http://www.w3.org/2000/svg", name);
@@ -1127,7 +1174,7 @@ async function exportReports({filesOnly=false}={}) {
   const run=activeConversation?.experiments?.find(item=>item.id===state.resultId);
   const filename = run ? experimentReportName(run) : reportFilename(report.result, exportedAt);
   const notes = (report.result.warnings || []).map(note=>tr(note));
-  if(report.result.measurement_diagnostics)notes.push(...measurementLines(report.result),tr("训练段局部噪声估计不是传感器标定；残差线索不改变 5% 应用门槛。"));
+  if(report.result.measurement_diagnostics)notes.push(...measurementLines(report.result, {forExport: true}),tr("训练段局部噪声估计不是传感器标定；残差线索不改变 5% 应用门槛。"));
   $("report-downloads").hidden = false;
   const stem=filename.replace(/\.json$/i,''),json=new Blob([JSON.stringify(report,null,2)],{type:"application/json;charset=utf-8"});
   let parent=null,pdfReady=false;
@@ -1280,7 +1327,7 @@ $("compare-analyses").onclick=()=>{
     if (placeholder) input.setSelectionRange(placeholder.index,placeholder.index+placeholder[0].length);
   } else input.focus();
 };
-$("clear-chat").onclick=$("new-chat").onclick=()=>void newConversation();$("download-report").onclick=downloadReport;
+$("new-chat").onclick=()=>void newConversation();$("download-report").onclick=downloadReport;
 $("delete-chat").onclick=()=>void deleteConversation();
 $("clear-data").onclick=async()=>{
   if (historyLocked() || !state.dataset) return;

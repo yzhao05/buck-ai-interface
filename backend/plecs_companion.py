@@ -15,6 +15,7 @@ import time
 from urllib.parse import urlparse
 import httpx
 from . import plecs_local
+from .plecs_bridge import RESULT_REJECTIONS
 from .plecs_execution import execute
 
 
@@ -73,6 +74,58 @@ def perform_job(owner, cache, job):
     return result
 
 
+def bridge_post(client, path, **kwargs):
+    """Use the Studio API gateway when its browser entry requires login."""
+    response = client.post(path, **kwargs)
+    origin = client.base_url
+    studio = (origin.scheme == 'https' and origin.port in (None, 443)
+              and re.fullmatch(r'(?:[a-z0-9-]+\.ms\.show|studio-[a-z0-9-]+\.api-inference\.modelscope\.net)', origin.host))
+    if response.status_code in (401, 403) and studio:
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        error = body.get('error')
+        error = error if isinstance(error, dict) else {}
+        web_challenge = str(body.get('Code')) == '10011402001'
+        api_challenge = (origin.host.endswith('.api-inference.modelscope.net')
+                         and response.status_code == 401
+                         and 'modelscope token' in str(error.get('message', '')).lower())
+        if web_challenge or api_challenge:
+            if 'Authorization' not in client.headers:
+                if origin.host.endswith('.ms.show'):
+                    slug = origin.host.removesuffix('.ms.show')
+                    client.base_url = origin.copy_with(host=f'studio-{slug}.api-inference.modelscope.net')
+                token = getpass.getpass(f'ModelScope SDK token for {client.base_url.host}: ').strip()
+                if not token or not token.isascii() or any(c.isspace() or not c.isprintable() for c in token):
+                    raise SystemExit('Enter a valid ModelScope SDK token to access the private Studio.')
+                client.headers['Authorization'] = 'Bearer ' + token
+                return bridge_post(client, path, **kwargs)
+        if web_challenge or api_challenge or response.status_code == 403 or error:
+            # Only expose gateway identifiers and known messages. Responses can
+            # contain reflected credentials, HTML or other untrusted content.
+            identifiers = []
+            for name, value in [('code', body.get('Code') or error.get('code')),
+                                ('request_id', body.get('RequestId') or error.get('request_id'))]:
+                if value is not None and re.fullmatch(r'[0-9a-fA-F-]{1,64}', str(value)):
+                    identifiers.append(f'{name}={value}')
+            detail = ' '.join(identifiers)
+            if web_challenge or api_challenge:
+                reason = 'ModelScope rejected the SDK token. Check that it is current and belongs to an account with access to this Studio.'
+            else:
+                reason = 'Access denied. Check this account can open the private Studio and verify the API endpoint shown by ModelScope.'
+            raise SystemExit(f'{reason} HTTP {response.status_code} at {origin.host}{path} {detail}'.rstrip())
+    response.raise_for_status()
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        raise SystemExit(f'Expected Buck Lab JSON at {path} (HTTP {response.status_code}). Check the backend app URL.')
+    return data
+
+
 def flush_receipts(client, cache, active_id=None):
     for path in sorted(cache.glob('*.json')):
         if path.stem == active_id:
@@ -84,12 +137,22 @@ def flush_receipts(client, cache, active_id=None):
         if saved['state']=='running':
             saved = {'state':'pending','result':{'status':'uncertain','error':'Local execution was interrupted; not repeated.'}}
             save_receipt(path,saved)
-        response = client.post('/api/bridge/complete/'+path.stem,json={'result':saved['result']})
-        if response.status_code in (400,404,409):
+        try:
+            ack = bridge_post(client, '/api/bridge/complete/'+path.stem, json={'result':saved['result']})
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 409:
+                raise
+            try:
+                conflict = exc.response.json()
+            except ValueError:
+                conflict = None
+            if not isinstance(conflict, dict) or conflict.get('detail') not in RESULT_REJECTIONS:
+                raise
             print('Result retained locally; cloud task no longer accepts it:',path.stem)
             saved['state']='rejected'
         else:
-            response.raise_for_status()
+            if ack.get('status') != 'completed':
+                raise SystemExit('Buck Lab did not acknowledge the result. The local receipt is still pending.')
             saved['state']='delivered'
         save_receipt(path,saved)
 
@@ -104,7 +167,9 @@ def main():
         parser.error('Enter the backend app URL from Connection settings.')
     if url.scheme != 'https' and not (url.scheme == 'http' and url.hostname in {'localhost','127.0.0.1','::1'}):
         parser.error('Use HTTPS (HTTP is allowed only on loopback).')
-    token = getpass.getpass('PLECS pairing token: ')
+    token = getpass.getpass('PLECS pairing token: ').strip()
+    if not token or not token.isascii() or not token.isprintable():
+        parser.error('Enter the pairing code from the current Buck Lab session.')
     headers = {'X-Session-ID': args.owner, 'X-Bridge-Token': token}
     # Bridge endpoints use the paired secret; the application access token
     # is neither needed nor stored on the companion.
@@ -125,19 +190,26 @@ def main():
                     pending[1].result()  # persisted before the future completes
                     pending = None
                 flush_receipts(client,cache,pending[0] if pending else None)
-                response = client.post('/api/bridge/heartbeat' if pending else '/api/bridge/claim')
-                response.raise_for_status()
+                data = bridge_post(client, '/api/bridge/heartbeat' if pending else '/api/bridge/claim')
+                if (pending and data.get('status') != 'online') or (not pending and 'job' not in data):
+                    raise SystemExit('Unexpected bridge reply. Check the backend app URL and deployed Buck Lab version.')
                 if not online:
                     print('PLECS companion connected.')
                     online = True
-                job = response.json().get('job')
+                job = data.get('job')
                 if job:
                     pending = (job['id'], executor.submit(perform_job,args.owner,cache,job))
             except httpx.HTTPError as exc:
                 online = False
-                if isinstance(exc,httpx.HTTPStatusError) and exc.response.status_code == 401:
-                    raise SystemExit('Bridge credential rejected. Restart with the current session and its pairing code.')
-                print('Bridge connection unavailable:', type(exc).__name__)
+                if isinstance(exc, httpx.HTTPStatusError):
+                    code = exc.response.status_code
+                    if code == 401:
+                        raise SystemExit('HTTP 401: check the current Buck Lab session and its pairing code.')
+                    if code < 500 and code not in (408, 429):
+                        raise SystemExit(f'HTTP {code} at {exc.request.url.path}. Check the backend app URL, access and deployment.')
+                    print(f'Bridge temporarily unavailable (HTTP {code}). Retrying.')
+                else:
+                    print('Bridge connection unavailable:', type(exc).__name__)
             time.sleep(2)
 
 

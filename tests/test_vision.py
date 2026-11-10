@@ -1,11 +1,14 @@
 import base64
+import asyncio
 import io
 import json
+import logging
+import os
 import uuid
 
 import httpx
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -13,6 +16,85 @@ from backend import chat, main
 from backend.archive import ArchiveStore, SavedConversation
 from backend.schemas import ChatRequest
 from backend.vision import ChatImage, provider_message
+from backend import harness_runtime
+from backend.agent_policy import Budget
+from conftest import REAL_RUN
+
+
+@pytest.mark.skipif(os.getenv('BUCK_LIVE_VISION_TEST') != '1', reason='requires an explicitly enabled live provider')
+@pytest.mark.parametrize('with_image', [False, True], ids=['text', 'probe-png'])
+def test_fresh_harness_turn(with_image, monkeypatch):
+    monkeypatch.setattr(harness_runtime, 'run', REAL_RUN)
+    monkeypatch.setattr(main, 'TOKEN', '')
+    expected = 'TEXT_OK'
+    request = {'message': 'Reply with exactly TEXT_OK.'}
+    if with_image:
+        expected = 'Vout_74'
+        image = Image.new('RGB', (270, 80), 'white')
+        ImageDraw.Draw(image).text((12, 12), 'Probe: ' + expected, fill='black', font=ImageFont.load_default(size=28))
+        stream = io.BytesIO()
+        image.save(stream, format='PNG')
+        attachment = ChatImage(name='probe.png', data_url='data:image/png;base64,' + base64.b64encode(stream.getvalue()).decode())
+        request = {'message':'Read the Probe signal name. Return only its name.', 'images':[attachment.model_dump()]}
+    response = TestClient(main.app).post('/api/chat', headers={'X-Session-ID': str(uuid.uuid4())}, json=request)
+    response.raise_for_status()
+    result = response.json()
+    assert result['mode'] == 'deepseek' and expected in result['answer']
+    assert result['agent_budget']['model_calls'] > 0
+
+
+def test_rpc_diagnostic_omits_private_content():
+    assert harness_runtime.rpc_diagnostic('ENOENT: cannot find module sharp at /private/input.png; key=secret data:image/png;base64,aGVsbG8=') == 'sharp, cannot find module, ENOENT'
+    assert harness_runtime.rpc_diagnostic('secret prompt or provider token') == 'unclassified RPC failure'
+
+
+def test_image_recovery_requires_marker_in_current_user_message():
+    with harness_runtime.Gateway([], None, Budget(False), lambda *_: None) as gateway:
+        gateway.image_marker = '\n[test-marker]'
+        gateway.image_blocks = [{'type':'image', 'source':{'type':'base64','media_type':'image/png','data':'AA=='}}]
+        gateway.require_image_marker = True
+        with pytest.raises(harness_runtime.HarnessTurnError):
+            gateway.restore_images({'messages':[
+                {'role':'user', 'content':'older' + gateway.image_marker},
+                {'role':'user', 'content':'current request without attachment marker'}]})
+        message = {'role':'user', 'content':[{'type':'text','text':'probe'}, {'type':'text','text':gateway.image_marker}]}
+        gateway.restore_images({'messages':[message]})
+        assert message['content'] == [{'type':'text','text':'probe'}, *gateway.image_blocks]
+
+
+def test_studio_access_log_omits_query_token():
+    record = logging.makeLogRecord({'msg':'%s %s %s %s %s', 'args':('client','GET','/?studio_token=test-secret','1.1',200)})
+    assert main.omit_access_query(record)
+    assert record.getMessage() == 'client GET / 1.1 200'
+
+
+def test_image_store_error_is_logged_before_provider(tmp_path, monkeypatch, caplog):
+    home = tmp_path / 'sessions'
+    monkeypatch.setattr(harness_runtime, 'ROOT', home)
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'local-test-secret')
+    monkeypatch.setenv('HARNESS_BASE_URL', 'http://127.0.0.1:1')
+    session = uuid.uuid4().hex
+    (home / session).mkdir(parents=True)
+    (home / session / 'attachments').touch()  # Force a real attachment-admission failure.
+    image = picture()
+    sent = []
+    def reject(request):
+        messages = json.loads(request.content)['messages']
+        sent.extend(block['source'] for msg in messages if isinstance(msg['content'], list)
+                    for block in msg['content'] if block['type'] == 'image')
+        return httpx.Response(418)
+    client = httpx.Client
+    monkeypatch.setattr(harness_runtime.httpx, 'Client', lambda **kw: client(transport=httpx.MockTransport(reject), **kw))
+    token = harness_runtime.scope.set({'id':session})
+    try:
+        with pytest.raises(httpx.HTTPStatusError) as failure:
+            asyncio.run(REAL_RUN([provider_message('user', 'private test prompt', [image])], [], None, Budget(False)))
+    finally:
+        harness_runtime.scope.reset(token)
+    assert 'stage=prompt provider_stage=not_reached rpc_code=' in caplog.text
+    assert failure.value.response.status_code == 418
+    assert sent == [{'type':'base64', 'media_type':'image/png', 'data':image['data_url'].split(',')[1]}]
+    assert all(secret not in caplog.text for secret in (image['data_url'].split(',')[1], 'private test prompt', 'local-test-secret'))
 
 
 def picture(fmt="PNG"):

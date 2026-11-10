@@ -149,6 +149,82 @@ def test_companion_restart_delivers_receipts_without_reexecution(tmp_path, monke
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize('initial_host', ['example.ms.show', 'studio-example.api-inference.modelscope.net'])
+def test_private_studio_challenge_then_claim_heartbeat_and_delivery(tmp_path, monkeypatch, initial_host):
+    api_host = 'studio-example.api-inference.modelscope.net'
+    prompts, requests = [], []
+    monkeypatch.setattr(plecs_companion.getpass, 'getpass', lambda prompt: prompts.append(prompt) or 'test-sdk-token')
+    def gateway(request):
+        requests.append(request.url.path)
+        assert request.headers['X-Bridge-Token'] == 'test-pair'
+        if request.url.host == 'example.ms.show':
+            assert 'Authorization' not in request.headers
+            return httpx.Response(403, json={'Code': 10011402001})
+        assert request.url.host == api_host
+        if 'Authorization' not in request.headers:
+            return httpx.Response(401, json={'error':{'message':'Authentication failed, please make sure that a valid ModelScope token is supplied.'}})
+        assert request.headers['Authorization'] == 'Bearer test-sdk-token'
+        if request.url.path.endswith('claim'):
+            return httpx.Response(200, json={'job': None})
+        status = 'online' if request.url.path.endswith('heartbeat') else 'completed'
+        return httpx.Response(200, json={'status': status})
+    with httpx.Client(base_url='https://' + initial_host, headers={'X-Bridge-Token':'test-pair'}, transport=httpx.MockTransport(gateway)) as client:
+        assert plecs_companion.bridge_post(client, '/api/bridge/claim') == {'job':None}
+        assert plecs_companion.bridge_post(client, '/api/bridge/heartbeat')['status'] == 'online'
+        receipt = plecs_companion.receipt_path(tmp_path, uuid.uuid4().hex)
+        plecs_companion.save_receipt(receipt, {'state':'pending', 'result':{'status':'completed'}})
+        plecs_companion.flush_receipts(client, tmp_path)
+    assert json.loads(receipt.read_text())['state'] == 'delivered'
+    assert requests.count('/api/bridge/claim') == 2 and prompts == [f'ModelScope SDK token for {api_host}: ']
+
+
+@pytest.mark.parametrize('host', ['example.ms.show', 'example.ms.show.untrusted.test'])
+def test_gateway_denial_preserves_receipt(tmp_path, monkeypatch, host):
+    prompts = []
+    monkeypatch.setattr(plecs_companion.getpass, 'getpass', lambda prompt: prompts.append(prompt) or 'invalid-token')
+    def deny(request):
+        return httpx.Response(403, json={'Code':10011402001})
+    receipt = plecs_companion.receipt_path(tmp_path, uuid.uuid4().hex)
+    plecs_companion.save_receipt(receipt, {'state':'pending', 'result':{'status':'completed'}})
+    with httpx.Client(base_url='https://' + host, transport=httpx.MockTransport(deny)) as client:
+        if host.endswith('.ms.show'):
+            with pytest.raises(SystemExit, match='ModelScope rejected.*HTTP 403'):
+                plecs_companion.flush_receipts(client, tmp_path)
+            assert len(prompts) == 1
+        else:
+            with pytest.raises(httpx.HTTPStatusError):
+                plecs_companion.flush_receipts(client, tmp_path)
+            assert not prompts
+    assert json.loads(receipt.read_text())['state'] == 'pending'
+
+
+def test_authenticated_studio_denial_identifies_request_without_exposing_secrets(monkeypatch):
+    monkeypatch.setattr(plecs_companion.getpass, 'getpass', lambda prompt: 'secret-sdk')
+    def gateway(request):
+        if request.url.host.endswith('.ms.show'):
+            return httpx.Response(403, json={'Code': 10011402001})
+        return httpx.Response(403, json={'error':{'request_id':'1234-abcd','message':'private secret-sdk'}})
+    with httpx.Client(base_url='https://example.ms.show', transport=httpx.MockTransport(gateway)) as client:
+        with pytest.raises(SystemExit, match=r'HTTP 403 at studio-example\.api-inference\.modelscope\.net/api/bridge/claim request_id=1234-abcd') as exc:
+            plecs_companion.bridge_post(client, '/api/bridge/claim')
+        assert 'secret-sdk' not in str(exc.value)
+
+
+@pytest.mark.parametrize('detail,rejected', [('Unknown bridge job', True), ('Studio is restarting', False)])
+def test_companion_only_retires_terminal_receipts(tmp_path, detail, rejected):
+    receipt = plecs_companion.receipt_path(tmp_path, uuid.uuid4().hex)
+    plecs_companion.save_receipt(receipt, {'state':'pending', 'result':{'status':'completed'}})
+    def conflict(request):
+        return httpx.Response(409, json={'detail':detail})
+    with httpx.Client(base_url='https://example.test', transport=httpx.MockTransport(conflict)) as client:
+        if rejected:
+            plecs_companion.flush_receipts(client, tmp_path)
+        else:
+            with pytest.raises(httpx.HTTPStatusError):
+                plecs_companion.flush_receipts(client, tmp_path)
+    assert json.loads(receipt.read_text())['state'] == ('rejected' if rejected else 'pending')
+
+
 def test_later_binding_allows_evaluation_without_repeating_simulation(tmp_path, monkeypatch):
     monkeypatch.setattr(simulation_analysis, 'ROOT', tmp_path)
     identifier = 'agent_'+uuid.uuid4().hex

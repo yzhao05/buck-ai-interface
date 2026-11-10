@@ -98,9 +98,9 @@ entry('controller-gain', '运放增益与参考电压', 'circuit-opamp_gain circ
 entry('controller-pwm', '调制增益、占空比上下限、载波初始相位', 'circuit-pwm_gain circuit-duty_min circuit-duty_max circuit-carrier_phase_at_t0',
       '调制增益 占空比 限幅 载波 初始相位 pwm_gain duty_min duty_max carrier_phase_at_t0',
       '调制增益默认0.25，将运放控制输出缩放为调制量；占空比下限默认0.1、上限0.9，均为0～1比例且下限必须小于上限。载波初始相位以周期计，范围0≤相位<1、默认0，不是角度或秒。共同决定重建PWM的幅度约束和时钟对齐，应按实际仿真填写。', 'frontend/circuit.js')
-entry('history', '历史会话列表 / 新建会话 / 清空图标', 'history-list new-chat clear-chat',
+entry('history', '历史会话列表 / 新建会话', 'history-list new-chat',
       '历史会话 新建 清空 重置 new chat history conversation',
-      '点击历史项切换并恢复其消息、表单、实验和可恢复附件；新建会话与聊天底部↺都保存现有历史后打开新会话，不是删除历史。新会话不自动继承当前CSV。正在运行或保存失败时可能阻止切换。', 'frontend/history.js')
+      '点击历史项切换并恢复其消息、表单、实验和可恢复附件；点击新建会话会保存现有历史并打开新会话，不是删除历史。新会话不自动继承当前CSV。正在运行或保存失败时可能阻止切换。', 'frontend/history.js')
 entry('delete-chat', '删除当前会话', 'delete-chat', '删除 会话 不可撤销 delete conversation',
       '经确认后删除当前会话、实验记录及浏览器/后端保存的CSV；离线删除将在重连后同步，不能撤销。与新建会话、清除当前数据不同。纯询问该按钮用途不授权执行删除。', 'frontend/history.js')
 entry('sync', '立即同步与备份状态', 'sync-now sync-status history-status csv-storage-status',
@@ -133,12 +133,12 @@ entry('agent-steer', '追加指令 / 发送追加指令', 'agent-instruction age
 entry('agent-stop', '停止任务 / 找回或恢复任务', 'agent-cancel agent-resume',
       '停止 取消 中断 找回 恢复 agent cancel stop resume recover',
       '停止任务请求取消当前Agent运行，不回滚已经完成的修改或计算。找回/恢复先查询当前会话已保存或最新任务：运行中重新连接，已完成取回回答，中断/失败/取消任务尝试恢复。已执行实验复用证据，状态未知的操作不应盲目重做；恢复产生的配置建议不会自动应用到可能已变更的界面。结果分析任务绑定提交时的快照；若与右侧当前结果不同，会在主对话提示重新选择，不混用结果。', 'frontend/agent-harness.js')
-entry('plan', '辨识计划面板：折叠、继续计划 / 取消后续任务', 'identification-plan identification-plan-details plan-continue plan-cancel plan-progress plan-runs',
-      '计划 排队 多组 继续计划 取消后续任务 identification plan continue cancel',
-      '点击标题左侧箭头可折叠详情，标题上的完成进度仍会更新，计划继续运行。展开可查看文件、每组进度和暂停原因。继续计划按原配置接续未完成步骤，须满足数据、任务状态和必要确认。取消后续任务会保留已完成结果，当前正在执行的数值辨识仍会完成。', 'frontend/identification-plan.js')
+entry('plan', '辨识计划面板：折叠、继续、取消与关闭', 'identification-plan identification-plan-details plan-continue plan-cancel plan-close plan-progress plan-runs',
+      '计划 排队 多组 继续计划 取消后续任务 关闭卡片 identification plan continue cancel dismiss',
+      '点击标题左侧箭头可折叠详情，标题上的完成进度仍会更新，计划继续运行。展开可查看文件、每组进度和暂停原因。继续计划按原配置接续未完成步骤，须满足数据、任务状态和必要确认。取消后续任务会保留已完成结果，当前正在执行的数值辨识仍会完成。计划完成或取消后，右上角 × 可关闭卡片；刷新当前标签页仍保持关闭，辨识记录可从右栏查看。', 'frontend/identification-plan.js')
 entry('statistics', '右侧波形统计卡片', 'stat-voltage stat-current stat-duration stat-points',
       '平均输出电压 电感电流RMS 数据时长 数据点 时间加权 statistics RMS duration',
-      '平均输出电压单位V、电感电流RMS单位A，均为当前已分析数据全段的时间加权统计；数据时长单位ms，另显示数据点数。不是参数真值、不是留出RMSE，也不随图形局部缩放变成该局部统计。')
+      '平均输出电压单位V、电感电流RMS单位A，均为当前已分析数据全段的时间加权统计；数据时长单位ms。不是参数真值、不是留出RMSE，也不随图形局部缩放变成该局部统计。')
 entry('waveform', '波形观测：全段 / 末10周期 / 框选缩放', 'view-full view-tail current-chart voltage-chart chart-container chart-tooltip',
       '全段 末10周期 波形 缩放 双击 测量 模型预测 waveform zoom full tail',
       '全段清除缩放；末10周期按当前波形终点和使用的开关频率显示末段。拖动框选放大、双击还原，悬停显示读数。青色为测量、橙色虚线为预测，横轴ms，电流A、电压V。显示波形会抽样，辨识使用完整所选数据；缩放不修改训练区间或重新计算。')
@@ -183,7 +183,7 @@ entry('plecs-binding', '仿真结果自动辨识绑定', 'plecs-binding-model pl
       '模型文件名指定被绑定的PLECS模型；电流/电压端口填顶层Output顺序（从1起、最多64），单位A/V；PWM端口可空，填写时须0/1状态。电感/电容参数键如L1.L、C1.C用于元件绑定。第一确认框核对物理量、单位、元件和辨识配置，第二框确认模型与数据同电路同工况。绑定只用于仿真对照自动重辨识，不改左栏设置；不猜测端口意义。')
 entry('bridge', '本机连接器配对码 / 检查连接器状态', 'bridge-pair bridge-check bridge-instructions',
       '配对码 连接器 在线 离线 bridge pairing companion',
-      '本地后端直接连接PLECS，无需配对；检查本机PLECS连接会探测RPC是否就绪。使用云端后端时，先保存后端和本机路径，再生成配对码，在本机按提示运行连接器。云端的检查按钮查询连接器配对及在线状态；重新配对会撤销旧连接器凭据。连接失败后可复制聊天里的 PowerShell 命令：云端连接器在本机项目目录启动；本机 RPC 检查验证端口 1080 返回的 PLECS 方法列表。配对码仅在连接器提示时输入。', 'frontend/agent-harness.js')
+      '本地后端直接连接PLECS，无需配对；检查本机PLECS连接会探测RPC是否就绪。使用云端后端时，先保存后端和本机路径，再生成配对码，在本机按提示运行连接器。云端的检查按钮查询连接器配对及在线状态；重新配对会撤销旧连接器凭据。连接失败后可复制聊天里的 PowerShell 命令：云端连接器在本机项目目录启动；本机 RPC 检查验证端口 1080 返回的 PLECS 方法列表。在 PLECS pairing token: 提示处输入当前会话的配对码。私有魔搭创空间若提示 ModelScope SDK token for …，核对创空间 API 域名，在本机终端输入可访问该空间的魔搭账号的 SDK 访问令牌。看到 PLECS companion connected. 后保持终端打开，再点检查连接器状态。', 'frontend/agent-harness.js')
 entry('sync-code', '同步恢复码与复制', 'sync-code copy-sync-code',
       '同步恢复码 复制 换浏览器 找回 backup recovery code',
       '自动生成并保存的64位十六进制码，用于访问对应后端备份；复制按钮只复制到剪贴板。换浏览器或清空本地后，在同一后端填入原码并保存连接才能找回仍存在的后端副本。保管好且不要分享；不是DeepSeek密钥或连接器配对码。备份没有完成或服务器数据丢失时恢复码不能凭空还原数据。')
@@ -192,4 +192,4 @@ entry('message-evidence', '回答下方工具、来源与证据面板', '',
       '回答下方按实际返回内容展示工具执行记录、误差假设、仿真对比、诊断对照和多次实验一致性依据；展开查看证据。工具已执行不代表假设已证实，历史摘要不代表新计算，缺证据应明确。知识来源标签和费用栏不在回答下方展示。新回复、历史回复与任务预览隐藏内部知识库引用标记及仅列出这些标记的依据列、来源清单；主对话以自然语言说明状态，不附加程序字段转储，前端隐藏括号内 identification_enabled、controller_confirmed、result_loaded 的布尔赋值。实际分析理由、单位、公式、条件、普通网页链接与代码示例保留；明确要求的调试字段在代码块中给出。需要用户确认、补充或操作的内容必须在主回复中逐项反馈，不只放在任务进度中；加载数据并进入辨识后的回执根据实际应用状态列出列与单位映射、实验设置及后续操作，已应用项不重复要求应用，不自动启动辨识。Agent 启动前必须有用户明确选择的PWM来源和计算方法；未选时在主对话询问缺失项，不能使用默认值训练。电路或参考数据确认不能代替方法及来源选择；已明确选择且设置未变化时无需重复询问，多次计划也须覆盖全部组合。原始回答、来源与预算元数据仍保存，会话检索的原文查看入口保留。')
 entry('project-links', 'Buck Lab 标志、实验工作台与项目来源链接', 'source-link',
       '标志 首页 导航 项目来源 Inspired by PE-GPT source link',
-      'Buck Lab标志链接当前站点首页，实验工作台是当前导航标签；页脚Inspired by PE-GPT和项目来源链接打开参考项目仓库，不执行分析或保存报告。')
+      'Buck Lab标志链接当前站点首页，实验工作台是当前导航标签；左栏页脚的 Inspired by PE-GPT 打开参考项目仓库，连接设置中的本项目源码链接打开工作台源码仓库，不执行分析或保存报告。')

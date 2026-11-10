@@ -26,13 +26,27 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.waitForFunction(()=>document.getElementById('bridge-instructions').textContent.includes('backend.plecs_companion'));
   assert.match(await page.locator('#bridge-instructions').innerText(),/--owner/);
   const pairing=await page.locator('#bridge-instructions').innerText();
+  assert(!pairing.includes('ModelScope SDK token'));
   await page.evaluate(()=>document.getElementById('language-toggle').click());
-  assert.match(await page.locator('#bridge-instructions').innerText(),/Enter this pairing code when prompted/);
+  assert.match(await page.locator('#bridge-instructions').innerText(),/paste the Buck Lab pairing code/);
   await page.evaluate(()=>document.getElementById('language-toggle').click());
   assert.equal(await page.locator('#bridge-instructions').innerText(),pairing);
   await page.locator('#bridge-check').click();
   await page.waitForFunction(()=>document.getElementById('settings-status').textContent.includes('已配对'));
   assert.equal(await page.locator('#bridge-instructions').innerText(),pairing);
+  for(const host of ['example.ms.show','studio-example.api-inference.modelscope.net']){
+    const studio='https://'+host;
+    await page.locator('#api-url').fill(studio);
+    await page.evaluate(address=>{base=address;},studio);
+    await page.route(studio+'/api/bridge/pair',route=>route.fulfill({json:{token:'test-studio-code'}}));
+    await page.locator('#bridge-pair').click();
+    await page.waitForFunction(address=>document.getElementById('bridge-instructions').textContent.includes(address)
+      && document.getElementById('bridge-instructions').textContent.includes('魔搭账号'),studio);
+    await page.evaluate(()=>document.getElementById('language-toggle').click());
+    assert.match(await page.locator('#bridge-instructions').innerText(),/PLECS pairing token:[\s\S]+test-studio-code[\s\S]+ModelScope SDK token for[\s\S]+Your input is hidden[\s\S]+PLECS companion connected/);
+    assert.equal(await page.locator('#agent-progress summary').textContent(),'Agent task progress and recovery');
+    await page.evaluate(()=>document.getElementById('language-toggle').click());
+  }
   await page.evaluate(()=>{base=location.origin;});
   await page.locator('#api-url').fill('http://127.0.0.1:8020');
   const confirmations=await page.evaluate(()=>{

@@ -7,12 +7,12 @@ window.BuckHarness = (()=>{
     try{if(id)localStorage.setItem(storageKey,id);else localStorage.removeItem(storageKey);}
     catch{try{localStorage.removeItem(storageKey);}catch{/* Backend latest-task lookup remains available. */}}
   }
-  const status=text=>{document.getElementById('agent-status').textContent=text;};
+  const status=(...parts)=>document.getElementById('agent-status').replaceChildren(...parts.map(window.BuckI18n.node));
   function replyText(response, text) {
     return [text, response?.plecs_manual_help].filter(Boolean).join('\n\n');
   }
   function showOutcome(text,label){
-    status(tr(label));
+    status(label);
     window.BuckMarkdown.render(document.getElementById('agent-preview'),text);
   }
   const headers=()=>({'X-Session-ID':sessionId,...(accessToken?{[appTokenHeader()]:`Bearer ${accessToken}`}:{})});
@@ -50,8 +50,8 @@ window.BuckHarness = (()=>{
         const item=JSON.parse(line);
         if(item.kind==='attempt_start'){result=null;preview='';document.getElementById('agent-preview').textContent='';status(item.data.text);}
         if(item.kind==='status')status(item.data.text);
-        if(item.kind==='tool_start')status(`正在执行：${tools[item.data.name]||item.data.name}`);
-        if(item.kind==='tool_end')status(`${tools[item.data.name]||item.data.name}：${item.data.status}`);
+        if(item.kind==='tool_start')status('正在执行：',tools[item.data.name]||item.data.name);
+        if(item.kind==='tool_end')status(tools[item.data.name]||item.data.name,' · ',item.data.status);
         if(item.kind==='text_delta'){
           preview+=item.data.text;
           window.BuckMarkdown.render(document.getElementById('agent-preview'),preview,{streaming:true});
@@ -64,7 +64,7 @@ window.BuckHarness = (()=>{
           result=item.data.result;
           status(({completed:'任务已完成',failed:'任务未完成，可查看已保存证据',interrupted:'任务已中断，可恢复',cancelled:'任务已停止，可恢复。'})[item.data.state]||item.data.state);
           window.BuckMarkdown.render(document.getElementById('agent-preview'),result?.ui_action?'':replyText(result,result?.answer||result?.provider_error));
-          if(result?.ui_action)status(tr('等待界面应用操作'));
+          if(result?.ui_action)status('等待界面应用操作');
           if(item.data.state==='completed')rememberTask(null,storageKey);
           if(['cancelled','interrupted'].includes(item.data.state))throw taskError(item.data.state,id);
           if(!result)throw taskError('failed',id);
@@ -81,30 +81,34 @@ window.BuckHarness = (()=>{
   }
   async function recover(){
     if(historyLocked())return;
-    state.chatBusy=true;controls();
+    let finishPending;
+    state.chatBusy=true;
     try{
-    const saved=savedTask();
-    let latest=null;
-    if(saved){
-      try{latest=await api(`/api/agent/tasks/${saved}`);}
-      catch(error){if(error.status!==404)throw error;rememberTask(null);}
-    }
-    if(!latest)latest=(await api('/api/agent/tasks/latest')).task;
-    if(!latest){status('没有可恢复的 Agent 任务');return;}
-    if(latest.analysis_result_id && latest.analysis_result_id!==state.resultId){
-      const text=tr('该任务分析的结果与右侧当前显示的结果不同。请在右侧点击“让助手分析结果”分析当前结果；如需恢复原任务，请先选择原来的结果。');
-      status(text);message('assistant',text,'任务状态');rememberMessage('assistant',text,null,'任务状态');return;
-    }
-    rememberTask(latest.id);
-    const savedReply=readConversation(activeConversation.id)?.messages?.find(({response})=>
-      response?.agent_task_id===latest.id && !response.task_state && response.mode!=='provider_error'
-      && (!response.error_code || response.mode==='validation_error' || response.ui_action_status));
-    if(latest.state==='completed' && savedReply){
-      rememberTask(null);
-      showOutcome(savedReply.content,savedReply.response.error_code==='ui_action_failed'?'界面操作失败':'此任务已完成，回答已在当前会话中');return;
-    }
-    if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
+      controls();
+      const saved=savedTask();
+      let latest=null;
+      if(saved){
+        try{latest=await api(`/api/agent/tasks/${saved}`);}
+        catch(error){if(error.status!==404)throw error;rememberTask(null);}
+      }
+      if(!latest)latest=(await api('/api/agent/tasks/latest')).task;
+      if(!latest){status('没有可恢复的 Agent 任务');return;}
+      if(latest.analysis_result_id && latest.analysis_result_id!==state.resultId){
+        const text=tr('该任务分析的结果与右侧当前显示的结果不同。请在右侧点击“让助手分析结果”分析当前结果；如需恢复原任务，请先选择原来的结果。');
+        status(text);message('assistant',text,'任务状态');rememberMessage('assistant',text,null,'任务状态');return;
+      }
+      rememberTask(latest.id);
+      const savedReply=readConversation(activeConversation.id)?.messages?.find(({response})=>
+        response?.agent_task_id===latest.id && !response.task_state && response.mode!=='provider_error'
+        && (!response.error_code || response.mode==='validation_error' || response.ui_action_status));
+      if(latest.state==='completed' && savedReply){
+        rememberTask(null);
+        showOutcome(savedReply.content,savedReply.response.error_code==='ui_action_failed'?'界面操作失败':'此任务已完成，回答已在当前会话中');return;
+      }
+      if(latest.state!=='completed')finishPending=startPendingReply('正在恢复 Agent 任务…','本次恢复用时');
+      if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
       const response=await follow(latest.id);
+      if(finishPending)response.recovery_elapsed_s=finishPending();
       const reply=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
       const text=replyText(response,response.ui_action?tr(reply):reply);
       if(response.ui_action)showOutcome(text,'界面操作未重新执行');
@@ -115,9 +119,12 @@ window.BuckHarness = (()=>{
     }catch(error){
       const note=taskNotice(error);
       if(!note)throw error;
-      status(note.text);message('assistant',note.text,'任务状态');
+      if(finishPending)note.response.recovery_elapsed_s=finishPending();
+      status(note.text);
+      const article=message('assistant',note.text,'任务状态');
+      decorateResponse(article,note.response);
       rememberMessage('assistant',note.text,note.response,'任务状态');
-    }finally{state.chatBusy=false;controls();}
+    }finally{finishPending?.();state.chatBusy=false;controls();}
   }
   function bind(){
     document.getElementById('agent-steer').onclick=async()=>{
@@ -139,10 +146,16 @@ window.BuckHarness = (()=>{
         const urlLiteral=new URL(address).href.replace(/\/$/,'').replaceAll("'", "''");
         // Older servers return only owner and token. Use the current, validated session ID.
         const command=result.command || `& '.\\.venv\\Scripts\\python.exe' -m backend.plecs_companion --server $server --owner '${owner}'`;
+        const host = new URL(address).hostname;
+        const studio = /^(?:[a-z0-9-]+\.ms\.show|studio-[a-z0-9-]+\.api-inference\.modelscope\.net)$/.test(host);
         ui(document.getElementById('bridge-instructions'),[
-          '在本机项目文件夹的 PowerShell 中运行以下命令。',
-          `$server = '${urlLiteral}'`, command, '程序提示时输入以下配对码。', result.token,
-          '请保管配对码，重启连接器时复用。'
+          '1. 在本机项目文件夹中打开 PowerShell，运行以下命令。',
+          `$server = '${urlLiteral}'`, command, '',
+          '2. 看到 PLECS pairing token: 时，粘贴下方的 Buck Lab 配对码并按回车。', result.token,
+          '请保管配对码，重启连接器时复用。', '',
+          ...(studio ? ['3. 如果出现 ModelScope SDK token for … 提示，请核对创空间 API 域名，粘贴有权访问该空间的魔搭账号的 SDK 访问令牌，再按回车。终端会隐藏输入。',
+            '魔搭访问令牌页面', 'https://modelscope.cn/my/myaccesstoken', ''] : []),
+          '看到 PLECS companion connected. 后，保持终端打开，点击“检查连接器状态”。'
         ].join('\n'));
         try{localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(config));}catch{ui(document.getElementById('settings-status'),'配对成功，但浏览器无法记住本机路径。');}
       }catch(error){ui(document.getElementById('settings-status'),error.message);}

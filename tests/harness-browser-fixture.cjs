@@ -12,8 +12,8 @@ exports.install=async page=>{
   const results=new Map();let sequence=0;
   await page.route('**/api/agent/tasks',async route=>{
     const body=route.request().postDataJSON(),headers=route.request().headers();
-    const result=await page.evaluate(async({body,headers})=>{
-      const response=await fetch(base.replace(/\/$/,'')+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Session-ID':headers['x-session-id'],...(headers.authorization?{Authorization:headers.authorization}:{})},body:JSON.stringify(body)});
+    const result=await route.request().frame().evaluate(async({body,headers})=>{
+      const response=await fetch(base.replace(/\/$/,'')+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Session-ID':headers['x-session-id'],...(headers.authorization?{Authorization:headers.authorization}:{}),...(headers['x-buck-authorization']?{'X-Buck-Authorization':headers['x-buck-authorization']}:{})},body:JSON.stringify(body)});
       return response.json();
     },{body,headers});
     const id=`fixture-${++sequence}`;results.set(id,result);

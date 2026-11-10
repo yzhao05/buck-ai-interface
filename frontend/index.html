@@ -36,7 +36,6 @@
           <label>电感电流<select id="map-current" aria-label="电感电流列"></select></label>
           <label>输出电压<select id="map-voltage" aria-label="输出电压列"></select></label>
           <label>PWM 开关状态（可选）<select id="map-pwm" aria-label="PWM 列"></select></label>
-          <p class="field-note">可在同一 CSV 中附带实际 0/1 PWM 列；没有该列时，可确认已知控制电路后重建开关信息。</p>
           <div class="three-fields"><label>时间单位<select id="time-unit"><option>s</option><option>ms</option><option>us</option><option>ns</option></select></label><label>电流<select id="current-unit"><option>A</option><option>mA</option></select></label><label>电压<select id="voltage-unit"><option>V</option><option>mV</option></select></label></div>
           <button id="apply-mapping" class="button secondary full" disabled>应用并检查数据</button>
         </div></details>
@@ -70,17 +69,14 @@
         <label>辨识目标<select id="fit-mode"><option value="LCR">L / C / R · 联合辨识</option><option value="LC">L / C · 固定负载 R</option></select></label>
         <label id="fixed-r-label" hidden>已知负载电阻<div class="unit-input"><input id="fixed-r" type="number" value="6" min="0.01" max="100000" step="any"><span>Ω</span></div></label>
         <label>计算方法<select id="fit-method"><option value="pann" selected disabled>PANN · 需后端 PyTorch</option><option value="weighted_integral">抗噪加权积分 · 直接辨识</option></select></label>
-        <p id="method-hint" class="field-note">直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。</p>
+        <p id="method-hint" class="field-note" hidden>直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。</p>
         <div id="pann-settings" hidden>
           <label>窗口初值<select id="pann-state"><option value="joint">从含噪数据联合估计（推荐）</option><option value="measured">固定测量初值（对照）</option></select></label>
           <div class="two-fields"><label>窗口长度<select id="pann-cycles"><option value="0">自动（训练噪声）</option><option value="1">1 个开关周期</option><option value="2">2 个开关周期</option><option value="3">3 个开关周期</option></select></label><label>训练轮数<input id="pann-epochs" type="number" min="10" max="300" step="1" value="200"></label></div>
-          <p class="field-note">训练不设时间上限，按设置轮数执行；联合初值模式另有 50 轮状态预热。</p>
-          <p class="field-note">只用训练段估计初值；留出验证连续运行，不重置状态。窗口更长不一定更准确。</p>
         </div>
         <div class="two-fields"><label>开始时间<div class="unit-input"><input type="number" id="start-ms" step="any" placeholder="起点"><span>ms</span></div></label><label>结束时间<div class="unit-input"><input type="number" id="end-ms" step="any" placeholder="终点"><span>ms</span></div></label></div>
         <label class="range-label" for="train-fraction">训练区间占比 <span id="train-label">70%</span></label><input type="range" id="train-fraction" min="50" max="85" value="70" step="5">
         <div class="split-legend"><span><i></i>前段训练</span><span><i></i>后段留出验证</span></div>
-        <p class="field-note">选择恒定负载区间。R 指负载电阻，非 ESR。示例推荐 0～0.8 ms。</p>
         <button id="identify" class="button primary full" disabled><span>▷</span> 开始参数辨识</button>
         <p id="identify-complete-hint" class="field-note" hidden>当前配置已完成辨识。修改上方参数后可重新辨识。</p>
         <p id="job-status" class="job-status" aria-live="polite">等待导入实验数据</p>
@@ -104,6 +100,7 @@
         <div class="suggestions"><button data-prompt="请分析当前波形的特点和需要注意的问题">理解我的仿真波形 <span>↗</span></button><button data-prompt="请分析当前结果的误差原因，并给出下一轮修改计划">分析误差，规划下一步 <span>↗</span></button><button data-prompt="如何根据仿真波形评估电容寿命？还缺哪些信息？">关于电容寿命，我需要什么？ <span>↗</span></button></div>
       </div>
       <section id="identification-plan" class="identification-plan" hidden aria-live="polite">
+        <button type="button" id="plan-close" class="icon-button" aria-label="关闭辨识计划卡片" title="关闭辨识计划卡片" hidden>×</button>
         <details id="identification-plan-details" open>
           <summary class="plan-summary"><span class="compose-toggle" aria-hidden="true"></span><strong id="plan-progress"></strong></summary>
           <span id="plan-file"></span><p id="plan-source"></p><p id="plan-note"></p><ul id="plan-runs"></ul>
@@ -129,13 +126,12 @@
         <button id="compact-chat-images" type="button" class="icon-button compose-attachments" aria-label="展开查看已添加图片" title="展开查看已添加图片" hidden>▧</button>
         <div class="compose-bottom"><div id="chat-compose-tools" class="chat-image-tools"><button type="button" id="attach-chat-image" class="button subtle small">添加图片</button><button type="button" id="chat-use-circuit" class="button subtle small">添加电路图</button></div><label for="reasoning-mode" class="sr-only">回答模式</label><select id="reasoning-mode" aria-label="回答模式"><option value="auto">自动模式</option><option value="fast">快速模式</option><option value="thinking">思考模式</option></select><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div>
       </form>
-      <p class="chat-footnote"><button type="button" class="icon-button" id="clear-chat" title="新建会话，保留当前历史" aria-label="新建会话，保留当前历史">↺</button> 计算摘要、对话及随消息附加的图片将发送至已配置的 DeepSeek。<br>清空浏览器前，请保管同步恢复码并确认后端备份完成且存储持久；之后可用恢复码找回后端副本。 <a id="source-link" href="https://github.com/XinzeLee/PE-GPT" target="_blank" rel="noopener">项目来源 ↗</a></p>
     </main>
     <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>
       <div class="pane-controls page-heading"><span class="eyebrow">WAVEFORM INTELLIGENCE</span><h2>波形与辨识结果</h2><button type="button" id="toggle-right-pane" class="section-toggle" aria-controls="analysis-panel" aria-expanded="true" aria-label="收起右栏" title="收起右栏">›</button><p>查看测量波形、模型预测与验证误差。</p><span class="pane-rail-label">波形与结果</span></div>
       <div class="metrics-grid" aria-label="波形统计">
-        <article class="metric"><span>平均输出电压</span><strong id="stat-voltage">—<small>V</small></strong><small>全段 · 时间加权</small><span class="metric-symbol">V</span></article>
-        <article class="metric"><span>电感电流 RMS</span><strong id="stat-current">—<small>A</small></strong><small>全段 · 时间加权</small><span class="metric-symbol">I</span></article>
+        <article class="metric"><span>平均输出电压</span><strong id="stat-voltage">—<small>V</small></strong><span class="metric-symbol">V</span></article>
+        <article class="metric"><span>电感电流 RMS</span><strong id="stat-current">—<small>A</small></strong><span class="metric-symbol">I</span></article>
         <article class="metric"><span>数据时长</span><strong id="stat-duration">—<small>ms</small></strong><small id="stat-points">尚未导入数据</small><span class="metric-symbol">t</span></article>
       </div>
       <section class="card waveform-card">
@@ -159,13 +155,12 @@
           <button id="calculate-parameter-error" class="button subtle small" type="button" disabled>计算相对误差</button>
           <p id="truth-error" role="alert" hidden></p>
           <div id="parameter-error-values" class="parameter-error-values" hidden aria-live="polite"><div><span>电感相对误差</span><strong id="parameter-error-l"></strong></div><div><span>电容相对误差</span><strong id="parameter-error-c"></strong></div></div>
-          <p class="field-note">相对误差 = |预测值 − 真实值| ÷ 真实值 × 100%。真实值仅用于结果对照，不参与训练。</p>
         </section>
         <div id="validation" class="validation" hidden><div><span>留出电流 RMSE</span><strong id="rmse-i"></strong></div><div><span>留出电压 RMSE</span><strong id="rmse-v"></strong></div></div>
         <section id="result-assessment" class="result-assessment" hidden aria-label="结果分项判断">
           <dl><dt>波形拟合</dt><dd id="waveform-assessment"></dd><dt>训练稳定性</dt><dd id="training-assessment"></dd><dt>参数准确性</dt><dd id="accuracy-assessment"></dd></dl>
           <details id="training-evidence" hidden><summary>查看训练稳定性依据</summary><ul id="training-evidence-list"></ul></details>
-          <details id="measurement-evidence"><summary>噪声与残差诊断</summary><p class="field-note">训练段局部噪声估计不是传感器标定；残差线索不改变 5% 应用门槛。</p><ul id="measurement-evidence-list"></ul></details>
+          <details id="measurement-evidence"><summary>噪声与残差诊断</summary><ul id="measurement-evidence-list"></ul></details>
           <details><summary>诊断对照与可选参考</summary><p class="field-note">让助手分析时自动尝试参数与初值交换，不重新训练。需要同 CSV、区间和模型的已完成 PANN 结果及原始 CSV。</p>
             <button type="button" class="button subtle small" id="choose-diagnostic-reference">上传干净参考 CSV（可选）</button><input id="diagnostic-reference-file" type="file" accept=".csv,text/csv" hidden>
             <p class="field-note">参考须与原数据使用相同列名、单位和时间网格；仅作评价，不参与训练。参考仅保留于当前后端缓存，刷新或过期后需重新选择。</p>
@@ -177,7 +172,6 @@
         <div id="result-notes" class="result-notes">拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。</div>
         <details id="diagnostics" hidden><summary>查看计算条件与诊断</summary><pre id="diagnostic-text"></pre></details>
         <div class="result-actions"><div class="analysis-action"><button type="button" class="button subtle small" id="ask-error" aria-expanded="false" aria-controls="analysis-menu" disabled>让助手分析结果 ▾</button><div id="analysis-menu" class="analysis-menu" hidden><button type="button" id="analyze-here">在本对话中分析</button><button type="button" id="analyze-new">新对话分析</button></div></div><button class="button subtle small" id="download-report" disabled>↓ 导出报告文件夹</button></div>
-        <p class="report-folder-hint">支持时选择保存位置并生成同名文件夹、PDF 和 JSON；不支持时会先说明原因，可选择分别下载两份文件。</p>
         <div id="report-downloads" class="report-downloads" hidden aria-live="polite">
           <p id="report-export-status"></p>
           <button type="button" id="download-report-files" class="button subtle small">改为分别下载 PDF 和 JSON</button>
@@ -200,7 +194,7 @@
 <p id="plecs-direct-note" class="field-note" hidden>本地后端直接连接 PLECS，无需配对。</p>
 <button id="bridge-pair" type="button" class="button ghost full">生成本机连接器配对码</button>
 <button id="bridge-check" type="button" class="button ghost full">检查连接器状态</button>
-<pre id="bridge-instructions" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><label>同步恢复码<input id="sync-code" type="password" autocomplete="off" spellcheck="false" minlength="64" maxlength="64"></label><p class="field-note">自动生成并记住。请复制保管，换浏览器或清空本地后可用它恢复备份；不要分享给他人。</p><button type="button" id="copy-sync-code" class="button ghost full">复制同步恢复码</button><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p></form></dialog>
+<pre id="bridge-instructions" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><label>同步恢复码<input id="sync-code" type="password" autocomplete="off" spellcheck="false" minlength="64" maxlength="64"></label><p class="field-note">自动生成并记住。请复制保管，换浏览器或清空本地后可用它恢复备份；不要分享给他人。</p><button type="button" id="copy-sync-code" class="button ghost full">复制同步恢复码</button><button type="submit" class="button primary full">保存并连接</button><button type="button" class="button ghost full" id="forget-access-token">清除已记住的口令</button><p id="settings-status" role="status"></p><a id="source-link" href="https://github.com/yzhao05/buck-ai-interface" target="_blank" rel="noopener">本项目源码 ↗</a></form></dialog>
   <dialog id="report-location-dialog" aria-labelledby="report-location-title">
     <div class="dialog-heading"><h2 id="report-location-title">报告保存位置</h2><button type="button" id="close-report-location" class="icon-button" aria-label="关闭">×</button></div>
     <p id="report-location-reason"></p>

@@ -6,9 +6,12 @@ including retries and compaction. Shell/file tools are disabled by profile patch
 """
 import asyncio
 import contextvars
+import hashlib
 import hmac
 import json
+import logging
 import os
+import re
 from pathlib import Path
 from .deployment import agent_capacity, hosted
 import secrets
@@ -27,11 +30,27 @@ active = {}
 runtime_slots = threading.BoundedSemaphore(agent_capacity())
 
 
+def rpc_diagnostic(message):
+    # RPC messages can echo an entire prompt. Extract known error signatures
+    # rather than trying to redact arbitrary attachment data and user text.
+    known = ('sharp', 'libvips', 'cannot find module', 'cannot open shared object file',
+             'image prompt requires an attachment store', 'invalid image', 'unsupported image',
+             'pixel limit', 'image input', 'authentication', 'permission denied',
+             'invalid params', 'not found', 'not supported', 'hard link', 'fsync')
+    details = [term for term in known if term in message.lower()]
+    details.extend(re.findall(r'\b(?:EACCES|EPERM|EIO|EINVAL|EOPNOTSUPP|ENOSYS|ENOENT|ENOSPC|ENOTDIR|EEXIST|EXDEV|EROFS)\b', message))
+    return ', '.join(dict.fromkeys(details)) or 'unclassified RPC failure'
+
+
 class Gateway:
     def __init__(self, tools, invoke, budget, emit):
         self.tools, self.invoke, self.budget, self.emit = tools, invoke, budget, emit
         self.secret = secrets.token_urlsafe(32)
         self.error = None
+        self.provider_stage = 'not_reached'
+        self.image_marker = None
+        self.image_blocks = []
+        self.require_image_marker = False
         self.lock = threading.Lock()
         gateway = self
         class Handler(BaseHTTPRequestHandler):
@@ -82,6 +101,8 @@ class Gateway:
                         # neither spend again nor hide its original failure.
                         if gateway.error is not None:
                             raise gateway.error
+                        gateway.provider_stage = 'gateway_received'
+                        gateway.restore_images(body)
                         if gateway.budget.calls >= gateway.budget.rounds:
                             raise BudgetExceeded('model step budget reached')
                         body['max_tokens'] = gateway.budget.reserve(body)
@@ -93,7 +114,9 @@ class Gateway:
                         headers = {'x-api-key':os.environ['DEEPSEEK_API_KEY'],'anthropic-version':self.headers.get('anthropic-version','2023-06-01')}
                         if self.headers.get('anthropic-beta'):
                             headers['anthropic-beta'] = self.headers['anthropic-beta']
+                        gateway.provider_stage = 'upstream_attempted'
                         with client.stream('POST', endpoint, json=body, headers=headers) as upstream:
+                            gateway.provider_stage = 'upstream_responded'
                             upstream.raise_for_status()
                             self.send_response(200)
                             self.send_header('Content-Type', upstream.headers.get('content-type','text/event-stream'))
@@ -184,6 +207,31 @@ class Gateway:
         self.server = ThreadingHTTPServer(('127.0.0.1',0),Handler)
         self.server.daemon_threads = True
         self.url = 'http://127.0.0.1:'+str(self.server.server_port)
+
+    def restore_images(self, body):
+        """Expand only the app-generated suffix of a user prompt, before budget accounting."""
+        if not self.image_marker:
+            return
+        found_in_last_user = False
+        for message in body.get('messages', []):
+            if message.get('role') != 'user':
+                continue
+            found_in_last_user = False
+            content = message.get('content')
+            blocks = [{'type':'text','text':content}] if isinstance(content, str) else content
+            if not isinstance(blocks, list):
+                continue
+            for index in reversed(range(len(blocks))):
+                block = blocks[index]
+                if block.get('type') == 'text' and block['text'].endswith(self.image_marker):
+                    prefix = block['text'].removesuffix(self.image_marker)
+                    replacement = [{**block, 'text':prefix}] if prefix else []
+                    blocks[index:index+1] = replacement + self.image_blocks
+                    message['content'] = blocks
+                    found_in_last_user = True
+        if self.require_image_marker and not found_in_last_user:
+            raise HarnessTurnError('incomplete')
+        self.require_image_marker = False
 
     def __enter__(self):
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -287,6 +335,15 @@ async def _run(messages, tools, invoke, budget):
                 content = '\n'.join(text)
             history.append({'role':message['role'],'content':content})
         prompt = [{'type':'text','text':json.dumps(history,ensure_ascii=False)},*images]
+        if images:
+            # Stable across recovery of this task, even if a previous turn used the fallback.
+            digest = hashlib.sha256(task_id.encode())
+            for image in images:
+                digest.update(image['mimeType'].encode() + b':')
+                digest.update(image['data'].encode('ascii'))
+            gateway.image_marker = '\n[buck-image-attachments:' + digest.hexdigest() + ']'
+            gateway.image_blocks = [{'type':'image','source':{'type':'base64',
+                'media_type':image['mimeType'],'data':image['data']}} for image in images]
         # Windows runtime 0.2.1rc2 resolves its packaged Koffi module against
         # the process drive (upstream #11313). Launch on the system drive;
         # the SDK's logical cwd and all durable data stay in this session home.
@@ -298,12 +355,15 @@ async def _run(messages, tools, invoke, budget):
             reasoning_effort='high' if budget.thinking else 'off',
             initialize_timeout_seconds=30,request_timeout_seconds=30)
         active[task_id] = (harness,identifier)
+        stage = 'start'
         try:
             def blocking():
+                nonlocal stage
                 log_memory('before_harness_start')
                 harness.start()
                 log_memory('after_harness_start')
                 marker = home/'session.started'
+                stage = 'session'
                 if marker.exists() or state.get('resume'):
                     try:
                         session = harness.resume_session(identifier)
@@ -318,12 +378,28 @@ async def _run(messages, tools, invoke, budget):
                     session = harness.start_session(identifier)
                 emit('status',{'text':'DeepSeek Harness 已接管工具调度'})
                 marker.touch()
-                return session.run(prompt)
+                stage = 'prompt'
+                try:
+                    return session.run(prompt)
+                except JsonRpcError as exc:
+                    # Only recover a local image storage/native-loader failure before
+                    # any provider request. Never replay a model or tool execution.
+                    local_failure = re.search(r'\b(?:ENOTDIR|EACCES|EPERM|EOPNOTSUPP|ENOSYS|EROFS|EXDEV)\b', exc.message)
+                    missing_sharp = 'Could not load the "sharp" module' in exc.message
+                    if (not images or exc.code != -32603 or gateway.provider_stage != 'not_reached'
+                            or not (local_failure or missing_sharp)):
+                        raise
+                    logging.getLogger('uvicorn.error').warning(
+                        'Harness image admission: task=%s stage=prompt provider_stage=not_reached '
+                        'rpc_code=%s images=%d message=%s recovery=gateway_images',
+                        task_id, exc.code, len(images), rpc_diagnostic(exc.message))
+                    stage = 'prompt_with_gateway_images'
+                    gateway.require_image_marker = True
+                    return session.run([{'type':'text','text':prompt[0]['text'] + gateway.image_marker}])
             result = await asyncio.wait_for(asyncio.to_thread(blocking), timeout=budget.remaining())
             if gateway.error:
                 raise gateway.error
             if result.finish_reason not in ('completed',None) or not result.final_response.strip():
-                (home/'failure.json').write_text(json.dumps(result.events,ensure_ascii=False),encoding='utf-8')
                 raise HarnessTurnError(result.finish_reason if result.finish_reason not in ('completed', None) else 'empty')
             return result.final_response
         except asyncio.TimeoutError:
@@ -333,7 +409,12 @@ async def _run(messages, tools, invoke, budget):
                 raise gateway.error
             budget.remaining()  # Raises BudgetExceeded only for an expired deadline.
             raise
-        except Exception:
+        except Exception as exc:
+            rpc = exc if isinstance(exc, JsonRpcError) else exc.__cause__
+            if isinstance(rpc, JsonRpcError):
+                logging.getLogger('uvicorn.error').warning(
+                    'Harness RPC failure: task=%s stage=%s provider_stage=%s rpc_code=%s images=%d message=%s',
+                    task_id, stage, gateway.provider_stage, rpc.code, len(images), rpc_diagnostic(rpc.message))
             if gateway.error is not None:
                 raise gateway.error
             raise

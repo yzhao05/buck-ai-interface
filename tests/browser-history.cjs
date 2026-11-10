@@ -81,7 +81,7 @@ const assert=require('node:assert/strict');
     assert(await page.locator('.history-item').first().isDisabled());
     release();hold=false;await ready(page);
     await page.screenshot({path:'runtime/history-desktop.png',fullPage:true});
-    await page.locator('#clear-chat').click();await ready(page);
+    await page.locator('#new-chat').click();await ready(page);
     assert.equal(await page.locator('.history-item').count(),3,'Reset creates new conversation and preserves history');
     await context.close();
     context=await browser.newContext({storageState:saved});await setup(context);

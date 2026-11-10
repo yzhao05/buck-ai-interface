@@ -1,6 +1,7 @@
 import hmac
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -20,6 +21,19 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
+
+
+def omit_access_query(record):
+    # Uvicorn passes the request target as the third access-log argument.
+    # Studio iframe URLs can carry a session credential in their query string.
+    if isinstance(record.args, tuple) and len(record.args) == 5:
+        client, method, target, version, status = record.args
+        if isinstance(target, str):
+            record.args = (client, method, target.partition('?')[0], version, status)
+    return True
+
+
+logging.getLogger('uvicorn.access').addFilter(omit_access_query)
 from .diagnostic_controls import compatible, run_controls
 
 from . import chat

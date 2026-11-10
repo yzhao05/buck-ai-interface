@@ -49,6 +49,8 @@ def manual_help(kind, language, *, executable='', owner=''):
                 if english else '在本机 Buck Lab 项目文件夹打开 PowerShell。按提示输入连接设置中的后端应用地址，再输入配对码。')
         if kind == 'pair':
             note = ('First generate a pairing code in Connection settings. ' if english else '先在当前会话的连接设置里生成本机连接器配对码。') + note
+        note += (' For a private ModelScope Studio, enter your ModelScope SDK access token at the ModelScope SDK token for … prompt after checking the hostname. Keep PowerShell open once you see PLECS companion connected.'
+                 if english else ' 私有魔搭创空间若提示 ModelScope SDK token for …，请核对域名，在终端输入可访问该空间的魔搭 SDK 访问令牌并按回车。看到 PLECS companion connected. 后保持 PowerShell 打开。')
         code = "$server = Read-Host 'Buck Lab backend URL'\n" + companion_command(owner)
     else:
         note = ('Run this in PowerShell on the PLECS computer. In PLECS Preferences, enable RPC on port 1080.'

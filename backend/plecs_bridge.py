@@ -50,6 +50,14 @@ class InvalidCredential(ValueError):
     pass
 
 
+# Wire values also used by companions talking to older Buck Lab deployments.
+RESULT_TOO_LARGE = 'Bridge result exceeds 8 MiB'
+UNKNOWN_JOB = 'Unknown bridge job'
+CONFLICTING_RESULT = 'Conflicting duplicate result'
+JOB_CLOSED = 'Bridge job no longer accepts results; do not repeat the experiment'
+RESULT_REJECTIONS = (RESULT_TOO_LARGE, UNKNOWN_JOB, CONFLICTING_RESULT, JOB_CLOSED)
+
+
 def authorized_write(db, owner, token):
     # Serialize credential rotation with claiming, heartbeats and completion.
     db.execute('BEGIN IMMEDIATE')
@@ -100,16 +108,16 @@ def complete(owner, token, identifier, result):
         authorized_write(db,owner,token)
         encoded = json.dumps(result, allow_nan=False)
         if len(encoded.encode()) > 8*1024*1024:
-            raise ValueError('Bridge result exceeds 8 MiB')
+            raise ValueError(RESULT_TOO_LARGE)
         row = db.execute('SELECT * FROM work WHERE id=? AND owner=?', (identifier, owner)).fetchone()
         if not row:
-            raise ValueError('Unknown bridge job')
+            raise ValueError(UNKNOWN_JOB)
         if row['state'] == 'completed':
             if row['result'] != encoded:
-                raise ValueError('Conflicting duplicate result')
+                raise ValueError(CONFLICTING_RESULT)
             return {'status': 'completed'}
         if row['state'] not in ('running','uncertain') or time.time()-row['created']>86400:
-            raise ValueError('Bridge job no longer accepts results; do not repeat the experiment')
+            raise ValueError(JOB_CLOSED)
         db.execute("UPDATE work SET state='completed',result=? WHERE id=?", (encoded, identifier))
     return {'status': 'completed'}
 
@@ -118,7 +126,7 @@ def result(owner, identifier, context):
     with database() as db:
         row = db.execute('SELECT * FROM work WHERE owner=? AND id=?',(owner,identifier)).fetchone()
     if not row:
-        raise ValueError('Unknown bridge job')
+        raise ValueError(UNKNOWN_JOB)
     payload = json.loads(row['payload'])
     if payload['context'] != context or payload['tool'] != 'run_plecs_experiment':
         raise ValueError('Bridge result does not match the current circuit/data context')

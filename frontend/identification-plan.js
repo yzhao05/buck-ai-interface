@@ -55,7 +55,11 @@ function saveIdentificationPlan(plan){
 }
 function renderIdentificationPlan(){
   const box=$("identification-plan");if(!box)return;
-  const plan=currentIdentificationPlan();box.hidden=!plan;if(!plan)return;
+  const plan=currentIdentificationPlan();
+  const finished=plan && ["complete","cancelled"].includes(plan.status);
+  box.hidden=!plan || (finished && plan.dismissed===true);
+  if(box.hidden)return;
+  $("plan-close").hidden=!finished;
   $("plan-progress").textContent=`${tr(plan.version===3?"四组参数辨识计划":"两种方法辨识计划")} · ${plan.done.length} / ${planRuns(plan).length}`;
   $("plan-file").textContent=plan.filename || state.dataset?.filename || tr("当前 CSV");
   $("plan-source").textContent=identificationPlanSource(plan);
@@ -237,6 +241,15 @@ async function continueIdentificationPlan(){
 }
 document.addEventListener('buck-language-change',()=>renderIdentificationPlan());
 document.addEventListener('click',event=>{
+  if(event.target.closest('#plan-close')){
+    const plan=currentIdentificationPlan();
+    if(!plan || !["complete","cancelled"].includes(plan.status))return;
+    plan.dismissed=true;
+    try{saveIdentificationPlan(plan);}catch(error){plan.dismissed=false;notice(error.message);return;}
+    renderIdentificationPlan();
+    $("chat-input").focus();
+    return;
+  }
   if(event.target.closest('#plan-continue'))void continueIdentificationPlan();
   if(event.target.closest('#plan-cancel')){
     const plan=currentIdentificationPlan();if(!plan)return;
