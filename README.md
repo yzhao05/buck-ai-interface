@@ -143,6 +143,7 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 1. 本项目的魔搭创空间为 [yuzhao05/buck-lab](https://www.modelscope.cn/studios/yuzhao05/buck-lab)。在 GitHub 仓库的 Actions Secrets 中设置有该创空间写权限的 `MODELSCOPE_TOKEN`。
 2. 在创空间部署设置中添加密文变量 `APP_ACCESS_TOKEN`（至少 20 个字符）和 `DEEPSEEK_API_KEY`。前者用于登录 Buck Lab，后者用于后端请求 DeepSeek。模型名称可用 `DEEPSEEK_MODEL` 配置。
 3. 推送到 GitHub 的 `main` 后，`Deploy Buck Lab to ModelScope` 工作流将该提交的 `backend/`、`frontend/`、`examples/`、依赖清单、许可文件、Dockerfile 和启动脚本直接同步到创空间，保留创空间自己的 README 和配置。推送前会从 Git 暂存内容重新导出并核对构建文件。Docker 先复制 `requirements-lock.txt` 安装依赖和 CPU 版 PyTorch，再复制应用文件，以单个 Uvicorn worker 监听 7860 端口。
+   PDF 报告字体超过创空间普通 Git 文件的 10 MiB 限额。发布时仅对该字体做无损 gzip 压缩，镜像构建时解压并校验原始 SHA-256。工作流在推送前检查暂存快照中的文件大小和 LFS 指针。
 4. 创空间启动后，打开实际运行的应用，在该应用地址后访问 `/api/health`，确认返回 `status: ok`。从创空间内打开前端时默认连接同一地址。在连接设置中输入应用访问口令并保存。浏览器会按后端地址记住所用口令。
 5. 如需从 GitHub Pages 打开前端，在仓库 Actions Variables 设置 `MODELSCOPE_API_URL` 为创空间**实际应用的 HTTPS 地址**，并将创空间的 `CORS_ORIGINS` 设为 Pages 站点来源，例如 `https://你的用户名.github.io`。在 GitHub 的 Pages 设置中选择 GitHub Actions 并运行 Pages 发布工作流。连接设置中手动保存的地址优先于发布时写入的默认地址。
 6. 加载示例并检查波形、辨识结果和聊天。若请求超时，可以先查看创空间运行状态及后端日志。前端先向所选后端查询 `/api/health`，再按该服务公布的请求头发送应用口令。魔搭镜像使用 `X-Buck-Authorization`，本机默认使用 `Authorization`。普通请求和 Agent 事件流共用这一设置。

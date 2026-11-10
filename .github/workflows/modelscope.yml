@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Check out the GitHub commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -36,6 +36,17 @@ jobs:
           echo 'window.BUCK_CONFIG = { apiBaseUrl: window.location.origin, studioBackend: true, sourceUrl: "https://github.com/${{ github.repository }}" };' > build/app/frontend/config.js
 
           cp deploy/modelscope/{Dockerfile,studio_start.py} build/app/
+
+          # The report font exceeds the Studio limit of 10 MiB per plain Git blob.
+          # Keep all glyphs and verify the original bytes when building the image.
+          (
+            cd build/app/backend/assets/fonts
+            font=BuckReportSans-Regular.ttf
+            sha256sum "$font" > "$font.sha256"
+            gzip -n -9 "$font"
+            # Studio normally routes *.gz through LFS. This small gzip must be a real blob.
+            printf '\n%s\n' "$font.gz -filter -diff -merge -text" >> .gitattributes
+          )
 
       - name: Push deployment files to ModelScope
         shell: bash
@@ -72,6 +83,14 @@ jobs:
           snapshot=$(mktemp -d)
           git archive "$(git write-tree)" -- "${files[@]}" | tar -x -C "$snapshot"
           diff -qr ../build/app "$snapshot"
+          python - "$snapshot" <<'PY'
+          from pathlib import Path
+          import sys
+          root = Path(sys.argv[1])
+          for file in root.rglob("*"):
+              if file.is_file() and file.stat().st_size > 10 * 1024 * 1024:
+                  raise SystemExit(f"File exceeds ModelScope's 10 MiB Git blob limit: {file.relative_to(root)}")
+          PY
           for file in requirements-lock.txt backend/main.py frontend/index.html examples/plecs_buck_case16a.csv studio_start.py Dockerfile; do
             test -s "$snapshot/$file"
           done

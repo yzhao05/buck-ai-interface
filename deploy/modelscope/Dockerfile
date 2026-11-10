@@ -10,6 +10,10 @@ RUN python -m pip install --no-cache-dir -r requirements-lock.txt && \
     python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 'torch>=2.6,<3'
 EXPOSE 7860
 COPY backend/ ./backend/
+RUN cd /app/backend/assets/fonts && \
+    gzip -d BuckReportSans-Regular.ttf.gz && \
+    sha256sum -c BuckReportSans-Regular.ttf.sha256 && \
+    rm BuckReportSans-Regular.ttf.sha256
 COPY frontend/ ./frontend/
 COPY examples/ ./examples/
 COPY LICENSE THIRD_PARTY_NOTICES.md studio_start.py ./
