@@ -2,6 +2,14 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "生成本机连接器配对码": "Generate a local connector pairing code",
+    "请等待当前任务结束后重新配对。": "Wait for the current task to finish before pairing again.",
+    "请先保存并连接新后端，再生成配对码。": "Save and connect to the new backend before generating a pairing code.",
+    "配对成功，但浏览器无法记住本机路径。": "Pairing succeeded, but the browser could not save the local paths.",
+    "任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。": "Task restored. Send the configuration instruction again to apply it to the current settings.",
+    "在本机项目文件夹的 PowerShell 中运行以下命令。": "Run these commands in PowerShell from your local project folder.",
+    "程序提示时输入以下配对码。": "Enter this pairing code when prompted.",
+    "请保管配对码，重启连接器时复用。": "Keep the pairing code for reconnecting after a restart.",
     "等待界面应用操作": "Waiting for the interface to apply the action",
     "界面处理结果": "Interface action result",
     "界面操作失败": "Interface action failed",

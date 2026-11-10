@@ -8,6 +8,9 @@ window.BuckHarness = (()=>{
     catch{try{localStorage.removeItem(storageKey);}catch{/* Backend latest-task lookup remains available. */}}
   }
   const status=text=>{document.getElementById('agent-status').textContent=text;};
+  function replyText(response, text) {
+    return [text, response?.plecs_manual_help].filter(Boolean).join('\n\n');
+  }
   function showOutcome(text,label){
     status(tr(label));
     window.BuckMarkdown.render(document.getElementById('agent-preview'),text);
@@ -60,7 +63,7 @@ window.BuckHarness = (()=>{
           // Old result events belong to previous attempts after a resume.
           result=item.data.result;
           status(({completed:'任务已完成',failed:'任务未完成，可查看已保存证据',interrupted:'任务已中断，可恢复',cancelled:'任务已停止，可恢复。'})[item.data.state]||item.data.state);
-          window.BuckMarkdown.render(document.getElementById('agent-preview'),result?.ui_action?'':result?.answer||result?.provider_error||'');
+          window.BuckMarkdown.render(document.getElementById('agent-preview'),result?.ui_action?'':replyText(result,result?.answer||result?.provider_error));
           if(result?.ui_action)status(tr('等待界面应用操作'));
           if(item.data.state==='completed')rememberTask(null,storageKey);
           if(['cancelled','interrupted'].includes(item.data.state))throw taskError(item.data.state,id);
@@ -102,7 +105,8 @@ window.BuckHarness = (()=>{
     }
     if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
       const response=await follow(latest.id);
-      const text=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
+      const reply=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
+      const text=replyText(response,response.ui_action?tr(reply):reply);
       if(response.ui_action)showOutcome(text,'界面操作未重新执行');
       const mode=['provider_error','validation_error'].includes(response.mode)?'请求未完成':'Harness 恢复';
       const article=message('assistant',text,mode);decorateResponse(article,response);
@@ -122,15 +126,27 @@ window.BuckHarness = (()=>{
     };
     document.getElementById('agent-cancel').onclick=async()=>{try{if(state.agentTask){await api(`/api/agent/tasks/${state.agentTask}/cancel`,{method:'POST'});status('正在停止任务…');}}catch(error){status(error.message);}};
     document.getElementById('agent-resume').onclick=()=>recover().catch(error=>status(error.message));
-    document.getElementById('bridge-pair').onclick=async()=>{
+    document.getElementById('bridge-pair').onclick=async event=>{
+      const button=event.currentTarget;
+      const address=base, owner=sessionId;
+      button.disabled=true;
       try{
         if(historyLocked())throw new Error('请等待当前任务结束后重新配对。');
         if(new URL(document.getElementById('api-url').value.trim()).toString().replace(/\/$/,'')!==base.replace(/\/$/,''))throw new Error('请先保存并连接新后端，再生成配对码。');
         const config=readPlecsSettings();
         const result=await api('/api/bridge/pair',{method:'POST',body:config});
-        document.getElementById('bridge-instructions').textContent=`在本机项目文件夹运行：\n.venv\\Scripts\\python.exe -m backend.plecs_companion --server "${base}" --owner "${result.owner}"\n程序提示时粘贴配对码：\n${result.token}\n妥善保存此配对码，重启连接器时复用；不要分享。`;
-        try{localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(config));}catch{document.getElementById('settings-status').textContent='配对成功，但浏览器无法记住本机路径。';}
-      }catch(error){document.getElementById('settings-status').textContent=error.message;}
+        if (base!==address || sessionId!==owner || document.getElementById('api-url').value.trim().replace(/\/$/,'')!==address.replace(/\/$/,'')) return;
+        const urlLiteral=new URL(address).href.replace(/\/$/,'').replaceAll("'", "''");
+        // Older servers return only owner and token. Use the current, validated session ID.
+        const command=result.command || `& '.\\.venv\\Scripts\\python.exe' -m backend.plecs_companion --server $server --owner '${owner}'`;
+        ui(document.getElementById('bridge-instructions'),[
+          '在本机项目文件夹的 PowerShell 中运行以下命令。',
+          `$server = '${urlLiteral}'`, command, '程序提示时输入以下配对码。', result.token,
+          '请保管配对码，重启连接器时复用。'
+        ].join('\n'));
+        try{localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(config));}catch{ui(document.getElementById('settings-status'),'配对成功，但浏览器无法记住本机路径。');}
+      }catch(error){ui(document.getElementById('settings-status'),error.message);}
+      finally{button.disabled=false;}
     };
     document.getElementById('bridge-check').onclick=async()=>{
       const target=document.getElementById('api-url').value.trim().replace(/\/$/,'');
@@ -145,6 +161,6 @@ window.BuckHarness = (()=>{
       }catch(error){output.textContent=error.message;}
     };
   }
-  function reset(){state.agentTask=null;document.getElementById('bridge-instructions').textContent='';document.getElementById('agent-progress').open=false;document.getElementById('agent-preview').textContent='';document.getElementById('agent-instruction').value='';status('Agent 任务进度与恢复');}
-  return {request,recover,bind,reset,taskNotice,showOutcome};
+  function reset(){state.agentTask=null;ui(document.getElementById('bridge-instructions'),'');document.getElementById('agent-progress').open=false;document.getElementById('agent-preview').textContent='';document.getElementById('agent-instruction').value='';status('Agent 任务进度与恢复');}
+  return {request,recover,bind,reset,taskNotice,showOutcome,replyText};
 })();

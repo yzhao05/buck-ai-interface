@@ -126,18 +126,16 @@ def ensure_running(owner):
     if not state['executable']:
         return {'status':'unconfigured','error':'请在连接设置中填写本机 PLECS.exe 路径。'}
     with LOCK:
-        if PROCESS is None or PROCESS.poll() is not None:
-            info = subprocess.STARTUPINFO() if os.name == 'nt' else None
-            if info:
-                info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                info.wShowWindow = 0
-            PROCESS = subprocess.Popen([state['executable']], shell=False, startupinfo=info,
+        started = PROCESS is None or PROCESS.poll() is not None
+        if started:
+            # PLECS is interactive: its license dialog and RPC preferences must be visible.
+            PROCESS = subprocess.Popen([state['executable']], shell=False,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(40):
         if listening():
-            return {'status':'ready','port':1080,'started':True}
+            return {'status':'ready','port':1080,'started':started}
         time.sleep(.5)
-    return {'status':'unavailable','error':'已启动 PLECS，但 1080 未就绪。请检查许可窗口及 Preferences 中的 RPC 开关与端口。'}
+    return {'status':'unavailable','started':started,'error':'PLECS RPC 1080 未就绪。请检查程序、许可窗口及 Preferences 中的 RPC 开关与端口。'}
 
 
 def read_model(path):

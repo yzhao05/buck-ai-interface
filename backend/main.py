@@ -25,6 +25,7 @@ from .diagnostic_controls import compatible, run_controls
 from . import chat
 from . import plecs_local
 from . import plecs_bridge, plecs_execution
+from .plecs_help import companion_command, connection_outcome, manual_help
 from . import simulation_analysis
 from . import agent_tasks, harness_runtime
 from pydantic import BaseModel, Field
@@ -365,7 +366,7 @@ class PlecsSettings(BaseModel):
 @app.post('/api/bridge/pair')
 def pair_bridge(body: PlecsSettings | None = None, owner: str = Depends(session)):
     throttle(owner, 'bridge-pair', 3)
-    return plecs_bridge.pair(owner,body.model_dump() if body else None)
+    return {**plecs_bridge.pair(owner,body.model_dump() if body else None), "command":companion_command(owner)}
 
 
 @app.get('/api/bridge/status')
@@ -392,10 +393,7 @@ def bridge_claim(owner: str = Depends(session), x_bridge_token: str = Header(...
 @app.post('/api/bridge/heartbeat')
 def bridge_heartbeat(owner: str = Depends(session), x_bridge_token: str = Header(...)):
     try:
-        plecs_bridge.authenticate(owner, x_bridge_token)
-        with plecs_bridge.database() as db:
-            db.execute('UPDATE peers SET seen=? WHERE owner=?', (time.time(), owner))
-        return {'status':'online'}
+        return plecs_bridge.heartbeat(owner,x_bridge_token)
     except ValueError:
         raise HTTPException(401, 'Invalid bridge credential')
 
@@ -407,11 +405,9 @@ class BridgeResult(BaseModel):
 @app.post('/api/bridge/complete/{identifier}')
 def bridge_complete(identifier: str, body: BridgeResult, owner: str = Depends(session), x_bridge_token: str = Header(...)):
     try:
-        plecs_bridge.authenticate(owner, x_bridge_token)
-    except ValueError:
-        raise HTTPException(401, 'Invalid bridge credential')
-    try:
         return plecs_bridge.complete(owner, x_bridge_token, identifier, body.result)
+    except plecs_bridge.InvalidCredential:
+        raise HTTPException(401, 'Invalid bridge credential')
     except ValueError as exc:
         raise HTTPException(409, str(exc))
 
@@ -474,6 +470,7 @@ async def run_chat(body, *, owner, host, origin):
     throttle(owner, "chat", 10)
     control_cache = None
     model_context = json.dumps([body.dataset_id, body.result_id if body.saved_result else None, body.circuit_filename], ensure_ascii=False)
+    pending_help = {}
     def uses_bridge():
         if not hosted() and host in {'127.0.0.1','::1','testclient'}:
             if plecs_local.settings(owner).get('direct_access'):
@@ -523,14 +520,24 @@ async def run_chat(body, *, owner, host, origin):
                 payload = {'tool':name,'arguments':arguments or {},'context':model_context,
                            'result_id':body.result_id,'fit_options':body.options.model_dump()}
                 remote = uses_bridge()
-                if remote:
-                    settings = plecs_bridge.settings(owner)
-                    payload['settings'] = settings
-                    output = await plecs_bridge.dispatch(owner,payload)
-                else:
-                    check_local_plecs_access(host, origin)
-                    settings = plecs_local.settings(owner)
-                    output = await run_in_threadpool(plecs_execution.execute,owner,payload)
+                settings = {}
+                if not remote and not local_files:
+                    if hosted() or host not in {'127.0.0.1','::1','testclient'}:
+                        output = {'status':'unconfigured','error_code':'bridge_unpaired',
+                                  'error':'云端尚未配对本机连接器。请在当前会话的连接设置中生成配对码。'}
+                        return connection_outcome(name,output,pending_help)
+                    check_local_plecs_access(host,origin)
+                try:
+                    if remote:
+                        settings = plecs_bridge.settings(owner)
+                        payload['settings'] = settings
+                        output = await plecs_bridge.dispatch(owner,payload)
+                    else:
+                        settings = plecs_local.settings(owner)
+                        output = await run_in_threadpool(plecs_execution.execute,owner,payload)
+                except (ValueError,OSError) as exc:
+                    output = {'status':'failed','error':str(exc)}
+                output = connection_outcome(name,output,pending_help,settings.get('executable',''))
                 if name == 'run_plecs_experiment':
                     output = simulation_analysis.ingest(owner,output,body.options,settings.get('analysis_binding'),await invoke('get_identification_result'))
                 return output
@@ -617,7 +624,15 @@ async def run_chat(body, *, owner, host, origin):
         local_files = True
     except HTTPException:
         local_files = False
-    return await chat.answer(body, invoke, local_files=local_files)
+    response = await chat.answer(body, invoke, local_files=local_files)
+    if pending_help:
+        kind,executable = pending_help.get('connection') or pending_help['model']
+        help_text = manual_help(kind,body.language,executable=executable,owner=owner)
+        if response.get('ui_action') or response.get('mode') == 'provider_error':
+            response['plecs_manual_help'] = help_text
+        else:
+            response['answer'] = (response.get('answer','') + '\n\n' + help_text).strip()
+    return response
 
 
 @app.post('/api/agent/tasks')

@@ -261,6 +261,7 @@ async def _answer(request, invoke, *, local_files=False):
     if request.ui_context and not result_scoped:
         messages[0]['content'] += "\n配置工具语义说明（按需选择工具，无需每轮调用）：\n" + CONFIG_PROMPT + "\n" + PLAN_PROMPT
     ui_action = None
+    messages[0]['content'] += '\nPLECS 工具返回 manual_recovery 时，说明实际失败原因或状态未知，并指出用户可在本机 PowerShell 手动连接。系统会在最终回答附上对应命令，不要重复生成脚本、猜测地址或索要配对码。模型文件错误和 RPC 连接故障要分别说明。'
     local_candidates = {}
     if 'search_local_csv' in allowed_tools:
         messages[0]['content'] += '\n本地文件搜索由你规划。search_local_csv 支持浏览、关键词和分页；文件名只是候选证据，结合用户指令、相对路径和上下文判断。零命中可换词或浏览，不要据一次查询断定文件不存在。用户要求加载且能确定文件时，用本次搜索返回的 ID 提交导入，不必要求手动上传。证据不足时询问；仅加载不启动辨识。界面确认前只能说明已提交。'

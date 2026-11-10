@@ -97,6 +97,11 @@ def test_repair_revokes_uncertain_jobs(tmp_path, monkeypatch):
         db.execute('INSERT INTO work VALUES (?,?,?,?,?,?,?,?)',
                    (identifier, owner, 'once', 'uncertain', '{}', None, time.time(), time.time()))
     new = plecs_bridge.pair(owner)
+    with pytest.raises(plecs_bridge.InvalidCredential):
+        plecs_bridge.heartbeat(owner,old['token'])
+    with pytest.raises(plecs_bridge.InvalidCredential):
+        plecs_bridge.claim(owner,old['token'])
+    assert not plecs_bridge.status(owner)['online']
     with pytest.raises(ValueError, match='credential'):
         plecs_bridge.complete(owner, old['token'], identifier, {})
     with pytest.raises(ValueError, match='no longer accepts'):

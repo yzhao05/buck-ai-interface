@@ -77,3 +77,67 @@ def test_folder_paging_selection_and_open(tmp_path,monkeypatch,mode,remote):
 @pytest.mark.parametrize('offset,limit', [(-1,30),(False,30),(0,0),(0,101),(0,True)])
 def test_invalid_pagination_is_rejected(offset,limit):
     with pytest.raises(ValueError):plecs_local.search_models('unused',[],offset,limit)
+
+
+def test_second_connector_cannot_mark_live_receipts_interrupted(tmp_path):
+    from backend.plecs_companion import exclusive_connector
+    with exclusive_connector(tmp_path):
+        with pytest.raises(SystemExit,match='running connector'):
+            with exclusive_connector(tmp_path):
+                pytest.fail('Two connectors own the same outbox')
+    with exclusive_connector(tmp_path):
+        assert (tmp_path/'connector.lock').is_file()
+
+
+@pytest.mark.parametrize('case', ['local','unpaired','offline','probe','model','provider_failure','recovered'])
+def test_chat_includes_copyable_manual_connection_after_failure(tmp_path,monkeypatch,case):
+    cloud = case in {'unpaired','offline'}
+    monkeypatch.setenv('APP_ENV','production' if cloud else 'development')
+    monkeypatch.delenv('RENDER',raising=False)
+    monkeypatch.setenv('DEEPSEEK_API_KEY','test')
+    monkeypatch.setattr(main,'TOKEN','')
+    monkeypatch.setattr(plecs_bridge,'ROOT',tmp_path/'bridge')
+    monkeypatch.setattr(plecs_local,'ROOT',tmp_path/'local')
+    owner = uuid.uuid4().hex.upper()  # A valid, noncanonical session ID must survive copying verbatim.
+    peer = plecs_bridge.pair(owner) if case == 'offline' else None
+    path = r"C:\Buck Lab\O'Brien\PLECS.exe"
+    plecs_local.save(owner,{'direct_access':True,'executable':path,'profiles':{}})
+    monkeypatch.setattr(plecs_local,'ensure_running',lambda _: {'status':'unavailable','error':'RPC unavailable'})
+    monkeypatch.setattr(plecs_local,'listening',lambda:False)
+    async def agent(messages,tools,invoke,budget):
+        tool = {'probe':'check_plecs_connection','model':'open_plecs_model'}.get(case,'connect_plecs')
+        first = await invoke(tool,{'model':'missing'} if case=='model' else {})
+        assert first['manual_recovery'] == {'unpaired':'pair','offline':'bridge','probe':'probe','model':'probe'}.get(case,'launch')
+        if case == 'local':
+            assert (await invoke('check_plecs_connection',{}))['manual_recovery']=='launch'
+        if case == 'recovered':
+            monkeypatch.setattr(plecs_local,'ensure_running',lambda _: {'status':'ready'})
+            assert (await invoke('connect_plecs',{}))['status']=='ready'
+        if case == 'provider_failure':
+            raise ValueError('Provider failed after a connection tool')
+        return 'Tool result reviewed.'
+    monkeypatch.setattr(harness_runtime,'run',agent)
+    with TestClient(main.app,headers={'X-Session-ID':owner}) as client:
+        reply = client.post('/api/chat',json={'message':'打开本机 PLECS','language':'zh'}).json()
+    if case == 'provider_failure':
+        assert reply['mode']=='provider_error' and not reply['answer']
+        assert 'Start-Process' in reply['plecs_manual_help']
+        return
+    assert reply['mode']=='deepseek',reply
+    answer=reply['answer']
+    if case=='recovered':
+        assert '```powershell' not in answer
+        return
+    assert answer.count('```powershell')==1
+    if cloud:
+        assert 'backend.plecs_companion' in answer and owner in answer
+        if peer:
+            assert peer['token'] not in answer
+        else:
+            assert '生成本机连接器配对码' in answer
+    else:
+        assert 'system.listMethods' in answer
+        if case=='local':
+            assert "O''Brien" in answer and 'Start-Process' in answer
+        else:
+            assert 'Start-Process' not in answer

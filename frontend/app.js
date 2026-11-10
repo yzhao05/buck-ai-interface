@@ -965,9 +965,10 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       identification_enabled:!currentOnly && !savedResult && state.identificationOpen && Boolean(fitOptions)});
     pending.remove();
     if (response.mode === "provider_error") {
-      const article = message("assistant", response.provider_error, "请求未完成");
+      const failureText = window.BuckHarness.replyText(response,response.provider_error);
+      const article = message("assistant", failureText, "请求未完成");
       decorateResponse(article, response);
-      const failedReply = rememberMessage("assistant", response.provider_error, {
+      const failedReply = rememberMessage("assistant", failureText, {
         request_message_id:requestMessage.id, tool_calls:response.tool_calls,
         agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,diagnosis:response.diagnosis,simulation_evaluations:response.simulation_evaluations,
         control_checks:response.control_checks, retrieved_sources:response.retrieved_sources,
@@ -983,9 +984,9 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       try {response.answer=await applyIdentificationAction(response.ui_action,actionContext);}
       catch(error){response.error_code='ui_action_failed';response.answer=tr("未能应用配置操作：")+tr(error.message);}
       response.ui_action_status=response.answer;
-      window.BuckHarness.showOutcome(response.answer,response.error_code?'界面操作失败':'界面处理结果');
+      window.BuckHarness.showOutcome(window.BuckHarness.replyText(response,response.answer),response.error_code?'界面操作失败':'界面处理结果');
     }
-    const answer = response.answer;
+    const answer = window.BuckHarness.replyText(response,response.answer);
     const replyMode=response.mode === "deepseek" && !response.error_code ? "DeepSeek" : "请求未完成";
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
@@ -1315,7 +1316,7 @@ $("api-url").oninput=()=>{
   $("plecs-executable").value='';
   $("plecs-model-directory").value='';
   fillPlecsBinding(null);
-  $('bridge-instructions').textContent='';
+  ui($('bridge-instructions'),'');
   // Never carry the previous backend's credential into a different connection.
   $("access-token").value=tokenKey($("api-url").value.trim())===tokenKey(base) ? accessToken : savedToken($("api-url").value.trim());
 };

@@ -37,6 +37,7 @@ def database():
 def pair(owner, configuration=None):
     token = secrets.token_urlsafe(32)
     with database() as db:
+        db.execute('BEGIN IMMEDIATE')
         previous = db.execute('SELECT settings FROM peers WHERE owner=?', (owner,)).fetchone()
         db.execute('INSERT OR REPLACE INTO peers VALUES (?,?,?,?)',
                    (owner, hashlib.sha256(token.encode()).hexdigest(), 0,
@@ -45,12 +46,23 @@ def pair(owner, configuration=None):
     return {'owner': owner, 'token': token}
 
 
-def authenticate(owner, token):
-    with database() as db:
-        row = db.execute('SELECT * FROM peers WHERE owner=?', (owner,)).fetchone()
+class InvalidCredential(ValueError):
+    pass
+
+
+def authorized_write(db, owner, token):
+    # Serialize credential rotation with claiming, heartbeats and completion.
+    db.execute('BEGIN IMMEDIATE')
+    row = db.execute('SELECT secret FROM peers WHERE owner=?', (owner,)).fetchone()
     if not row or not hmac.compare_digest(row['secret'], hashlib.sha256(token.encode()).hexdigest()):
-        raise ValueError('Invalid bridge credential')
-    return row
+        raise InvalidCredential('Invalid bridge credential')
+
+
+def heartbeat(owner, token):
+    with database() as db:
+        authorized_write(db,owner,token)
+        db.execute('UPDATE peers SET seen=? WHERE owner=?',(time.time(),owner))
+    return {'status':'online'}
 
 
 def status(owner):
@@ -70,10 +82,9 @@ def settings(owner, value=None):
 
 
 def claim(owner, token):
-    authenticate(owner, token)
     now = time.time()
     with database() as db:
-        db.execute('BEGIN IMMEDIATE')
+        authorized_write(db,owner,token)
         db.execute('UPDATE peers SET seen=? WHERE owner=?', (now, owner))
         db.execute("UPDATE work SET state='expired' WHERE owner=? AND deadline<? AND state='queued'", (owner, now))
         db.execute("UPDATE work SET state='uncertain' WHERE owner=? AND deadline<? AND state='running'", (owner, now))
@@ -85,11 +96,11 @@ def claim(owner, token):
 
 
 def complete(owner, token, identifier, result):
-    authenticate(owner, token)
-    encoded = json.dumps(result, allow_nan=False)
-    if len(encoded.encode()) > 8*1024*1024:
-        raise ValueError('Bridge result exceeds 8 MiB')
     with database() as db:
+        authorized_write(db,owner,token)
+        encoded = json.dumps(result, allow_nan=False)
+        if len(encoded.encode()) > 8*1024*1024:
+            raise ValueError('Bridge result exceeds 8 MiB')
         row = db.execute('SELECT * FROM work WHERE id=? AND owner=?', (identifier, owner)).fetchone()
         if not row:
             raise ValueError('Unknown bridge job')
@@ -119,7 +130,7 @@ async def dispatch(owner, payload, timeout=150):
     if payload.get('tool') not in TOOLS:
         raise ValueError('Unsupported bridge operation')
     if not status(owner)['online']:
-        return {'status': 'unavailable', 'error': '本机 PLECS 连接器离线。请启动连接器并保持运行。'}
+        return {'status': 'unavailable', 'error_code':'bridge_offline', 'error': '本机 PLECS 连接器离线。请启动连接器并保持运行。'}
     identifier = uuid.uuid4().hex
     # Request ID is supplied by the durable Harness tool receipt, never the model.
     fingerprint = payload.pop('request_id', identifier)

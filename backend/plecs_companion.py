@@ -5,15 +5,38 @@ is required. Local tests may use an explicit loopback HTTP server.
 """
 import argparse
 import concurrent.futures
+from contextlib import contextmanager
 import getpass
 import hashlib
 import json
+import os
 import re
 import time
 from urllib.parse import urlparse
 import httpx
 from . import plecs_local
 from .plecs_execution import execute
+
+
+@contextmanager
+def exclusive_connector(cache):
+    """Only the process owning this outbox may recover its running receipts."""
+    with (cache / 'connector.lock').open('a+b') as handle:
+        if os.name == 'nt':
+            import msvcrt
+            if handle.tell() == 0:
+                handle.write(b'0')
+                handle.flush()
+            handle.seek(0)
+        try:
+            if os.name == 'nt':
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise SystemExit('Cannot lock the local outbox. Check whether this pairing already has a running connector.') from exc
+        yield  # Closing the descriptor releases the OS lock, including after a crash.
 
 
 def receipt_path(cache, identifier):
@@ -77,6 +100,8 @@ def main():
     parser.add_argument('--owner', required=True)
     args = parser.parse_args()
     url = urlparse(args.server)
+    if not url.hostname or url.username is not None or url.password is not None or url.query or url.fragment:
+        parser.error('Enter the backend app URL from Connection settings.')
     if url.scheme != 'https' and not (url.scheme == 'http' and url.hostname in {'localhost','127.0.0.1','::1'}):
         parser.error('Use HTTPS (HTTP is allowed only on loopback).')
     token = getpass.getpass('PLECS pairing token: ')
@@ -88,9 +113,10 @@ def main():
     cache_key = json.dumps([args.server.rstrip('/'),args.owner,token])
     cache = plecs_local.ROOT / ('companion-' + hashlib.sha256(cache_key.encode()).hexdigest()[:32])
     cache.mkdir(parents=True, exist_ok=True)
-    print('PLECS companion connected. Keep this terminal open; Ctrl+C stops polling.')
-    with httpx.Client(base_url=args.server.rstrip('/'), headers=headers, timeout=20, follow_redirects=False) as client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    print('Connecting to Buck Lab. Keep this terminal open; Ctrl+C stops polling.')
+    with exclusive_connector(cache), httpx.Client(base_url=args.server.rstrip('/'), headers=headers, timeout=20, follow_redirects=False) as client, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         pending = None
+        online = False
         while True:
             try:
                 # Re-deliver completed receipts after a network interruption;
@@ -101,10 +127,16 @@ def main():
                 flush_receipts(client,cache,pending[0] if pending else None)
                 response = client.post('/api/bridge/heartbeat' if pending else '/api/bridge/claim')
                 response.raise_for_status()
+                if not online:
+                    print('PLECS companion connected.')
+                    online = True
                 job = response.json().get('job')
                 if job:
                     pending = (job['id'], executor.submit(perform_job,args.owner,cache,job))
             except httpx.HTTPError as exc:
+                online = False
+                if isinstance(exc,httpx.HTTPStatusError) and exc.response.status_code == 401:
+                    raise SystemExit('Bridge credential rejected. Restart with the current session and its pairing code.')
                 print('Bridge connection unavailable:', type(exc).__name__)
             time.sleep(2)
 
