@@ -1,8 +1,9 @@
 """Validated UI proposals only: this module never executes a numerical job."""
+import re
 from .configuration_fields import FIELD_PROMPT, validate_structure
 from .execution_selection import SELECTION_PROMPT, require_execution_selection
 
-from .schemas import ConfigureIdentification, FitOptions, IdentificationPlanProposal
+from .schemas import ConfigureIdentification, FitOptions, IdentificationPlanProposal, PlecsPortAction
 
 PLAN_PROMPT = """当用户要求执行组合辨识时，可选择 propose_identification_plan 工具，生成两种方法的执行计划（2 次或 4 次辨识）。
 你负责理解自然语言，后端只校验结构和执行边界。两种方法固定为抗噪加权积分、PANN，按此顺序执行。
@@ -118,7 +119,7 @@ PROMPT = """当用户要求修改界面时，可选择 configure_identification 
 未要求改变的字段不要填。当前用户明确引用先前讨论的参数时可解析指代；不能自行从历史回答、图片、文件名或默认值补参数。不能把建议、举例、引用、询问方法当成操作。
 用户明确说开始、运行或执行，或明确回答此前阻止该启动请求的选择时，才可将 start_after_apply 设为 true，且必须已有PWM来源和方法选择。没有待继续启动请求时只选择方法/打开面板不启动。否定启动时必须 false。
 询问如何操作、仅分析结果、含糊的继续/好的均返回 open_panel=false, changes={}, start_after_apply=false。
-请求修改连接设置、口令等非实验字段时，整次返回空操作，不能只执行一部分后启动。
+只有 PLECS 输出通道可通过 configure_plecs_ports 单独修改。其他连接设置、口令等非实验字段不能修改，也不能只执行一部分后启动。
 不能自行推断电路已确认；可以记录用户明确作出的确认。不写代码，不宣称已执行。当前配置仅用于理解请求，不是待照抄的 changes。
 """ + FIELD_PROMPT + SELECTION_PROMPT
 
@@ -127,6 +128,53 @@ CANCEL_TOOL = {'type':'function','function':{
     'name':'cancel_pending_identification',
     'description':'取消等待确认的辨识启动和未提交的计划步骤；不会终止已经提交的数值任务。用户要求停止后续辨识时选择，引用或举例不是执行指令。',
     'parameters':{'type':'object','properties':{},'additionalProperties':False}}}
+
+PORT_TOOL = {'type':'function','function':{
+    'name':'configure_plecs_ports',
+    'description':'仅当用户明确要求写入连接设置时使用。instruction_quote 引用当前用户的修改指令；仅填写指定的 changes。source=user 表示用户明确给定通道号，pwm_port=null 可清空 PWM。source=model 必须先用 get_plecs_models 读取本轮选定模型的 output_ports，只用有唯一 role 且 channel 已知的回传通道号。只问或读图时不修改，不确认电路或工况。',
+    'parameters':PlecsPortAction.model_json_schema()}}
+
+
+def port_action(request, arguments, catalog):
+    action = PlecsPortAction.model_validate(arguments)
+    context = request.ui_context.plecs_ports
+    changes = action.changes.model_dump(exclude_unset=True)
+    model = action.model_name
+    if not context or not changes or action.instruction_quote.strip() not in request.message or not action.instruction_quote.strip():
+        raise ValueError('An explicit port update in the current request is required.')
+    if '/' in model or '\\' in model or not model.casefold().endswith('.plecs'):
+        raise ValueError('Provide the .plecs filename without a path.')
+    if context.model_name and context.model_name.casefold().removesuffix('.plecs') != model[:-6].casefold():
+        raise ValueError('The saved binding belongs to another model. Select the target model in Connection settings first.')
+    registered = [p for p in catalog.values() if (p.get('description') or '').casefold() == model[:-6].casefold()]
+    rows = (registered[0].get('output_ports') or []) if len(registered) == 1 else []
+    evidence = {}
+    if not context.model_name and not registered and model.casefold() not in request.message.casefold():
+        raise ValueError('Select the model or specify its filename first.')
+    port_instruction = re.sub(re.escape(model), '', action.instruction_quote, flags=re.I)
+    user_message = re.sub(re.escape(model), '', request.message, flags=re.I)
+    for key, value in changes.items():
+        if value is None and key != 'pwm_port':
+            raise ValueError('Only the optional PWM channel can be cleared.')
+        if action.source == 'model':
+            matches = [row for row in rows if row.get('role') == key]
+            if value is None or len(matches) != 1 or matches[0].get('channel') != value:
+                raise ValueError('No unique verified output channel for ' + key)
+            evidence[key] = matches[0]
+        elif value is None and not re.search(r'pwm|开关', port_instruction, re.I):
+            raise ValueError('Specify PWM explicitly to clear its binding.')
+        elif value is not None:
+            number = rf'(?<![\dA-Za-z.+-])(?:(?:ch(?:annel)?|port|output)[_ -]?)?{value}(?![\dA-Za-z]|\.\d)'
+            if not re.search(number, port_instruction, re.I) or not re.search(number, user_message, re.I):
+                raise ValueError('Quote the port number explicitly supplied by the user.')
+    merged = {**context.model_dump(exclude={'model_name'}), **changes}
+    assigned = [n for n in merged.values() if n is not None]
+    if len(set(assigned)) != len(assigned):
+        raise ValueError('Assign distinct channels to current, voltage and PWM.')
+    proposal = {'id':request.ui_context.request_id, 'type':'configure_plecs_ports', 'model_name':model, 'changes':changes, 'evidence':evidence}
+    if evidence and registered[0].get('source_sha256'):
+        proposal['source_sha256'] = registered[0]['source_sha256']
+    return proposal
 
 
 def agent_action(request, name, arguments):

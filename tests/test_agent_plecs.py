@@ -149,14 +149,16 @@ def test_settings_search_experiment_chat_flow(tmp_path,monkeypatch):
     owner=str(uuid.uuid4());client=TestClient(main.app);client.headers['X-Session-ID']=owner
     assert client.post('/api/plecs/settings',json={'executable':str(exe),'model_directory':str(root)}).status_code==200
     monkeypatch.setattr(plecs_local,'ensure_running',lambda owner:{'status':'ready'})
-    def simulate(args,who,result_id):
+    def simulate(args,who,result_id,*,include_profile):
+        assert include_profile
         assert who==owner and args['model'] in plecs_local.settings(who)['profiles']
         identifier='agent_'+'a'*32
         folder=tmp_path/'runtime/plecs'/__import__('hashlib').sha256(owner.encode()).hexdigest()[:20]/identifier
         folder.mkdir(parents=True)
         for i in range(2):
             (folder/f'case_{i}.csv').write_text('time_s,output_1\n'+''.join(f'{j*1e-6},1\n' for j in range(200)))
-        return {'status':'completed','experiment_id':identifier,'source_result_id':result_id,'cases':[{},{}]}
+        return {'status':'completed','experiment_id':identifier,'source_result_id':result_id,'cases':[{},{}],
+                '_profile':plecs_local.settings(who)['profiles'][args['model']]}
     monkeypatch.setattr(rpc,'ROOT',tmp_path)
     monkeypatch.setattr(main.simulation_analysis,'ROOT',tmp_path/'analysis')
     monkeypatch.setattr(rpc,'experiment',simulate)

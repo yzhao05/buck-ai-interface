@@ -12,24 +12,35 @@ import subprocess
 import io
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field, ValidationError, model_validator
 from .data import read_csv
-from .schemas import Mapping, FitOptions
+from .schemas import Mapping, FitOptions, PlecsPorts
 from .identification import identify
 
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'simulation_analysis'
 
 
-class Binding(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+class Binding(PlecsPorts):
     model_name: str = Field(min_length=1,max_length=200)
-    current_port: int = Field(ge=1,le=64)
-    voltage_port: int = Field(ge=1,le=64)
-    pwm_port: int | None = Field(default=None,ge=1,le=64)
-    L_parameter: str = Field(min_length=1,max_length=200)
-    C_parameter: str = Field(min_length=1,max_length=200)
+    source_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+    L_parameter: str = Field(default='',max_length=200)
+    C_parameter: str = Field(default='',max_length=200)
     confirmed: bool = False
     same_circuit_and_conditions: bool = False
+
+    @model_validator(mode='after')
+    def check_confirmed_binding(self):
+        if self.confirmed and not all((self.current_port, self.voltage_port, self.L_parameter.strip(), self.C_parameter.strip())):
+            raise ValueError('Complete both measurement ports and L/C parameter keys before confirming.')
+        channels = [n for n in (self.current_port, self.voltage_port, self.pwm_port) if n is not None]
+        if self.confirmed and len(set(channels)) != len(channels):
+            raise ValueError('Current, voltage and PWM require different output ports')
+        return self
+
+    def matches_model(self, snapshot):
+        description = snapshot['profile'].get('description') or ''
+        return (self.model_name.casefold().removesuffix('.plecs') == description.casefold()
+                and (self.source_sha256 is None or self.source_sha256 == snapshot['report'].get('source_sha256')))
 
 
 def directory(owner, identifier):
@@ -54,8 +65,8 @@ def confirm_binding(owner, identifier, result_id, value):
     if not value or not value.get('confirmed'):
         return
     binding = Binding.model_validate(value)
-    if Path(binding.model_name).stem != snapshot['profile'].get('description'):
-        raise ValueError('Confirmed output binding belongs to a different simulation model')
+    if not binding.matches_model(snapshot):
+        raise ValueError('Confirmed output binding belongs to a different simulation model or revision')
     temporary = folder/'binding.tmp'
     temporary.write_text(binding.model_dump_json(),encoding='utf-8')
     temporary.replace(folder/'binding.json')
@@ -67,6 +78,20 @@ def saved_evaluation(owner, identifier, result_id):
     if cached.exists():
         return {**json.loads(cached.read_text(encoding='utf-8')),'cached':True}
     return {'status':'uncertain','error':'No completed evaluation was saved; the interrupted calculation has not been repeated.'}
+
+
+def evaluation_available(folder, snapshot):
+    if (folder/'evaluation.json').exists():
+        return True
+    annotation = folder/'binding.json'
+    value = json.loads(annotation.read_text(encoding='utf-8')) if annotation.exists() else snapshot.get('binding')
+    if not value:
+        return False
+    try:
+        binding = Binding.model_validate(value)
+    except ValidationError:
+        return False
+    return binding.confirmed and binding.matches_model(snapshot)
 
 
 def ingest(owner, report, options, binding, source_result):
@@ -82,7 +107,7 @@ def ingest(owner, report, options, binding, source_result):
     if (folder/'source.json').exists():
         stored = json.loads((folder/'source.json').read_text(encoding='utf-8'))
         return {**stored['report'],'artifacts_received':len(stored['report']['cases']),
-                'evaluation_available':bool(stored.get('binding',{}).get('confirmed')) if stored.get('binding') else False,'cached':True}
+                'evaluation_available':evaluation_available(folder,stored),'cached':True}
     for i, raw in enumerate(artifacts):
         if not isinstance(raw,str) or len(raw.encode())>2*1024*1024:
             raise ValueError('Invalid simulation artifact')
@@ -95,7 +120,7 @@ def ingest(owner, report, options, binding, source_result):
                 'profile':{k:v for k,v in profile.items() if k!='path'},
                 'source_result':source_result}
     (folder/'source.json').write_text(json.dumps(snapshot,allow_nan=False),encoding='utf-8')
-    return {**report,'artifacts_received':len(artifacts),'evaluation_available':bool(binding and binding.get('confirmed')),
+    return {**report,'artifacts_received':len(artifacts),'evaluation_available':evaluation_available(folder,snapshot),
             'scope':'已接回仿真 CSV。调用 evaluate_plecs_experiment 可按用户原方法重新辨识；仿真效应不直接证明实测物理原因。'}
 
 
@@ -107,11 +132,9 @@ def evaluate(owner, identifier, source_result_id, seconds=150):
         return {**json.loads(cached.read_text(encoding='utf-8')),'cached':True}
     annotation = folder/'binding.json'
     binding = Binding.model_validate(json.loads(annotation.read_text(encoding='utf-8')) if annotation.exists() else snapshot.get('binding') or {})
-    if not binding.confirmed or Path(binding.model_name).stem != profile.get('description'):
+    if not binding.confirmed or not binding.matches_model(snapshot):
         raise ValueError('请在连接设置确认此模型的输出端口和 L/C 元件绑定；不能猜测端口。')
     ports = [binding.current_port,binding.voltage_port]+([binding.pwm_port] if binding.pwm_port else [])
-    if len(set(ports)) != len(ports):
-        raise ValueError('Current, voltage and PWM require different output ports')
     parameters = profile['parameters']
     truth_keys = {'L_H':binding.L_parameter,'C_F':binding.C_parameter}
     for unit,key in truth_keys.items():

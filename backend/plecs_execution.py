@@ -32,11 +32,10 @@ def execute(owner, payload):
     if name == 'open_plecs_model':
         return plecs_diagnostics.open_model(owner, args.get('model'))
     if name == 'run_plecs_experiment':
-        report = plecs_diagnostics.experiment(args, owner, payload.get('result_id'))
+        report = plecs_diagnostics.experiment(args, owner, payload.get('result_id'), include_profile=True)
         if report.get('status') == 'completed':
             folder = plecs_diagnostics.ROOT / 'runtime/plecs' / __import__('hashlib').sha256(owner.encode()).hexdigest()[:20] / report['experiment_id']
             # Transport only; removed before any content is sent to the model.
             report['_artifacts'] = [(folder / f'case_{i}.csv').read_text(encoding='utf-8') for i in range(len(report['cases']))]
-            report['_profile'] = plecs_diagnostics.profiles(owner)[args['model']]
         return report
     raise ValueError('Unsupported PLECS tool')

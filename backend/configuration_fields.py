@@ -47,7 +47,7 @@ def validate_structure(request, proposal, changes):
 
 
 FIELD_PROMPT = """
-支持全部实验/分析表单字段；不改连接设置、口令、回答模式。
+此工具用于实验与分析表单。连接设置中的 PLECS 输出通道由 configure_plecs_ports 单独修改。口令与回答模式只能手动设置。
 changes 可设置 vin(V)、frequency_hz(Hz)、train_fraction(0.50–0.85，每档0.05)、pwm_source(auto/measured/controller)、
 pann_initial_state(joint/measured)、pann_window_cycles(0自动/1/2/3)、controller_confirmed。
 controller 是局部补丁，仅写指定元件：R1_ohm/R2_ohm/R3_ohm/R4_ohm(Ω)、C2_F/C3_F(F)、opamp_gain、reference_V、pwm_gain、

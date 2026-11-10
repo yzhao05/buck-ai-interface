@@ -2,6 +2,16 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "请填写模型文件名、电流和电压通道及 L/C 参数键后再确认。": "Enter the model filename, current and voltage channels, and L/C parameter keys before confirming.",
+    "端口已保存在本机，配对连接器后可同步到后端。": "Ports saved locally. Pair the connector to sync them to the backend.",
+    "读取电路参数和端口": "Read circuit parameters and output channels",
+    "修改仿真输出通道": "Update simulation output channels",
+    "连接设置已变化，请重新发送端口指令。": "Connection settings changed. Send the port instruction again.",
+    "模型文件名与当前端口绑定不符。": "The model filename does not match the current port binding.",
+    "电流、电压和 PWM 需要不同的通道号。": "Assign distinct channels to current, voltage and PWM.",
+    "端口设置已与指令一致。": "The port settings already match your instruction.",
+    "端口设置已保存，更改后需重新核对绑定。": "Port settings saved. Review the updated binding before confirming it.",
+    "端口已保存在本机，后端同步待重试。": "Port settings saved locally. Backend synchronization is pending.",
     "关闭辨识计划卡片": "Close identification plan card",
     "正在恢复 Agent 任务…": "Recovering Agent task…",
     "Agent 任务进度与恢复": "Agent task progress and recovery",
@@ -79,7 +89,7 @@ window.BuckI18n = (() => {
     "本机 PLECS 程序路径": "Local PLECS executable", "电路模型文件夹": "Circuit model folder",
     "本机后端可直接启动 PLECS；云端后端需运行下方本机连接器。助手优先搜索模型文件夹，找不到唯一匹配时再询问。请预先启用 RPC，端口 1080。": "The local backend can start PLECS directly. For a cloud backend, run the local connector below. The assistant searches the model folder and asks you to select a model if it cannot find a unique match. Enable RPC on port 1080 first.",
     "仿真结果自动辨识绑定": "Identification settings for simulation results",
-    "按 PLECS 顶层 Output 端口顺序填写；电流单位 A、电压单位 V，PWM 为 0/1。绑定只用于仿真对照，不改左侧配置。": "Enter the PLECS top-level Output port numbers. Use amperes for current, volts for voltage and 0/1 for PWM. These settings apply to the simulation comparison.",
+    "填写仿真回传的通道号（从 1 起）。一个向量 Output 可包含多路信号。电流单位 A，电压单位 V，PWM 为 0/1。": "Use the returned simulation channel numbers, starting at 1. A vector Output can contain several signals. Use amperes for current, volts for voltage and 0/1 for PWM.",
     "模型文件名": "Model filename",
     "电流输出端口": "Current output port",
     "电压输出端口": "Voltage output port",

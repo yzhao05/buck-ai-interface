@@ -31,7 +31,7 @@ const tools = {search_conversation:"检索会话记录", read_conversation_messa
 tools.run_diagnostic_controls="运行参数与初值对照";
 tools.read_experiment_results="读取所选历史辨识结果";
 Object.assign(tools,{get_diagnostic_evidence:'读取训练与残差证据',connect_plecs:'连接或唤醒 PLECS',
-  open_plecs_model:'打开电路模型',search_plecs_models:'搜索电路模型文件夹',select_plecs_model:'选择实验电路',get_plecs_models:'读取电路参数',run_plecs_experiment:'运行 PLECS 对比实验',
+  open_plecs_model:'打开电路模型',search_plecs_models:'搜索电路模型文件夹',select_plecs_model:'选择实验电路',get_plecs_models:'读取电路参数和端口',configure_plecs_ports:'修改仿真输出通道',run_plecs_experiment:'运行 PLECS 对比实验',
   get_plecs_job_result:'接回仿真结果',evaluate_plecs_experiment:'比较仿真辨识误差',read_diagnosis:'读取诊断记录',record_diagnosis:'更新诊断证据'});
 function localPlecsConfig(){try{return JSON.parse(savedValue(`buck-plecs:${base}`)||'null');}catch{return null;}}
 function isLocalBackend(url){
@@ -49,12 +49,12 @@ function updatePlecsControls(){
   $("bridge-instructions").hidden=direct;
   ui($("bridge-check"),direct?"检查本机 PLECS 连接":"检查连接器状态");
 }
-async function syncPlecsConfig(){
-  const config=localPlecsConfig();
-  if(config){
-    if(isLocalBackend(base))await api('/api/plecs/settings',{method:'POST',body:config,timeout:5000});
-    else if((await api('/api/bridge/status')).paired)await api('/api/bridge/settings',{method:'POST',body:config,timeout:5000});
-  }
+async function syncPlecsConfig(config=localPlecsConfig()){
+  if(!config)return false;
+  const local=isLocalBackend(base);
+  if(!local && !(await api('/api/bridge/status')).paired)return false;
+  await api(local?'/api/plecs/settings':'/api/bridge/settings',{method:'POST',body:config,timeout:5000});
+  return true;
 }
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
 function toggleSection(buttonId, contentId, label, expanded) {
@@ -845,6 +845,7 @@ function validTuningInterval(changes){
 async function applyIdentificationAction(action, context) {
   const stale="会话、数据或设置已变化，本次操作未应用。请按当前界面重新发送指令。";
   if (!context || action.id!==context.request_id || configurationFingerprint()!==context.fingerprint) return tr(stale);
+  if(action.type==='configure_plecs_ports')return applyPlecsPorts(action,context);
   if(action.type==="cancel_pending_identification"){
     const key=`buck-ui-action:${sessionId}:${action.id}`;
     if(sessionStorage.getItem(key))return tr("此操作已处理，未重复应用或启动。");
@@ -976,12 +977,13 @@ async function sendMessage(value, {analysisRequest=false}={}) {
         if(validNumericInput($('pwm-filter-cycles')))draftOptions.pwm_filter_cycles=Number($('pwm-filter-cycles').value);
         draftOptions.controller=BuckCircuit.read();
         const catalog=await configurationCatalog({includeRemote:true});
-        actionContext={request_id:requestMessage.id,options:draftOptions,fingerprint:configurationFingerprint(),catalog};
+        actionContext={request_id:requestMessage.id,options:draftOptions,fingerprint:configurationFingerprint(),catalog,plecs:localPlecsConfig()};
       } catch { /* Invalid drafts remain a form validation error. */ }
     }
     try { await syncPlecsConfig(); } catch (error) { notice(error.message); }
     const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
       ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options,pwm_source_setting:$('pwm-source').value,
+        plecs_ports:actionContext.plecs ? plecsPortContext(actionContext.plecs) : null,
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
         previous_local_csv_action:isLocalBackend(base)?previousLocalCsvAction(activeConversation):null,
         pending_start:pendingConfigurationStart?.fingerprint===actionContext.fingerprint,
@@ -1348,9 +1350,12 @@ $("open-settings").onclick=async()=>{$("api-url").value=base;$("access-token").v
   fillPlecsBinding(rememberedPlecs?.analysis_binding);
   if(rememberedPlecs){$("plecs-executable").value=rememberedPlecs.executable;$("plecs-model-directory").value=rememberedPlecs.model_directory||'';}
   try{if(['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname)){
-    const selectedBase=base;const p=await api('/api/plecs/settings',{timeout:5000});
-    if(base===selectedBase && !$("plecs-executable").value)$("plecs-executable").value=p.executable || '';
-    if(base===selectedBase && !$("plecs-model-directory").value)$("plecs-model-directory").value=p.model_directory || '';
+    const selectedBase=base, owner=sessionId;const p=await api('/api/plecs/settings',{timeout:5000});
+    if(base!==selectedBase || sessionId!==owner || !$("settings-dialog").open || $("api-url").value!==selectedBase)return;
+    if(!$("plecs-executable").value)$("plecs-executable").value=p.executable || '';
+    if(!$("plecs-model-directory").value)$("plecs-model-directory").value=p.model_directory || '';
+    if(!rememberedPlecs && p.analysis_binding && !Array.from($('plecs-binding-model').closest('details').querySelectorAll('input'))
+      .some(input=>input.type==='checkbox'?input.checked:Boolean(input.value)))fillPlecsBinding(p.analysis_binding);
   }}catch{/* PLECS configuration is optional. */}
 };
 $("sync-now").onclick=()=>void synchronizeArchive();
@@ -1404,8 +1409,8 @@ $("settings-form").onsubmit=async event=>{
     if(backendChanged || codeChanged){state.connected=false;resetExperiment();await initializeHistory();}
     if(await connect()){
       const plecsConfig=readPlecsSettings();
+      await syncPlecsConfig(plecsConfig);
       localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(plecsConfig));
-      await syncPlecsConfig();
       await synchronizeArchive({preferRemote:true});
       if(!state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
       scheduleArchiveSync();
@@ -1435,19 +1440,78 @@ controls();void (async()=>{await initializeHistory();if(await connect()){
   scheduleArchiveSync();
 }})();
 
+function plecsPortContext(config){
+  const b=config.analysis_binding || {};
+  return {model_name:b.model_name || '',current_port:b.current_port ?? null,voltage_port:b.voltage_port ?? null,pwm_port:b.pwm_port ?? null};
+}
+async function applyPlecsPorts(action,context){
+  const saved=localPlecsConfig();
+  if(!saved || JSON.stringify(saved)!==JSON.stringify(context.plecs))throw new Error('连接设置已变化，请重新发送端口指令。');
+  if($('settings-dialog').open){
+    const draft=readPlecsSettings();
+    const keys=['model_name','current_port','voltage_port','pwm_port','L_parameter','C_parameter','confirmed','same_circuit_and_conditions'];
+    if(draft.model_directory!==(saved.model_directory || '') || draft.executable!==(saved.executable || '') ||
+       keys.some(key=>(draft.analysis_binding?.[key] ?? '')!==(saved.analysis_binding?.[key] ?? ''))){
+      throw new Error('连接设置已变化，请重新发送端口指令。');
+    }
+  }
+  const old=plecsPortContext(saved);
+  const model=action.model_name;
+  if(typeof model!=='string' || !/^[^/\\\r\n]+\.plecs$/i.test(model) ||
+     (old.model_name && old.model_name.toLowerCase().replace(/\.plecs$/,'')!==model.toLowerCase().slice(0,-6)))throw new Error('模型文件名与当前端口绑定不符。');
+  const changes=Object.entries(action.changes || {});
+  for(const [key,value] of changes){
+    if(!['current_port','voltage_port','pwm_port'].includes(key) ||
+       !(key==='pwm_port' && value===null) && !(Number.isInteger(value) && value>=1 && value<=64))throw new Error('配置操作格式无效。');
+  }
+  if(!changes.length)throw new Error('配置操作格式无效。');
+  const binding={...old,...saved.analysis_binding,...action.changes,model_name:old.model_name || model};
+  if(action.source_sha256){
+    if(!/^[0-9a-f]{64}$/.test(action.source_sha256))throw new Error('配置操作格式无效。');
+    binding.source_sha256=action.source_sha256;
+  }
+  const channels=[binding.current_port,binding.voltage_port,binding.pwm_port].filter(n=>n!=null);
+  if(new Set(channels).size!==channels.length)throw new Error('电流、电压和 PWM 需要不同的通道号。');
+  let status=tr('端口设置已与指令一致。');
+  if(!old.model_name || binding.source_sha256!==saved.analysis_binding?.source_sha256 || changes.some(([key,value])=>old[key]!==value)){
+    binding.confirmed=false;
+    binding.same_circuit_and_conditions=false;
+    localStorage.setItem(`buck-plecs:${base}`,JSON.stringify({...saved,analysis_binding:binding}));
+    fillPlecsBinding(binding);
+    status=tr('端口设置已保存，更改后需重新核对绑定。');
+    try{
+      if(!await syncPlecsConfig())status=tr('端口已保存在本机，配对连接器后可同步到后端。');
+    }catch{status=tr('端口已保存在本机，后端同步待重试。');}
+  }
+  const labels={current_port:'电流输出端口',voltage_port:'电压输出端口',pwm_port:'PWM 输出端口（可留空）'};
+  const lines=changes.map(([key,value])=>{
+    const row=action.evidence?.[key];
+    const trace=Array.isArray(row?.path) ? [...row.path,row.component].filter(Boolean).join(' ← ') : '';
+    return tr(labels[key])+' = '+(value ?? '—')+(trace?' ('+trace+')':'');
+  });
+  return status+' '+binding.model_name+'\n\n'+lines.join('\n\n');
+}
 function readPlecsSettings(){
   const model=$('plecs-binding-model').value.trim();
-  return {executable:$('plecs-executable').value.trim(),model_directory:$('plecs-model-directory').value.trim(),
-    analysis_binding:model?{model_name:model,current_port:Number($('plecs-binding-current').value),voltage_port:Number($('plecs-binding-voltage').value),
+  const binding=model?{model_name:model,source_sha256:$('plecs-binding-model').dataset.sourceSha256 || null,current_port:$('plecs-binding-current').value?Number($('plecs-binding-current').value):null,voltage_port:$('plecs-binding-voltage').value?Number($('plecs-binding-voltage').value):null,
       pwm_port:$('plecs-binding-pwm').value?Number($('plecs-binding-pwm').value):null,L_parameter:$('plecs-binding-l').value.trim(),C_parameter:$('plecs-binding-c').value.trim(),
-      confirmed:$('plecs-binding-confirmed').checked,same_circuit_and_conditions:$('plecs-binding-same').checked}:null};
+      confirmed:$('plecs-binding-confirmed').checked,same_circuit_and_conditions:$('plecs-binding-same').checked}:null;
+  if($('plecs-binding-confirmed').checked){
+    if(!binding?.current_port || !binding.voltage_port || !binding.L_parameter || !binding.C_parameter)
+      throw new Error('请填写模型文件名、电流和电压通道及 L/C 参数键后再确认。');
+    const ports=[binding.current_port,binding.voltage_port,binding.pwm_port].filter(n=>n!=null);
+    if(new Set(ports).size!==ports.length)throw new Error('电流、电压和 PWM 需要不同的通道号。');
+  }
+  return {executable:$('plecs-executable').value.trim(),model_directory:$('plecs-model-directory').value.trim(),analysis_binding:binding};
 }
 function fillPlecsBinding(binding){
+  $('plecs-binding-model').dataset.sourceSha256=binding?.source_sha256 || '';
   for(const [id,key] of [['model','model_name'],['current','current_port'],['voltage','voltage_port'],['pwm','pwm_port'],['l','L_parameter'],['c','C_parameter']])$('plecs-binding-'+id).value=binding?.[key]??'';
   $('plecs-binding-confirmed').checked=Boolean(binding?.confirmed);$('plecs-binding-same').checked=Boolean(binding?.same_circuit_and_conditions);
 }
 for(const id of ['plecs-model-directory','plecs-binding-model','plecs-binding-current','plecs-binding-voltage','plecs-binding-pwm','plecs-binding-l','plecs-binding-c']){
   $(id).addEventListener('input',()=>{
+    if(id==='plecs-model-directory' || id==='plecs-binding-model')delete $('plecs-binding-model').dataset.sourceSha256;
     $('plecs-binding-confirmed').checked=false;
     $('plecs-binding-same').checked=false;
   });

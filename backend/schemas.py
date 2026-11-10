@@ -167,6 +167,23 @@ class PreviousLocalCsvAction(StrictModel):
     current_dataset: str | None = Field(default=None,max_length=255)
 
 
+class PlecsPorts(StrictModel):
+    current_port: int | None = Field(default=None, strict=True, ge=1, le=64)
+    voltage_port: int | None = Field(default=None, strict=True, ge=1, le=64)
+    pwm_port: int | None = Field(default=None, strict=True, ge=1, le=64)
+
+
+class PlecsPortContext(PlecsPorts):
+    model_name: str = Field(default='', max_length=200)
+
+
+class PlecsPortAction(StrictModel):
+    model_name: str = Field(min_length=1, max_length=200)
+    source: Literal['user', 'model']
+    instruction_quote: str = Field(min_length=1, max_length=500)
+    changes: PlecsPorts
+
+
 class IdentificationUIContext(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     # Separate from the displayed historical result's options.
@@ -178,6 +195,7 @@ class IdentificationUIContext(StrictModel):
     previous_local_csv_action: PreviousLocalCsvAction | None = None
     pending_start: bool = False
     paused_plan: bool = False
+    plecs_ports: PlecsPortContext | None = None
     pending_reference_confirmation: bool = False
 
 

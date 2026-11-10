@@ -180,7 +180,7 @@ entry('plecs-path', 'PLECS 程序路径与电路模型文件夹', 'plecs-executa
       '程序路径是本机PLECS可执行文件，用于需要时启动。模型文件夹用于递归搜索.plecs模型；本地后端也可按用户指令从该目录搜索并加载实验CSV。搜索CSV无需启动PLECS。操作模型时通过本机RPC端口1080；云端操作PLECS需本机连接器。文件名匹配不保证同电路同工况，歧义时应确认。')
 entry('plecs-binding', '仿真结果自动辨识绑定', 'plecs-binding-model plecs-binding-current plecs-binding-voltage plecs-binding-pwm plecs-binding-l plecs-binding-c plecs-binding-confirmed plecs-binding-same',
       '绑定 模型文件名 电流输出端口 电压输出端口 PWM输出端口 电感参数键 电容参数键 binding output port',
-      '模型文件名指定被绑定的PLECS模型；电流/电压端口填顶层Output顺序（从1起、最多64），单位A/V；PWM端口可空，填写时须0/1状态。电感/电容参数键如L1.L、C1.C用于元件绑定。第一确认框核对物理量、单位、元件和辨识配置，第二框确认模型与数据同电路同工况。绑定只用于仿真对照自动重辨识，不改左栏设置；不猜测端口意义。')
+      '模型文件名指定被绑定的PLECS模型；电流/电压填仿真回传通道号（从1起、最多64）。一个顶层Output可返回多路Probe信号。可让助手读取模型接线并按指令修改端口，改动后须重新确认，单位A/V；PWM端口可空，填写时须0/1状态。电感/电容参数键如L1.L、C1.C用于元件绑定。第一确认框核对物理量、单位、元件和辨识配置，第二框确认模型与数据同电路同工况。绑定只用于仿真对照自动重辨识，不改左栏设置；不猜测端口意义。')
 entry('bridge', '本机连接器配对码 / 检查连接器状态', 'bridge-pair bridge-check bridge-instructions',
       '配对码 连接器 在线 离线 bridge pairing companion',
       '本地后端直接连接PLECS，无需配对；检查本机PLECS连接会探测RPC是否就绪。使用云端后端时，先保存后端和本机路径，再生成配对码，在本机按提示运行连接器。云端的检查按钮查询连接器配对及在线状态；重新配对会撤销旧连接器凭据。连接失败后可复制聊天里的 PowerShell 命令：云端连接器在本机项目目录启动；本机 RPC 检查验证端口 1080 返回的 PLECS 方法列表。在 PLECS pairing token: 提示处输入当前会话的配对码。私有魔搭创空间若提示 ModelScope SDK token for …，核对创空间 API 域名，在本机终端输入可访问该空间的魔搭账号的 SDK 访问令牌。看到 PLECS companion connected. 后保持终端打开，再点检查连接器状态。', 'frontend/agent-harness.js')

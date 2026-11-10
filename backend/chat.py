@@ -14,7 +14,7 @@ from .plecs_diagnostics import TOOLS as PLECS_TOOLS
 import httpx
 
 from .vision import provider_message
-from .configuration import agent_action, TOOL as CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL, PROMPT as CONFIG_PROMPT, PLAN_PROMPT
+from .configuration import agent_action, port_action, PORT_TOOL, TOOL as CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL, PROMPT as CONFIG_PROMPT, PLAN_PROMPT
 from .knowledge import retrieve
 from .provider_errors import provider_failure, CitationValidationError
 from .experiment_history import summarize_experiments, repeatability_summary, ResultLibrary, READ_RESULT_TOOL
@@ -184,6 +184,8 @@ async def _answer(request, invoke, *, local_files=False):
     task_tools.append(EVALUATE_TOOL)
     if request.ui_context and not result_scoped:
         task_tools.extend([CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL])
+        if request.ui_context.plecs_ports is not None:
+            task_tools.append(PORT_TOOL)
         if local_files:
             task_tools.append(LOCAL_CSV_TOOL)
     allowed_tools = {t['function']['name'] for t in task_tools}
@@ -248,6 +250,7 @@ async def _answer(request, invoke, *, local_files=False):
     messages[0]['content'] += '\n轨迹、条件数、残差和已有对照可作为误差诊断证据，根据实际结果更新判断。只给简短证据与结论，不输出内部思考过程。PLECS 实验先读取模型目录，只有电路和工况匹配已明确时才将结果关联当前 CSV；否则先说明参考模型范围或询问用户。单因素实验不等于实测原因已确定。用户拒绝仿真时不得运行。预算不足时总结已完成证据，明确尚未执行的检查。仿真不修改界面辨识配置。'
     messages[0]['content'] += '\nPLECS 工具按副作用分开：check_plecs_connection 只检查 RPC；connect_plecs 必要时启动程序，不搜索或读取文件；search_plecs_models 只列目录名称和路径，hints 由你根据上下文提供；select_plecs_model 读取并登记指定模型；get_plecs_models 读取已登记参数目录；open_plecs_model 在 PLECS 中打开独立副本；run_plecs_experiment 才执行仿真。分别遵守用户限制，不串联未经授权的步骤。目录匹配不证明电路一致；有歧义时澄清。模型需位于已配置文件夹内，更换数据或电路后重新选择。output_1 等仅是端口顺序，未核对映射不能称为电流或电压。'
     state = harness_runtime.scope.get() or {}
+    messages[0]['content'] += '\n读取端口时，从已选模型目录 get_plecs_models 的 output_ports 引用通道、顶层 Output 和信号路径。历史目录缺此字段时重新选择模型。output_index 与回传波形 channel 可不同；无法追踪的通道说明缺失证据。用户明确要求写入端口时用 configure_plecs_ports；只核对接线不运行仿真。'
     if state.get('owner'):
         identity = [state['owner'],'result' if result_scoped else 'conversation',request.result_id,
                     request.dataset_id,request.circuit_filename,request.options.model_dump(),
@@ -287,7 +290,10 @@ async def _answer(request, invoke, *, local_files=False):
                 'check_plecs_connection','search_plecs_models',
             }:
                 raise ValueError('A UI action is pending; apply it before configuration-dependent tools or another mutation')
-            if name in {'configure_identification','propose_identification_plan','cancel_pending_identification'}:
+            if name == 'configure_plecs_ports':
+                ui_action = port_action(request, arguments, plecs_catalog)
+                output = {'status':'pending_ui','ui_action':ui_action}
+            elif name in {'configure_identification','propose_identification_plan','cancel_pending_identification'}:
                 proposal = agent_action(request, name, arguments)
                 if proposal and local_candidates:
                     selected = [proposal.get('assets',{}).get('csv_id'),proposal.get('analysis',{}).get('reference_csv_id')]

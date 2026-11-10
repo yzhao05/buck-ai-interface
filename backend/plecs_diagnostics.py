@@ -29,11 +29,33 @@ def profiles(owner=None):
 
 
 def catalog(owner=None):
-    registered = profiles(owner)
+    settings = plecs_local.settings(owner) if owner else {}
+    registered = settings['profiles'] if owner else profiles()
+    directory = settings.get('model_directory')
+    models = {}
+    for key, profile in registered.items():
+        info = {k:profile.get(k) for k in ('description','source_sha256','parameters','signals','duration_s','output_ports')}
+        info['experiment_issues'] = profile.get('experiment_issues', [])
+        if directory:
+            try:
+                path = Path(profile['path']).resolve()
+                if not path.is_relative_to(Path(directory).resolve()):
+                    raise ValueError('Model outside configured directory')
+                raw = plecs_local.read_model(path)
+                if hashlib.sha256(raw).hexdigest() != profile.get('source_sha256'):
+                    raise ValueError('Registration is stale')
+                # Recompute evidence with the running parser, including profiles
+                # cached by an older connector with different tracing rules.
+                info['output_ports'] = plecs_local.inspect_outputs(raw.decode('utf-8-sig').replace('\r\n','\n').replace('\r','\n'))
+            except (OSError, ValueError, KeyError):
+                info['output_ports'] = None
+                info['port_note'] = '无法验证已登记的模型文件；重新搜索并选择当前版本后再判断端口。'
+        elif owner:
+            info['output_ports'] = None
+            info['port_note'] = '先配置模型文件夹并选择模型，再判断端口。'
+        models[key] = info
     return {'status': 'configured' if registered else 'unconfigured',
-            'models': {key: {'description': p.get('description'), 'source_sha256':p.get('source_sha256'), 'parameters': p['parameters'],
-                             'signals': p['signals'], 'duration_s': p['duration_s'], 'experiment_issues':p.get('experiment_issues', [])}
-                       for key, p in registered.items()},
+            'models':models,
             'scope': '本地后端连接 localhost:1080；仅操作已登记电路的独立副本。参考电路不自动等于本次 CSV 电路。'}
 
 
@@ -59,7 +81,7 @@ def arrays(raw, channels):
     return t, y
 
 
-def experiment(arguments, owner, result_id=None):
+def experiment(arguments, owner, result_id=None, *, include_profile=False):
     allowed = {'model', 'parameter', 'values', 'hypothesis', 'expected_observation'}
     if not isinstance(arguments, dict) or set(arguments)-{'output_points'} != allowed:
         raise ValueError('实验需要 model、parameter、values、hypothesis、expected_observation')
@@ -153,6 +175,8 @@ def experiment(arguments, owner, result_id=None):
                   'sampling_note':'固定输出网格用于对照；未验证其足以解析开关边沿，不据此判断高频纹波或延迟。',
                   'scope': '单因素仿真干预，仅验证登记模型内的数值效应；未证明实测误差的物理原因，也未重新辨识。'}
         (directory/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        if include_profile:
+            report['_profile'] = {key:value for key,value in p.items() if key != 'path'}
         return report
     except (OSError, ValueError, KeyError, TypeError, xmlrpc.client.Error) as exc:
         return {'status': 'failed', 'error': str(exc), 'experiment_id': name,

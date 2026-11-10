@@ -1,5 +1,6 @@
 """Local-only, user-selected PLECS installation and model registration."""
 import math
+from .plecs_ports import inspect_outputs
 import http.client
 import xmlrpc.client
 import hashlib
@@ -195,7 +196,8 @@ def register(owner, filename):
     elif duration > .1:
         issues.append('TimeSpan 超过自动实验支持的 0.1 秒；未截短原时段。可打开模型，但不能直接执行此自动实验。')
     key = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:12]
-    profile = {'path':str(path.resolve()),'description':path.stem,'parameters':parameters,
+    output_ports = inspect_outputs(text)
+    profile = {'path':str(path.resolve()),'description':path.stem,'parameters':parameters,'output_ports':output_ports,
                'source_sha256':hashlib.sha256(raw).hexdigest(),
                'signals':[], 'duration_s':duration, 'experiment_issues':issues}
     state = settings(owner)
@@ -203,4 +205,5 @@ def register(owner, filename):
     state['profiles'] = {key:profile}
     save(owner,state)
     return {'status':'registered','model':key,'description':path.stem,
-            'parameters':parameters,'experiment_issues':issues,'note':'输出信号按端口顺序编号；需要核对各通道物理量。'}
+            'parameters':parameters,'output_ports':output_ports,'experiment_issues':issues,
+            'note':'output_index 是顶层 Output 编号，channel 是回传波形通道编号（从 1 开始）。channel 为空表示文件不足以确定映射。'}
