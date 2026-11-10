@@ -23,11 +23,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build the ModelScope upload package
+      - name: Prepare ModelScope build context
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p build/app build/upload
+          mkdir -p build/app
 
           git archive "$GITHUB_SHA" -- \
             backend frontend examples requirements-lock.txt \
@@ -35,8 +35,7 @@ jobs:
 
           echo 'window.BUCK_CONFIG = { apiBaseUrl: window.location.origin, studioBackend: true, sourceUrl: "https://github.com/${{ github.repository }}" };' > build/app/frontend/config.js
 
-          tar -czf build/upload/buck-lab.tar.gz -C build/app .
-          cp deploy/modelscope/Dockerfile deploy/modelscope/studio_start.py build/upload/
+          cp deploy/modelscope/{Dockerfile,studio_start.py} build/app/
 
       - name: Push deployment files to ModelScope
         shell: bash
@@ -58,14 +57,28 @@ jobs:
           SH
           chmod 700 "$GIT_ASKPASS"
 
-          git lfs install
-          git clone --depth 1 --branch master \
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch master \
             https://oauth2@www.modelscope.cn/studios/yuzhao05/buck-lab.git studio
-          cp build/upload/* studio/
           cd studio
           git config user.name "GitHub Actions"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f -- Dockerfile studio_start.py buck-lab.tar.gz
+          # Replace only application-owned paths; keep the Studio README and metadata.
+          git rm -rq --ignore-unmatch -- backend frontend examples buck-lab.tar.gz
+          cp -a ../build/app/. .
+          files=(backend frontend examples requirements-lock.txt LICENSE THIRD_PARTY_NOTICES.md Dockerfile studio_start.py)
+          git add -f -- "${files[@]}"
+
+          # Inspect Git blobs as the builder sees them, without LFS smudging.
+          snapshot=$(mktemp -d)
+          git archive "$(git write-tree)" -- "${files[@]}" | tar -x -C "$snapshot"
+          diff -qr ../build/app "$snapshot"
+          for file in requirements-lock.txt backend/main.py frontend/index.html examples/plecs_buck_case16a.csv studio_start.py Dockerfile; do
+            test -s "$snapshot/$file"
+          done
+          if grep -rIlFx 'version https://git-lfs.github.com/spec/v1' "$snapshot"; then
+            echo "Deployment contains a Git LFS pointer instead of application content." >&2
+            exit 1
+          fi
           if git diff --cached --quiet; then
             echo "魔搭文件已经是当前版本。"
             exit 0
