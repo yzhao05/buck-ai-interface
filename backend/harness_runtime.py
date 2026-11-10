@@ -378,6 +378,19 @@ async def _run(messages, tools, invoke, budget):
                     session = harness.start_session(identifier)
                 emit('status',{'text':'DeepSeek Harness 已接管工具调度'})
                 marker.touch()
+                def run_with_gateway_images():
+                    nonlocal stage
+                    stage = 'prompt_with_gateway_images'
+                    gateway.require_image_marker = True
+                    return session.run([{'type':'text','text':prompt[0]['text'] + gateway.image_marker}])
+
+                # Studio may reject inline SDK attachments before its first model
+                # call. Keep Harness orchestration and send validated pixels in
+                # the provider request without requiring native image admission.
+                if images and hosted():
+                    logging.getLogger('uvicorn.error').info(
+                        'Harness image transport: task=%s images=%d via=provider_gateway', task_id, len(images))
+                    return run_with_gateway_images()
                 stage = 'prompt'
                 try:
                     return session.run(prompt)
@@ -393,9 +406,7 @@ async def _run(messages, tools, invoke, budget):
                         'Harness image admission: task=%s stage=prompt provider_stage=not_reached '
                         'rpc_code=%s images=%d message=%s recovery=gateway_images',
                         task_id, exc.code, len(images), rpc_diagnostic(exc.message))
-                    stage = 'prompt_with_gateway_images'
-                    gateway.require_image_marker = True
-                    return session.run([{'type':'text','text':prompt[0]['text'] + gateway.image_marker}])
+                    return run_with_gateway_images()
             result = await asyncio.wait_for(asyncio.to_thread(blocking), timeout=budget.remaining())
             if gateway.error:
                 raise gateway.error

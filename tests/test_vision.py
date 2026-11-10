@@ -22,24 +22,31 @@ from conftest import REAL_RUN
 
 
 @pytest.mark.skipif(os.getenv('BUCK_LIVE_VISION_TEST') != '1', reason='requires an explicitly enabled live provider')
-@pytest.mark.parametrize('with_image', [False, True], ids=['text', 'probe-png'])
-def test_fresh_harness_turn(with_image, monkeypatch):
+@pytest.mark.parametrize('case', ['text', 'probe-png', 'studio-probe-list'])
+def test_fresh_harness_turn(case, monkeypatch):
     monkeypatch.setattr(harness_runtime, 'run', REAL_RUN)
     monkeypatch.setattr(main, 'TOKEN', '')
     expected = 'TEXT_OK'
     request = {'message': 'Reply with exactly TEXT_OK.'}
-    if with_image:
+    if case != 'text':
         expected = 'Vout_74'
-        image = Image.new('RGB', (270, 80), 'white')
-        ImageDraw.Draw(image).text((12, 12), 'Probe: ' + expected, fill='black', font=ImageFont.load_default(size=28))
+        image = Image.new('RGB', (340, 144), 'white')
+        label = 'Probe: ' + expected if case == 'probe-png' else 'Probe\n1. Vout_74\n2. IL_59'
+        ImageDraw.Draw(image).multiline_text((12, 10), label, fill='black', font=ImageFont.load_default(size=26))
         stream = io.BytesIO()
         image.save(stream, format='PNG')
         attachment = ChatImage(name='probe.png', data_url='data:image/png;base64,' + base64.b64encode(stream.getvalue()).decode())
         request = {'message':'Read the Probe signal name. Return only its name.', 'images':[attachment.model_dump()]}
+        if case == 'studio-probe-list':
+            monkeypatch.setattr(harness_runtime, 'hosted', lambda: True)
+            request['message'] = '请读出当前图片 Probe 列表里的两路信号，按顺序回答。'
+            request['history'] = [{'role':'user','content':'上一张参考图。','images':[picture()]}]
     response = TestClient(main.app).post('/api/chat', headers={'X-Session-ID': str(uuid.uuid4())}, json=request)
     response.raise_for_status()
     result = response.json()
     assert result['mode'] == 'deepseek' and expected in result['answer']
+    if case == 'studio-probe-list':
+        assert result['answer'].index(expected) < result['answer'].index('IL_59')
     assert result['agent_budget']['model_calls'] > 0
 
 
@@ -68,9 +75,11 @@ def test_studio_access_log_omits_query_token():
     assert record.getMessage() == 'client GET / 1.1 200'
 
 
-def test_image_store_error_is_logged_before_provider(tmp_path, monkeypatch, caplog):
+@pytest.mark.parametrize('hosted', [False, True])
+def test_unavailable_image_store_still_forwards_pixels(tmp_path, monkeypatch, caplog, hosted):
     home = tmp_path / 'sessions'
     monkeypatch.setattr(harness_runtime, 'ROOT', home)
+    monkeypatch.setattr(harness_runtime, 'hosted', lambda: hosted)
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'local-test-secret')
     monkeypatch.setenv('HARNESS_BASE_URL', 'http://127.0.0.1:1')
     session = uuid.uuid4().hex
@@ -91,7 +100,7 @@ def test_image_store_error_is_logged_before_provider(tmp_path, monkeypatch, capl
             asyncio.run(REAL_RUN([provider_message('user', 'private test prompt', [image])], [], None, Budget(False)))
     finally:
         harness_runtime.scope.reset(token)
-    assert 'stage=prompt provider_stage=not_reached rpc_code=' in caplog.text
+    assert ('stage=prompt provider_stage=not_reached rpc_code=' in caplog.text) == (not hosted)
     assert failure.value.response.status_code == 418
     assert sent == [{'type':'base64', 'media_type':'image/png', 'data':image['data_url'].split(',')[1]}]
     assert all(secret not in caplog.text for secret in (image['data_url'].split(',')[1], 'private test prompt', 'local-test-secret'))

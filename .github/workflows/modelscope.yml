@@ -25,6 +25,8 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      MODELSCOPE_STUDIO: yuzhao05/buck-lab
 
     steps:
       - name: Check out the GitHub commit
@@ -67,7 +69,7 @@ jobs:
             echo '::error::请在仓库 Actions Secrets 中填写有效的 MODELSCOPE_TOKEN，并去掉空格或换行。'
             exit 1
           fi
-          studio_url=https://www.modelscope.cn/studios/yuzhao05/buck-lab.git
+          studio_url="https://www.modelscope.cn/studios/${MODELSCOPE_STUDIO}.git"
           # Authenticate the initial private Git request, including on gateways
           # that reject it before Git can prompt. Do not store credentials in origin.
           basic=$(printf 'oauth2:%s' "$MODELSCOPE_TOKEN" | base64 -w0)
@@ -119,3 +121,34 @@ jobs:
             echo '::error::已读取创空间，但推送失败。若上方为权限错误，请确认令牌所属账号有该创空间的写权限。'
             exit 1
           fi
+
+      - name: Request ModelScope Studio deployment
+        shell: python
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+        run: |
+          import http.client
+          import json
+          import os
+
+          studio = os.environ["MODELSCOPE_STUDIO"]
+          connection = http.client.HTTPSConnection("modelscope.cn", timeout=60)
+          try:
+              connection.request("POST", f"/openapi/v1/studios/{studio}/deploy", headers={
+                  "Authorization": "Bearer " + os.environ["MODELSCOPE_TOKEN"],
+                  "Accept": "application/json",
+              })
+              response = connection.getresponse()
+              if response.status in (401, 403):
+                  raise SystemExit(f"HTTP {response.status}：请核对 MODELSCOPE_TOKEN 是否有该创空间的部署权限。")
+              if not 200 <= response.status < 300:
+                  raise SystemExit(f"魔搭部署请求失败（HTTP {response.status}）。")
+              try:
+                  result = json.load(response)
+              except ValueError:
+                  raise SystemExit("魔搭部署接口未返回有效 JSON。") from None
+              if not isinstance(result, dict) or result.get("success") is not True:
+                  raise SystemExit("魔搭未确认受理部署请求。请检查创空间状态后重新运行此工作流。")
+          finally:
+              connection.close()
+          print(f"魔搭已受理 {studio} 的部署请求。可在创空间构建日志中查看进度。")

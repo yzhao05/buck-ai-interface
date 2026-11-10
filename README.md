@@ -140,11 +140,12 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 
 ## 部署到魔搭创空间
 
-1. 本项目的魔搭创空间为 [yuzhao05/buck-lab](https://www.modelscope.cn/studios/yuzhao05/buck-lab)。在 GitHub 仓库的 Actions Secrets 中设置有该创空间写权限的 `MODELSCOPE_TOKEN`。
+1. 本项目的魔搭创空间为 [yuzhao05/buck-lab](https://www.modelscope.cn/studios/yuzhao05/buck-lab)。在 GitHub 仓库的 Actions Secrets 中设置有该创空间写入和部署权限的 `MODELSCOPE_TOKEN`。
    若部署日志在 `Cloning into 'studio'` 后显示 `HTTP Basic: Access denied`，请核对该魔搭账号的创空间访问权限，在 GitHub 仓库 **Settings → Secrets and variables → Actions → Secrets** 编辑 `MODELSCOPE_TOKEN`，然后重跑失败的部署作业。此令牌用于发布，Buck Lab 的 `APP_ACCESS_TOKEN` 用于工作台访问。
 2. 在创空间部署设置中添加密文变量 `APP_ACCESS_TOKEN`（至少 20 个字符）和 `DEEPSEEK_API_KEY`。前者用于登录 Buck Lab，后者用于后端请求 DeepSeek。模型名称可用 `DEEPSEEK_MODEL` 配置。
 3. 推送到 GitHub 的 `main` 后，`Deploy Buck Lab to ModelScope` 工作流将该提交的 `backend/`、`frontend/`、`examples/`、依赖清单、许可文件、Dockerfile 和启动脚本直接同步到创空间，保留创空间自己的 README 和配置。推送前会从 Git 暂存内容重新导出并核对构建文件。Docker 先复制 `requirements-lock.txt` 安装依赖和 CPU 版 PyTorch，再复制应用文件，以单个 Uvicorn worker 监听 7860 端口。
    PDF 报告字体超过创空间普通 Git 文件的 10 MiB 限额。发布时仅对该字体做无损 gzip 压缩，镜像构建时解压并校验原始 SHA-256。工作流在推送前检查暂存快照中的文件大小和 LFS 指针。
+   同步成功后，工作流自动调用魔搭部署接口。Actions 的最后一步成功表示魔搭已受理请求，镜像构建进度和最终运行状态可在创空间查看。如果文件已经同步但部署请求失败，可在 GitHub Actions 重新运行该工作流，无需再改文件。
 4. 创空间启动后，打开实际运行的应用，在该应用地址后访问 `/api/health`，确认返回 `status: ok`。从创空间内打开前端时默认连接同一地址。在连接设置中输入应用访问口令并保存。浏览器会按后端地址记住所用口令。
 5. 在 GitHub 的 Pages 设置中选择 GitHub Actions。`Publish Buck Lab entry to GitHub Pages` 只发布 `deploy/pages/`。访问 Pages、点击“进入魔搭创空间”，再用有访问权限的魔搭账号登录。Pages 无需后端地址变量或应用口令。若工作台提示输入 Buck Lab 应用口令，请在创空间内输入。
 6. 加载示例并检查波形、辨识结果和聊天。若请求超时，可以先查看创空间运行状态及后端日志。前端先向所选后端查询 `/api/health`，再按该服务公布的请求头发送应用口令。魔搭镜像使用 `X-Buck-Authorization`，本机默认使用 `Authorization`。普通请求和 Agent 事件流共用这一设置。
@@ -359,7 +360,7 @@ node --check frontend/app.js
 
 聊天图片：选择、粘贴或拖入 PNG/JPEG/GIF/WebP，每条最多 3 张、原文件单张不超过 8 MB；浏览器转换为 PNG/JPEG（最长边最多 1800 px、Data URL 不超过 360000 字符，GIF 仅首帧），发送前可预览、移除。图片会随已发送消息或未发送草稿保存到本会话并参加现有双端同步，仍受浏览器存储及每会话 8 MiB 档案限制；超限沿用明确的保存/同步失败提示，不会静默删除消息。预览历史图片可点击“附加到当前提问”重新发送。普通聊天的最近 10 条上下文会携带其中的用户图片，完整会话检索仍检索文字；超出近期上下文的图片需从原消息重新附加，模型不得假称看过未传入图片。电路图入口可附加上传的参考图或当前默认图，不会自动改参数或确认接线。附图不会关闭 Agent 工具；是否配置或执行仍依据用户明确指令及当前界面权限，图片内容本身不是执行授权。
 
-后端校验图片后，使用官方 Harness SDK 的 image 内容块传入；由其 DeepSeek Messages 适配器编码图片。继续使用 `DEEPSEEK_MODEL=deepseek-flash`，所配置模型须支持图片。仅接收有大小上限、实际格式可解码的图片 Data URL，不请求任意外链。没有 Key 或模型调用失败时显示英文错误弹窗，不生成图片分析。需同步更新前后端和会话存档接口，无新增环境变量；现有 Pillow 依赖用于图片校验。官方说明：https://api-docs.deepseek.com/guides/vision/ 。
+后端使用 Pillow 校验有大小上限的图片 Data URL。魔搭部署中，Harness 调度对话和工具，模型网关在预算检查前把当前请求关联的图片写入 DeepSeek Messages 请求。本机开发模式优先使用 Harness 原生图片附件。默认模型为 `deepseek-flash`，使用其他模型时须确认它支持图片。模型调用失败时，页面显示英文错误提示。读图无需新增环境变量。[DeepSeek 图片输入说明](https://api-docs.deepseek.com/guides/vision/)
 # 无干净参考数据时的分析
 
 新完成的辨识在 `measurement_diagnostics` 中保存噪声与残差证据，并随当前结果发给 DeepSeek。右侧“噪声与残差诊断”默认折叠，中英文同步，JSON 保留完整指标，PDF 包含可读摘要。旧结果不伪造诊断，需重新辨识才能补齐。
