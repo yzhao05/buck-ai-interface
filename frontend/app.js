@@ -137,11 +137,22 @@ async function api(path, {method = "GET", body, timeout = 90000, asBlob = false,
     const response = await fetch(base.replace(/\/$/, "") + path, {method, headers,
       body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, signal: controller.signal});
     if (response.ok && asBlob) return await response.blob();
-    const data = await response.json().catch(() => ({}));
+    if (response.status === 204) return {};
+    let data;
+    try {
+      data = await response.json();
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      if (response.ok) throw new Error("后端返回的数据格式无效，请重试。");
+      data = {};
+    }
     if (!response.ok) throw Object.assign(new Error(errorText(data)), {status:response.status});
     return data;
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("后端未在规定时间内响应，请稍后重试。");
+    if (controller.signal.aborted) {
+      const route = path.split(/[?#]/, 1)[0];
+      throw new Error(`请求超时（${timeout / 1000} 秒）：${method} ${route}`);
+    }
     if (error instanceof TypeError) throw new Error("无法连接后端。请检查服务地址、启动状态及 CORS_ORIGINS 设置。");
     throw error;
   } finally { clearTimeout(timer); }
@@ -1411,8 +1422,8 @@ $("settings-form").onsubmit=async event=>{
       const plecsConfig=readPlecsSettings();
       await syncPlecsConfig(plecsConfig);
       localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(plecsConfig));
-      await synchronizeArchive({preferRemote:true});
-      if(!state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
+      const reopened=await synchronizeArchive({preferRemote:true});
+      if(!reopened && !state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
       scheduleArchiveSync();
       $("settings-dialog").close();ui($("settings-status"), "");
       if(!remembered)notice("已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。");
@@ -1434,9 +1445,11 @@ window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");
 controls();void (async()=>{await initializeHistory();if(await connect()){
-  await synchronizeArchive({preferRemote:true});
-  if(!state.dataset)await restoreAttachment(activeConversation?.attachment);
-  await recoverExperiments();
+  const reopened=await synchronizeArchive({preferRemote:true});
+  if(!reopened){
+    if(!state.dataset)await restoreAttachment(activeConversation?.attachment);
+    await recoverExperiments();
+  }
   scheduleArchiveSync();
 }})();
 

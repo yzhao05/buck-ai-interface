@@ -22,12 +22,13 @@ async function send(p,text){await p.locator('#chat-input').fill(text);await p.lo
   const profile=fs.mkdtempSync(path.resolve('runtime/csv-profile-'));
   const errors=[],chats=[];
   let context;
-  async function launch(){
+  async function launch(beforeLoad){
     context=await chromium.launchPersistentContext(profile,{...chrome,viewport:{width:1450,height:1000}});
     context.on('page',p=>p.on('pageerror',e=>errors.push(e.message)));
     await require('./harness-browser-fixture.cjs').install(context);
   await context.route('**/api/chat',route=>{chats.push(route.request().postDataJSON());return route.fulfill({json:{answer:'Archive test response',mode:'local'}});});
-    const p=await context.newPage();await p.goto(origin);await ready(p);return p;
+    const p=await context.newPage();if(beforeLoad)await beforeLoad(p);
+    await p.goto(origin);await ready(p);return p;
   }
   try {
     let p=await launch();
@@ -49,7 +50,29 @@ async function send(p,text){await p.locator('#chat-input').fill(text);await p.lo
     await p.locator('#time-unit').selectOption('ms');
     await expire(p,first.record);
     await context.close(); // Real persistent browser profile, including IndexedDB blobs.
-    p=await launch();
+    let uploads=0;
+    p=await launch(async page=>{
+      await page.route('**/api/datasets',route=>{
+        uploads++;
+        return route.fulfill({status:503,json:{detail:'CSV restore temporarily unavailable'}});
+      });
+    });
+    await p.waitForFunction(()=>!archiveRunning && archiveTimer!==null && !state.busy && pendingAttachment);
+    assert.equal(uploads,1,'A failed startup restore must not immediately upload the same CSV again');
+    assert.equal((await archive(p)).record.attachment.dataset.sha256,sha);
+    const timeoutMessage=await p.evaluate(async()=>{
+      const originalFetch=window.fetch;
+      window.fetch=async (_, {signal})=>new Response(new ReadableStream({
+        start(stream){signal.addEventListener('abort',()=>stream.error(signal.reason),{once:true});}
+      }));
+      try {await api('/api/archive?private=test',{timeout:25});}
+      catch(error){return error.message;}
+      finally{window.fetch=originalFetch;}
+    });
+    assert.equal(timeoutMessage,'请求超时（0.025 秒）：GET /api/archive');
+    await p.unroute('**/api/datasets');
+    await p.waitForFunction(()=>!archiveRunning);
+    await p.evaluate(()=>synchronizeArchive());await ready(p);
     assert.equal(await p.locator('#file-name').textContent(),'my-waveform.csv');
     assert.equal(await p.locator('#time-unit').inputValue(),'ms','Unconfirmed mapping survives archive restoration');
     await p.locator('#enter-identification').click();assert(await p.locator('#identify').isDisabled());
@@ -60,14 +83,18 @@ async function send(p,text){await p.locator('#chat-input').fill(text);await p.lo
     await expire(p,(await archive(p)).record);
     await p.locator('#identify').click();await ready(p);
     assert.equal(await p.locator('#result-l').textContent(),'60','Identification recovers an expired CSV without reload');
+    const displayedId=await p.evaluate(()=>state.resultId);
     await expire(p,(await archive(p)).record);
-    await send(p,'分析波形');assert(chats.at(-1).dataset_id);assert.equal(chats.at(-1).result_id,null,'Expired results are not relabelled after CSV restoration');
-    assert.equal(await p.locator('#result-l').textContent(),'—');
+    await send(p,'分析波形');
+    assert.equal(chats.at(-1).result_id,displayedId);
+    assert.equal(chats.at(-1).saved_result.dataset.sha256,sha,'Chat keeps the displayed result tied to its original waveform');
+    assert.equal(await p.locator('#result-l').textContent(),'60');
     // Corruption must be repaired from a verified server replica, never analyzed.
     await p.evaluate(()=>synchronizeArchive());await ready(p);
     const current=await archive(p);
     await p.evaluate(async({scope,sha})=>BuckAttachments.save(scope,sha,'my-waveform.csv',new Blob(['corrupt'])),{scope:first.scope,sha});
-    await expire(p,current.record);await p.reload();await ready(p);
+    // The dataset cache is still expired after the read-only chat.
+    await p.reload();await ready(p);
     assert(await p.locator('#file-info').isVisible());
     assert.equal(await p.evaluate(async({scope,sha})=>csvDigest((await BuckAttachments.load(scope,sha)).blob),{scope:first.scope,sha}),sha);
     // Repair explicitly, then verify deletion and cross-tab stale-write protection.

@@ -124,7 +124,7 @@ async function synchronizeArchive({preferRemote=false,background=false}={}) {
   state.syncBusy=!background; controls();
   const previousId=activeConversation?.id;
   const before=activeConversation ? JSON.stringify(wireRecord(activeConversation)) : "";
-  let missing=false, failed=false;
+  let missing=false, failed=false, reopened=false;
   function pauseForActiveTask() {
     if (!background || !historyLocked()) return false;
     archiveAgain=true;
@@ -181,7 +181,10 @@ async function synchronizeArchive({preferRemote=false,background=false}={}) {
       if (!background) {
         let active=conversationCache.get(previousId);
         if (!active) active=[...conversationCache.values()].sort((a,b)=>b.updated-a.updated)[0];
-        if (active && (active.id!==previousId || JSON.stringify(wireRecord(active))!==before || (!state.dataset && active.attachment))) await openConversation(active.id,false);
+        if (active && (active.id!==previousId || JSON.stringify(wireRecord(active))!==before || (!state.dataset && active.attachment))) {
+          await openConversation(active.id,false);
+          reopened=true;
+        }
         else if (!active) { activeConversation=null; resetExperiment(); clearChat(); await newConversation(); }
       } else if (activeConversation && savedValue(conversationPrefix+"deleted:"+activeConversation.id)) {
         // Only an explicit deletion received from another client may close a view.
@@ -195,6 +198,7 @@ async function synchronizeArchive({preferRemote=false,background=false}={}) {
     if (archiveAgain) { archiveAgain=false;scheduleArchiveSync(); }
     else if (failed) archiveTimer=setTimeout(()=>{archiveTimer=null;void synchronizeArchive({background:true,preferRemote});},30000);
   }
+  return reopened;
 }
 async function recoverCsvFromArchive(dataset) {
   if (!archiveEnabled) return null;
@@ -203,7 +207,10 @@ async function recoverCsvFromArchive(dataset) {
     if (await csvDigest(blob)!==dataset.sha256) return null;
     try { await BuckAttachments.save(csvScope(),dataset.sha256,dataset.filename,blob,activeConversation.file_epoch || 0); } catch {}
     return blob;
-  } catch { return null; }
+  } catch (error) {
+    if (error.status===404 || error.status===409) return null;
+    throw error;
+  }
 }
 window.addEventListener("online",()=>{scheduleArchiveSync();});
 document.addEventListener("visibilitychange",()=>{

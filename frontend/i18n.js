@@ -519,7 +519,7 @@ window.BuckI18n = (() => {
     "本项目源码 ↗": "Source code ↗", "后端已连接。请在连接设置中输入应用访问口令后上传数据。": "Backend connected. Enter your app access code in Connection settings before uploading data.",
     "请求失败，请检查后端服务。": "Request failed. Check the backend service.",
     "请在连接设置中填写魔搭创空间的应用地址，或启动本地后端。": "Enter the ModelScope Studio app URL in Connection settings, or start the local backend.",
-    "后端未在规定时间内响应，请稍后重试。": "The backend did not respond in time. Please try again shortly.",
+    "后端返回的数据格式无效，请重试。": "The backend returned an invalid response. Please try again.",
     "该地址未返回 Buck Lab 服务状态，请填写实际运行应用的地址。": "This URL did not return the Buck Lab service status. Enter the URL of the running app.",
     "辨识结果与当前数据或配置不一致，请重新辨识。": "The identification result does not match the current data or settings. Run identification again.",
     "无法连接后端。请检查服务地址、启动状态及 CORS_ORIGINS 设置。": "Cannot reach the backend. Check its URL, service status and CORS_ORIGINS setting.",
@@ -628,6 +628,7 @@ window.BuckI18n = (() => {
     "历史对话已恢复；CSV 尚未恢复，请重试同步或重新上传原文件。":"Conversation restored; the CSV has not been restored yet. Retry sync or upload the original file again."
   });
   const patterns = [
+    [/^请求超时（([\d.]+) 秒）：(.+)$/, "Request timed out after $1 s: $2"],
     [/^本次等待用时 (\d+(?:\.\d+)?) 秒$/, "Wait time: $1 s"],
     [/^本次恢复用时 (\d+(?:\.\d+)?) 秒$/, "Recovery time: $1 s"],
     [/^后台处理用时 (\d+(?:\.\d+)?) 秒$/, "Backend processing time: $1 s"],
