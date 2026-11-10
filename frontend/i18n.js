@@ -471,7 +471,7 @@ window.BuckI18n = (() => {
     "后端未返回有效的 PDF，请更新后端后重试。": "The backend did not return a valid PDF. Update the backend and try again.",
     "连接你的分析后端": "Connect your backend", "关闭": "Close", "关闭提示": "Dismiss notification",
     "魔搭创空间应用的 HTTPS 地址": "HTTPS URL of the ModelScope Studio app",
-    "在魔搭创空间或本机打开应用时会自动连接。使用 GitHub Pages 时，请填写创空间的应用地址。": "The app connects automatically when opened in ModelScope Studio or locally. On GitHub Pages, enter the Studio app URL.",
+    "从 GitHub Pages 点击入口进入魔搭创空间。打开工作台后会自动连接创空间后端，本地运行时会自动连接本机。": "Follow the GitHub Pages link to ModelScope Studio. The workspace connects to the Studio backend when opened there, or to the local backend when run locally.",
     "后端地址": "Backend URL", "应用访问口令": "App access code", "后端 APP_ACCESS_TOKEN；本地可留空": "Backend APP_ACCESS_TOKEN; optional locally",
     "这里填写应用口令。DeepSeek API Key 请保存在魔搭创空间的密文变量或本地后端的 .env 文件中。点击保存后，此浏览器会记住该后端的口令，下次打开自动使用。共享电脑使用后可清除。": "Enter your app access code here. Store the DeepSeek API key in a ModelScope Studio secret or in the local backend .env file. This browser remembers the code for this backend after saving. Clear it after using a shared computer.",
     "保存并连接": "Save & connect", "清除已记住的口令": "Forget saved access code",

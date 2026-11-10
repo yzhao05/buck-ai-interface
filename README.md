@@ -1,6 +1,6 @@
 # Buck Lab · AI 实验工作台
 
-面向 ST4001 的 Buck 变换器分析原型：PLECS CSV → 波形检查 → L/C/R 辨识 → 留出验证 → DeepSeek 对话。采用 **魔搭创空间托管的 FastAPI 后端和网页前端，也支持从 GitHub Pages 访问后端**，本地也可以一条命令启动。
+面向 ST4001 的 Buck 变换器分析原型：PLECS CSV → 波形检查 → L/C/R 辨识 → 留出验证 → DeepSeek 对话。GitHub Pages 提供公开入口，工作台与 FastAPI 后端在私有魔搭创空间内运行。本地也可以一条命令启动。
 
 ## 本地运行
 
@@ -145,7 +145,7 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 3. 推送到 GitHub 的 `main` 后，`Deploy Buck Lab to ModelScope` 工作流将该提交的 `backend/`、`frontend/`、`examples/`、依赖清单、许可文件、Dockerfile 和启动脚本直接同步到创空间，保留创空间自己的 README 和配置。推送前会从 Git 暂存内容重新导出并核对构建文件。Docker 先复制 `requirements-lock.txt` 安装依赖和 CPU 版 PyTorch，再复制应用文件，以单个 Uvicorn worker 监听 7860 端口。
    PDF 报告字体超过创空间普通 Git 文件的 10 MiB 限额。发布时仅对该字体做无损 gzip 压缩，镜像构建时解压并校验原始 SHA-256。工作流在推送前检查暂存快照中的文件大小和 LFS 指针。
 4. 创空间启动后，打开实际运行的应用，在该应用地址后访问 `/api/health`，确认返回 `status: ok`。从创空间内打开前端时默认连接同一地址。在连接设置中输入应用访问口令并保存。浏览器会按后端地址记住所用口令。
-5. 如需从 GitHub Pages 打开前端，在仓库 Actions Variables 设置 `MODELSCOPE_API_URL` 为创空间**实际应用的 HTTPS 地址**，并将创空间的 `CORS_ORIGINS` 设为 Pages 站点来源，例如 `https://你的用户名.github.io`。在 GitHub 的 Pages 设置中选择 GitHub Actions 并运行 Pages 发布工作流。连接设置中手动保存的地址优先于发布时写入的默认地址。
+5. 在 GitHub 的 Pages 设置中选择 GitHub Actions。`Publish Buck Lab entry to GitHub Pages` 只发布 `deploy/pages/`。访问 Pages、点击“进入魔搭创空间”，再用有访问权限的魔搭账号登录。Pages 无需后端地址变量或应用口令。若工作台提示输入 Buck Lab 应用口令，请在创空间内输入。
 6. 加载示例并检查波形、辨识结果和聊天。若请求超时，可以先查看创空间运行状态及后端日志。前端先向所选后端查询 `/api/health`，再按该服务公布的请求头发送应用口令。魔搭镜像使用 `X-Buck-Authorization`，本机默认使用 `Authorization`。普通请求和 Agent 事件流共用这一设置。
 
 ## 已实现
@@ -319,7 +319,8 @@ PDF 使用现有、受应用口令保护的 `POST /api/reports/pdf` 接口。请
 ## 项目结构
 
 ```text
-frontend/                 GitHub Pages 发布内容
+frontend/                 魔搭创空间与本地工作台
+deploy/pages/             GitHub Pages 静态入口
 backend/main.py           API、会话、任务、生产鉴权
 backend/data.py           CSV 与时间加权统计
 backend/identification.py 积分辨识、前向验证

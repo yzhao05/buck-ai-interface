@@ -1,4 +1,4 @@
-name: Deploy interface to GitHub Pages
+name: Publish Buck Lab entry to GitHub Pages
 on:
   push:
     branches: [main]
@@ -18,45 +18,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Validate JavaScript
-        run: |
-          for file in frontend/*.js; do node --check "$file"; done
-      - name: Set public backend address
-        env:
-          BACKEND_API_URL: ${{ vars.MODELSCOPE_API_URL || vars.RENDER_API_URL }}
-          STUDIO_BACKEND: ${{ vars.MODELSCOPE_API_URL != '' }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          node - <<'JS'
-          const fs = require('fs');
-          const apiBaseUrl = process.env.BACKEND_API_URL || '';
-          if (apiBaseUrl && new URL(apiBaseUrl).protocol !== 'https:') {
-            throw new Error('Backend app URL must be HTTPS');
-          }
-          fs.writeFileSync('frontend/config.js', 'window.BUCK_CONFIG = ' + JSON.stringify({
-            apiBaseUrl,
-            studioBackend: process.env.STUDIO_BACKEND === 'true',
-            sourceUrl: 'https://github.com/' + process.env.REPOSITORY
-          }) + ';\n');
-          JS
-      - name: Version frontend assets
-        run: |
-          node - <<'JS'
-          const fs = require('fs');
-          const crypto = require('crypto');
-          const html = fs.readFileSync('frontend/index.html', 'utf8');
-          const versioned = html.replace(/((?:src|href)="\.\/)([\w-]+\.(?:js|css))(?:\?[^"\s]*)?"/g, (_, prefix, file) => {
-            const hash = crypto.createHash('sha256').update(fs.readFileSync('frontend/' + file)).digest('hex').slice(0, 12);
-            return prefix + file + '?v=' + hash + '"';
-          });
-          fs.writeFileSync('frontend/index.html', versioned);
-          JS
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: frontend
+          path: deploy/pages
       - id: deployment
         uses: actions/deploy-pages@v4
