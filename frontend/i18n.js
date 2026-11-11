@@ -544,7 +544,7 @@ window.BuckI18n = (() => {
     "已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。": "Connected, but browser storage is blocked. You will need to enter the access code again after closing this page.",
     "连接未成功，请检查页面提示。": "Connection failed. Check the message on the page.",
     "读取波形统计": "Read waveform statistics", "读取辨识结果": "Read identification results", "启动物理辨识": "Start identification",
-    "检索专业资料": "Search engineering references", "已启动": "Started", "已执行": "Executed",
+    "检索专业资料": "Search engineering references", "浏览知识目录": "Browse knowledge catalogue", "读取知识全文": "Read knowledge documents", "已启动": "Started", "已执行": "Executed",
     "访问口令不正确，请在连接设置中输入后端 APP_ACCESS_TOKEN。": "Incorrect access code. Enter the backend APP_ACCESS_TOKEN in Connection settings.",
     "请先点击左侧“进入参数辨识”，确认基本信息后再执行辨识。": "Click Open identification on the left and confirm the basic settings before starting identification.",
     "未提供真值，不能计算参数真实误差；波形误差不等于参数误差。": "No ground truth was provided. True parameter errors cannot be calculated; waveform errors are not parameter errors.",

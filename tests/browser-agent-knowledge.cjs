@@ -45,7 +45,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     for(const failure of [
       {error_code:'provider_timeout',provider_error:'AI provider or Harness communication timed out before completion.'},
       {error_code:'output_token_limit',finish_reason:'max-tokens',provider_error:'AI generation reached its output-token limit, including thinking tokens, before completing the answer.'},
-      {error_code:'citation_validation_failed',provider_error:'The generated answer cited knowledge sources that were not retrieved in this task.'},
+      {error_code:'citation_validation_failed',provider_error:'The generated answer cited knowledge sources without saved full-text search or read evidence in this session.'},
       {error_code:'agent_budget_exceeded',budget_reason:'estimated_cost',
        provider_error:'AI request exceeded the estimated cost reservation (AGENT_COST_LIMIT_USD).',
        agent_budget:{thinking:true,model_calls:0,model_call_limit:14,time_limit_s:300,reserved_cost_usd:0,cost_limit_usd:0.5}}
@@ -65,7 +65,8 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     await page.evaluate(() => localStorage.setItem(`buck-plecs:${base}`,JSON.stringify({executable:'missing.exe'})));
     await page.route('**/api/plecs/settings', route => route.fulfill({status:422,json:{detail:'Invalid PLECS settings'}}));
     response = {mode:'deepseek',answer:'模型说明 [kb:buck-physics]\n\n面板虽已进入（identification_enabled=true）。\n\n| 按钮 | 功能 | 依据 |\n|---|---|---|\n| 连接设置 | 保存地址 | [kb:ui-settings] |\n| 立即同步 | 同步备份 | [kb:ui-sync] |',sources:[{id:'buck-physics',title:'Buck 模型'}],
-      tool_calls:[{name:'search_knowledge',query:'Buck 模型',count:3,status:'已执行'}],job_id:null};
+      retrieved_sources:[{id:'buck-physics',title:'Buck 模型',content:'模型全文'}],
+      tool_calls:[{name:'list_knowledge',status:'已执行'},{name:'read_knowledge',status:'已执行'},{name:'search_knowledge',query:'Buck 模型',count:3,status:'已执行'}],job_id:null};
     await ask();
     assert.equal(dialogs.length, 6);
     assert.deepEqual(await page.locator('.message.assistant').last().locator('th').allTextContents(),['按钮','功能']);
@@ -79,6 +80,15 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     assert.match(await page.locator('.message.assistant').last().innerText(), /Buck 模型/);
     assert.equal(await page.locator('.message.assistant > .message-sources').count(),0);
     assert.deepEqual(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).response.sources),response.sources);
+    assert.deepEqual(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).response.retrieved_sources),response.retrieved_sources);
+    assert.deepEqual(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).response.tool_calls),response.tool_calls);
+    const toolLog=page.locator('.message.assistant').last().locator('.message-tools:not(.message-task)');
+    assert.match(await toolLog.textContent(),/浏览知识目录/);
+    assert.match(await toolLog.textContent(),/读取知识全文/);
+    await page.locator('#language-toggle').click();
+    assert.match(await toolLog.textContent(),/Browse knowledge catalogue/);
+    assert.match(await toolLog.textContent(),/Read knowledge documents/);
+    await page.locator('#language-toggle').click();
     assert.doesNotMatch(await page.locator('.message.assistant').last().innerText(),/\[kb:/);
     assert.deepEqual(await page.locator('.message.assistant').last().locator('th').allTextContents(),['按钮','功能']);
     assert.equal(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).content),response.answer);

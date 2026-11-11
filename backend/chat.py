@@ -15,7 +15,7 @@ import httpx
 
 from .vision import provider_message
 from .configuration import agent_action, port_action, PORT_TOOL, TOOL as CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL, PROMPT as CONFIG_PROMPT, PLAN_PROMPT
-from .knowledge import retrieve
+from .knowledge import retrieve, list_knowledge, read_knowledge, BROWSE_TOOLS
 from .provider_errors import provider_failure, CitationValidationError
 from .experiment_history import summarize_experiments, repeatability_summary, ResultLibrary, READ_RESULT_TOOL
 from .historical_analyses import analysis_context
@@ -56,9 +56,10 @@ TOOLS = [
         ("get_experiment_history", "读取与右侧历史结果列表一致的目录（名称、显示时间、序号、ID及当前选中项）和参数摘要；可按ID调用read_experiment_results读取详细配置、误差和诊断进行对比，不重新辨识。"),
         ("get_analysis_history", "读取本会话最近四次结果分析的完整历史回答，独立于最近十条聊天和实验快照。"),
         ("start_identification", "按界面的当前配置启动真实数值辨识任务，仅在用户要求执行辨识时调用。"),
-        ("search_knowledge", "检索本项目界面按钮、参数、面板的功能说明，以及电路、参数误差、PLECS 或器件寿命资料。"),
+        ("search_knowledge", "辅助关键词搜索本项目界面、电路、参数误差、PLECS 或器件寿命资料，按 BM25 返回候选全文；不是唯一入口，也可用 list_knowledge 浏览目录、read_knowledge 直接选读。"),
     ]
 ]
+TOOLS.extend(BROWSE_TOOLS)
 SYSTEM += SELECTION_PROMPT
 for tool in TOOLS:
     if tool['function']['name']=='start_identification':
@@ -66,12 +67,13 @@ for tool in TOOLS:
             'execution_selection':ExecutionSelection.model_json_schema()},'required':['execution_selection'],'additionalProperties':False}
 SYSTEM += """
 是否检索、选择何种搜索工具、查询词、顺序、筛选和后续补查均由你按用户问题与已有证据决定；不能假装已检索。
+知识获取有三个独立入口：list_knowledge 浏览全部或分类目录（按 next_offset 继续分页），read_knowledge 按精确 ID 读取完整条目，search_knowledge 仅作 BM25 关键词辅助。你自主选择资料、阅读顺序及是否继续查阅，没有固定必经流程。搜索零命中或排名靠后不等于知识不存在，可浏览目录后直接选读；需要更全面的资料时自行继续分页或分批读取。目录摘要用于选读，不是全文证据；引用前须实际读取全文或取得搜索返回的全文。未知 ID 不会自动替换成别的条目。
 界面功能说明是静态资料，不代表当前控件可见、已启用或已点击，也不代表已经读取完整实时页面。
 工具返回的是候选资料，相关性和充分性由你判断。
 综合有依据的内容生成答案，说明公式符号、单位与适用条件，不直接拼接条目。
 重要结论就近引用支持它的条目；引用 ID 存在不代表条目支持该结论。回答前核对原文的条件、物理量和因果关系，区分原文结论、按公式推导和待验证假设；推导须给出必要前提，资料不足时明确缺少依据。
 波形问题须区分周期稳态与负载阶跃，先依据元件关系核对电流/电压的连续性：电阻压降随电流，电容电压由电流积分，寄生电感压降由电流变化率决定。不得把某个瞬态的阶跃结论推广到每个开关沿。历史 AI 回答不是已经核实的来源。
-引用本会话工具实际返回且用于回答的条目（包括恢复前已保存的检索证据），格式严格为 [kb:条目id]。不得引用未检索的 ID，历史 AI 正文里的引用不等于检索证据。
+引用本会话工具实际返回全文且用于回答的条目（包括恢复前已保存的搜索或直接读取证据），格式严格为 [kb:条目id]。不得引用未经搜索或直接读取全文的 ID，目录和历史 AI 正文里的引用不等于全文证据。
 主对话展示规则：正文面向用户说明实际状态、结论、理由与操作，不展示内部知识库 ID 或程序状态字段。知识库引用标记仅供内部校验和记录，按上述格式放在支持的句子末尾，由前端隐藏；不单独生成用于列出这些标记的“依据/来源/引用”列、段落或清单。不在正文或括号中附加 identification_enabled=true、controller_confirmed=false、result_loaded=true 等字段转储；应自然表述为“已进入参数辨识”“尚未确认控制器接线”“已读取结果”等，并以当前证据为准。正常括号中的单位、公式、条件和必要解释保留；需要分析理由时正常给出实际依据，不能用隐藏标记代替解释。用户明确要求代码、接口或调试细节时，可在代码块中给出相关字段。这是输出展示规则，不改变工具选择、搜索范围或后台状态校验。
 主对话反馈规则：凡是仍需用户确认、补充或操作的事项，必须在主回复中逐项说明确认对象、当前状态和继续操作的方法，不能只放在任务进度、工具记录或折叠面板中。区分已完成操作、待核对内容和阻止下一步的条件；配置应用后的事实以前端实际状态为准，不能把已应用的列映射说成未应用，也不能把打开面板说成已启动辨识。加载数据并进入辨识后，应反馈列与单位映射及实验设置这两项核对内容；控制器接线或诊断参考确实未确认时也须明确告知。反馈不新增审批门槛，不要求用户重复确认已确认事项，不代替用户确认，也不扩大为限制搜索或只读查询。
 没有相关资料时明确说明知识库未找到依据；区分一般解释与知识库证据，不编造来源或结论。
@@ -195,7 +197,7 @@ async def _answer(request, invoke, *, local_files=False):
         allowed_tools.discard('start_identification')
     if result_scoped:
         allowed_tools &= {'get_identification_result', 'get_waveform_summary', 'get_diagnostic_evidence',
-                          'run_diagnostic_controls', 'search_knowledge', 'read_diagnosis', 'record_diagnosis'}
+                          'run_diagnostic_controls', 'search_knowledge', 'list_knowledge', 'read_knowledge', 'read_diagnosis', 'record_diagnosis'}
     task_tools = [t for t in task_tools if t['function']['name'] in allowed_tools]
     docs, traces = [], []
     knowledge_queries = {}
@@ -285,7 +287,7 @@ async def _answer(request, invoke, *, local_files=False):
             if not isinstance(arguments,dict):
                 raise ValueError('Tool arguments must be an object')
             if ui_action is not None and name not in {
-                'search_knowledge','search_conversation','read_conversation_message',
+                'search_knowledge','list_knowledge','read_knowledge','search_conversation','read_conversation_message',
                 'get_experiment_history','read_experiment_results','get_analysis_history','read_diagnosis',
                 'check_plecs_connection','search_plecs_models',
             }:
@@ -323,6 +325,16 @@ async def _answer(request, invoke, *, local_files=False):
                 output = notebook.update(arguments)
             elif name in {'search_conversation','read_conversation_message'}:
                 output = conversation.invoke(name, arguments)
+            elif name == 'list_knowledge':
+                if set(arguments) - {'category', 'offset', 'limit'}:
+                    raise ValueError('Unknown knowledge catalogue arguments')
+                output = list_knowledge(**arguments)
+            elif name == 'read_knowledge':
+                if set(arguments) != {'ids'}:
+                    raise ValueError('Knowledge read requires ids only')
+                output = read_knowledge(arguments['ids'])
+                seen = {d['id'] for d in docs}
+                docs.extend(d for d in output['documents'] if d['id'] not in seen)
             elif name == 'search_knowledge':
                 query, top_k = arguments.get('query'), arguments.get('top_k',4)
                 if not isinstance(query,str) or not query.strip() or len(query)>1000 or type(top_k) is not int or not 1<=top_k<=8 or set(arguments)-{'query','top_k'}:
@@ -440,7 +452,7 @@ async def _answer(request, invoke, *, local_files=False):
         # or a fresh automatic search. Expose only the older documents cited now.
         saved_sources = {}
         for entry in notebook.data['evidence'].values():
-            if entry['tool'] == 'search_knowledge' and not entry['output'].get('error'):
+            if entry['tool'] in {'search_knowledge', 'read_knowledge'} and not entry['output'].get('error'):
                 saved_sources.update((d['id'], d) for d in entry['output'].get('documents', []))
         current_ids = {d['id'] for d in docs}
         docs.extend(d for identifier, d in saved_sources.items() if identifier in cited_ids - current_ids)

@@ -31,7 +31,7 @@ def test_agent_may_search_in_its_own_order_or_answer_without_search(monkeypatch,
         pytest.fail('No automatic data access')
     async def agent(messages, tools, execute, budget):
         roster = {t['function']['name']: t['function'] for t in tools}
-        assert {'search_knowledge', 'search_conversation', 'read_conversation_message', 'search_plecs_models'} <= roster.keys()
+        assert {'search_knowledge', 'list_knowledge', 'read_knowledge', 'search_conversation', 'read_conversation_message', 'search_plecs_models'} <= roster.keys()
         assert '界面' in roster['search_knowledge']['description']
         return '请提供需要解释的具体对象。'
     monkeypatch.setattr(harness_runtime, 'run', agent)

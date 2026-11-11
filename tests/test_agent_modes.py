@@ -33,7 +33,7 @@ def test_modes_share_tool_permissions_and_knowledge_loop(monkeypatch, mode, task
     assert all(p['thinking']['type'] == ('enabled' if mode == 'thinking' else 'disabled') for p in captured)
     assert response['agent_budget']['thinking'] == (mode == 'thinking')
     tools = {t['function']['name'] for t in captured[0]['tools']}
-    assert 'search_knowledge' in tools
+    assert {'search_knowledge', 'list_knowledge', 'read_knowledge'} <= tools
     assert 'connect_plecs' in tools
     assert 'open_plecs_model' in tools
     assert 'opaque' not in json.dumps(response)

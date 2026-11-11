@@ -98,14 +98,15 @@ def test_unknown_citation_after_search_is_rejected(monkeypatch):
 
 
 @pytest.mark.parametrize('first_fails', [False, True])
-@pytest.mark.parametrize('scope_change', ['none', 'owner', 'dataset'])
-def test_saved_search_evidence_survives_only_in_same_harness_session(monkeypatch, first_fails, scope_change):
+@pytest.mark.parametrize('scope_change', ['none', 'owner', 'dataset', 'result', 'configuration'])
+@pytest.mark.parametrize('reader', ['search_knowledge', 'read_knowledge'])
+def test_saved_search_evidence_survives_only_in_same_harness_session(monkeypatch, first_fails, scope_change, reader):
     from backend import harness_runtime
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'test-only')
 
     async def scenario():
         async def first(messages, tools, execute, budget):
-            found = await execute('search_knowledge', {'query':'Buck 模型', 'top_k':8})
+            found = await execute(reader, {'query':'Buck 模型', 'top_k':8} if reader == 'search_knowledge' else {'ids':['buck-physics']})
             assert any(d['id'] == 'buck-physics' for d in found['documents'])
             if first_fails:
                 raise httpx.ReadTimeout('interrupted after retrieval')
@@ -121,12 +122,16 @@ def test_saved_search_evidence_survives_only_in_same_harness_session(monkeypatch
         def no_search(*args):
             pytest.fail('Reusing saved evidence must not trigger another search')
         monkeypatch.setattr(chat, 'retrieve', no_search)
+        monkeypatch.setattr(chat, 'read_knowledge', no_search)
         async def second(messages, tools, execute, budget):
             return '继续解释已读取的模型。[kb:buck-physics]'
         monkeypatch.setattr(harness_runtime, 'run', second)
         token = harness_runtime.scope.set({'owner':'other-owner' if scope_change == 'owner' else 'first-owner', 'id':'second-task'})
         try:
-            result = await chat.answer(ChatRequest(message='继续解释', dataset_id='new-data' if scope_change == 'dataset' else None), no_execution)
+            result = await chat.answer(ChatRequest(message='继续解释',
+                dataset_id='new-data' if scope_change == 'dataset' else None,
+                result_id='new-result' if scope_change == 'result' else None,
+                options={'vin': 30} if scope_change == 'configuration' else {}), no_execution)
         finally:
             harness_runtime.scope.reset(token)
         assert result['tool_calls'] == []

@@ -27,7 +27,7 @@ const state = { dataset: null, csvFile: null, mapping: null, summary: null, resu
   history: [], connected: false, busy: false, chatBusy: false, syncBusy: false, job: null, chart: null, zoom: null,
   identificationOpen: false, waveformOpen: false };
 const fmt = (value, digits = 4) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toString() : "—";
-const tools = {search_conversation:"检索会话记录", read_conversation_message:"读取历史消息", get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", get_analysis_history:"读取历史分析", start_identification:"启动物理辨识", search_knowledge:"检索专业资料"};
+const tools = {search_conversation:"检索会话记录", read_conversation_message:"读取历史消息", get_waveform_summary:"读取波形统计", get_identification_result:"读取辨识结果", get_experiment_history:"读取实验历史", get_analysis_history:"读取历史分析", start_identification:"启动物理辨识", search_knowledge:"检索专业资料", list_knowledge:"浏览知识目录", read_knowledge:"读取知识全文"};
 tools.run_diagnostic_controls="运行参数与初值对照";
 tools.read_experiment_results="读取所选历史辨识结果";
 Object.assign(tools,{get_diagnostic_evidence:'读取训练与残差证据',connect_plecs:'连接或唤醒 PLECS',

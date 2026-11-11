@@ -1,6 +1,7 @@
 """Small, inspectable retrieval corpus. Summaries are authored for this app."""
 import math
 import re
+from copy import deepcopy
 from collections import Counter
 
 from .knowledge_base.buck import FORMULA_DOCUMENTS
@@ -39,10 +40,10 @@ DOCUMENTS = [
     {"id": "identification-limits", "title": "辨识与验证的边界（本项目方法说明）", "url": None,
      "tags": "误差 准确 验证 可信 噪声 结果 初值 修改 计划",
      "content": "波形拟合误差不等于参数误差。未提供独立真值不能计算 L/C/R 真实误差。实测 PWM 模式使用同记录后段的实测 PWM 连续前向预测，不是自主闭环验证；已知控制器重建模式在训练段重建开关信息，验证时控制器由预测电压驱动，不使用留出段电压或实测 PWM。两者都不是独立工况验证。检查非均匀采样、PWM 时间对齐、Vin、负载突变、初始状态和遗漏寄生。先做单因素对照实验；真实参数不得通过文件名进入拟合。"},
-    {"id": "csv", "title": "PLECS 数据接入约定（本项目）", "url": "https://www.plexim.com/support/documentation",
+    {"id": "csv", "title": "PLECS 数据接入约定（本项目）", "url": "https://docs.plexim.com/plecs/latest/using-plecs/using-scope/",
      "tags": "csv 上传 数据 plecs 格式 采样 pwm 时间",
      "content": "导出同一个 Scope 的 time、iL、vo，注明时间单位；PWM 列为可选项，可一起放在同一 CSV 中上传。上传并映射 PWM 时必须为实际 0/1 状态，不能用占空比代替。没有 PWM 列时，须确认与默认图的非同步 Buck 和 RC 控制器接线相同，元件、增益、相位和初态可在电路图编辑器修改，数值须匹配实际仿真；固定已知负载 R 识别 L/C，由训练段电压重建 PWM。要求从 t=0 开始、负载恒定、结束于 1 ms 前；频率默认 100 kHz，可修改。上传电路图片只作参考，不会自动识别参数或改变模型。不能对任意三列 CSV 无条件重建。非均匀采样保留时间戳；重复事件时间保留最后一行。页面波形为显示抽样，数值辨识使用完整选定区间。负载有突变时分别选择恒定负载区间。"},
-    {"id": "capacitor-life", "title": "TDK：铝电解电容使用寿命技术资料", "url": "https://www.tdk-electronics.tdk.com/download/185386/5f33d2619fa73419e2a4af562122e90c/pdf-generaltechnicalinformation.pdf",
+    {"id": "capacitor-life", "title": "TDK：铝电解电容使用寿命技术资料", "url": "https://www.tdk-electronics.tdk.com/download/185386/31a5416e653dd6e4e428b8208d65cc2e/pdf-generaltechnicalinformation.pdf",
      "tags": "寿命 老化 温度 纹波 电容 esr 硬件 可靠性 life lifetime",
      "content": "铝电解电容寿命估算应采用具体系列的数据手册和厂商模型，输入包括工作温度、纹波电流及工况。短时仿真波形或一个 C 估计值不能直接给出剩余寿命。缺少器件型号、温度、额定寿命、运行历史时只解释影响因素并列出需要补充的信息。不能把所有器件统一套用每降 10°C 寿命翻倍。"},
     {"id": "hardware", "title": "硬件问题的回答范围（本项目）", "url": None,
@@ -53,6 +54,60 @@ DOCUMENTS = [
 
 DOCUMENTS.extend(FORMULA_DOCUMENTS)
 DOCUMENTS.extend(UI_DOCUMENTS)
+
+# Browsing and direct reads deliberately bypass relevance ranking.
+_BY_ID = {doc['id']: doc for doc in DOCUMENTS}
+if len(_BY_ID) != len(DOCUMENTS):
+    raise ValueError('Knowledge document IDs must be unique')
+
+
+def _category(doc):
+    return 'formula' if doc.get('kind') == 'formula' else 'ui' if doc['id'].startswith('ui-') else 'method'
+
+
+def list_knowledge(category='all', offset=0, limit=30):
+    """Return a stable, paginated catalogue, not citable full-text evidence."""
+    if category not in ('all', 'method', 'formula', 'ui'):
+        raise ValueError('Unknown knowledge category')
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError('offset must be nonnegative and limit must be 1–100')
+    selected = [doc for doc in DOCUMENTS if category == 'all' or _category(doc) == category]
+    entries = []
+    for doc in selected[offset:offset + limit]:
+        summary = doc.get('summary') or doc.get('scope') or re.split(r'[。\n]', doc['content'])[0]
+        entries.append({'id': doc['id'], 'title': doc['title'], 'category': _category(doc),
+                        'summary': summary[:240], 'tags': doc['tags']})
+    end = offset + len(entries)
+    return {'category': category, 'total': len(selected), 'offset': offset, 'count': len(entries),
+            'next_offset': end if end < len(selected) else None, 'entries': entries,
+            'note': '目录仅用于选读；引用前请用 read_knowledge 读取全文。'}
+
+
+def read_knowledge(ids):
+    """Read exact IDs in requested order, without BM25 or hidden substitution."""
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 8 or any(not isinstance(key, str) or not key for key in ids):
+        raise ValueError('ids must contain 1–8 nonempty knowledge IDs')
+    unique = list(dict.fromkeys(ids))
+    docs = [deepcopy(_BY_ID[key]) for key in unique if key in _BY_ID]
+    return {'count': len(docs), 'documents': docs, 'missing_ids': [key for key in unique if key not in _BY_ID]}
+
+
+BROWSE_TOOLS = [
+    {'type': 'function', 'function': {
+        'name': 'list_knowledge',
+        'description': '浏览完整知识目录的标题、摘要和标签，不经过关键词排名。可按项目方法 method、公式 formula、界面 ui 分类并分页；用 read_knowledge 按 ID 选读全文。目录不是全文引用依据。',
+        'parameters': {'type': 'object', 'properties': {
+            'category': {'type': 'string', 'enum': ['all', 'method', 'formula', 'ui'], 'default': 'all'},
+            'offset': {'type': 'integer', 'minimum': 0, 'default': 0},
+            'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100, 'default': 30}},
+            'additionalProperties': False}}},
+    {'type': 'function', 'function': {
+        'name': 'read_knowledge',
+        'description': '按精确条目 ID 读取知识全文、适用条件和来源，不经过搜索排名。ID 可来自目录或已读资料；可多次读取以继续查阅，未知 ID 明确返回 missing_ids。',
+        'parameters': {'type': 'object', 'properties': {
+            'ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1}, 'minItems': 1, 'maxItems': 8}},
+            'required': ['ids'], 'additionalProperties': False}}},
+]
 
 def _tokens(text):
     text = text.lower()
@@ -82,4 +137,4 @@ def retrieve(query, count=4):
                 score += idf * tf * 2.2 / (tf + 1.2 * (.25 + .75 * length / _AVERAGE_LENGTH))
         if score > 0:
             ranked.append((score, doc))
-    return [dict(doc) for _, doc in sorted(ranked, key=lambda item: item[0], reverse=True)[:max(0, min(count, 8))]]
+    return [deepcopy(doc) for _, doc in sorted(ranked, key=lambda item: item[0], reverse=True)[:max(0, min(count, 8))]]

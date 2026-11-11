@@ -47,7 +47,7 @@ def provider_failure(exc=None, *, missing=False, **metadata):
                    if exc.reason == 'max-tokens' else 'The Harness did not return a complete answer. The task can be retried.')
     elif isinstance(exc, CitationValidationError):
         code = 'citation_validation_failed'
-        message = 'The generated answer cited knowledge sources without saved retrieval evidence in this session. '
+        message = 'The generated answer cited knowledge sources without saved full-text search or read evidence in this session. '
         message += 'The answer could not be verified; this is not an API-key or network error.'
     elif isinstance(exc, BudgetExceeded):
         code = "agent_budget_exceeded"

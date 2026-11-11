@@ -13,6 +13,7 @@ def entry(key, title, controls, tags, content, source='frontend/app.js'):
     UI_DOCUMENTS.append({
         'id': 'ui-' + key, 'title': '界面说明：' + title, 'url': None,
         'tags': '界面 操作 功能 按钮 面板 ui help ' + tags + ' ' + ' '.join(controls),
+        'summary': content.split('。', 1)[0][:240],
         'content': f'位置/控件：{title}。\n{content}\n这是本项目界面说明，不代表当前页面状态。实现依据：frontend/index.html；{source}。',
         'controls': controls, 'implementation_sources': ['frontend/index.html', source],
     })

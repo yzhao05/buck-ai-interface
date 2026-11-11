@@ -170,6 +170,10 @@ def test_ordinary_chat_never_prefetches_and_pending_patch_allows_independent_rea
         assert (await execute('configure_identification',{'open_panel':True,'changes':{},'start_after_apply':False}))['status']=='pending_ui'
         found=await execute('search_knowledge',{'query':'Buck ESR ripple'})
         assert found['count']>0 and 'error' not in found
+        catalogue=await execute('list_knowledge',{'category':'formula'})
+        assert catalogue['count']>0 and 'error' not in catalogue
+        selected=await execute('read_knowledge',{'ids':[catalogue['entries'][0]['id']]})
+        assert selected['count']==1 and 'error' not in selected
         assert 'error' not in await execute('search_conversation',{'query':'prior'})
         assert 'error' not in await execute('check_plecs_connection',{})
         assert 'error' in await execute('start_identification',{})

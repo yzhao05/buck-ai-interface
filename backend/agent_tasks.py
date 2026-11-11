@@ -18,7 +18,7 @@ running = {}
 # These tools only read existing evidence. Unknown tools require the original session.
 REPLAYABLE_READS = frozenset({
     'read_experiment_results', 'get_experiment_history', 'get_analysis_history', 'get_identification_result',
-    'get_waveform_summary', 'get_diagnostic_evidence', 'search_knowledge', 'search_conversation', 'search_local_csv',
+    'get_waveform_summary', 'get_diagnostic_evidence', 'search_knowledge', 'list_knowledge', 'read_knowledge', 'search_conversation', 'search_local_csv',
     'read_conversation_message', 'read_diagnosis', 'check_plecs_connection', 'search_plecs_models', 'get_plecs_models',
 })
 _initialization_lock = threading.Lock()
