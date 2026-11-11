@@ -7,7 +7,7 @@ const assert=require('node:assert/strict');
  page.on('pageerror',e=>errors.push(e.message));
  const ready=()=>page.waitForFunction(()=>state.connected && activeConversation && !historyLocked() && !archiveRunning);
  try {
-  await page.goto('http://127.0.0.1:8001');await ready();
+  await page.goto(process.env.TEST_BASE_URL || 'http://127.0.0.1:8001');await ready();
   await page.evaluate(()=>{clearTimeout(archiveTimer);archiveTimer=null;});
   let requests=0;
   await page.route('**/api/archive**',async route=>{
@@ -47,7 +47,7 @@ const assert=require('node:assert/strict');
   assert(requests>0);
   assert.equal(await input.inputValue(),draft);
   const snapshot=await page.evaluate(()=>({id:activeConversation.id,key:archiveKey}));
-  const remote=await page.request.get('http://127.0.0.1:8001/api/archive/conversations/'+snapshot.id,{headers:{'X-Archive-Key':snapshot.key}});
+  const remote=await page.request.get((process.env.TEST_BASE_URL || 'http://127.0.0.1:8001')+'/api/archive/conversations/'+snapshot.id,{headers:{'X-Archive-Key':snapshot.key}});
   assert.equal((await remote.json()).record.draft,draft,'Deferred sync must upload the latest draft');
   // A previously queued timer must also be canceled when the user starts editing.
   await page.evaluate(()=>scheduleArchiveSync());

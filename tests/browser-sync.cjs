@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
 const crypto=require('node:crypto');
 const path=require('node:path');
 const {execFileSync}=require('node:child_process');
-const origin='http://127.0.0.1:8001';
+const origin=process.env.TEST_BASE_URL || 'http://127.0.0.1:8001';
 const ready=p=>p.locator('#send-chat:not([disabled])').waitFor({timeout:60000});
 const sync=async p=>{await ready(p);await p.evaluate(()=>synchronizeArchive());await ready(p);assert((await p.locator('#sync-status').textContent()).includes('已同步'),await p.locator('#sync-status').textContent());};
 const snapshot=p=>p.evaluate(()=>({key:archiveKey,scope:csvScope(),id:activeConversation.id,record:structuredClone(activeConversation)}));
@@ -41,7 +41,7 @@ const snapshot=p=>p.evaluate(()=>({key:archiveKey,scope:csvScope(),id:activeConv
   const owner=crypto.createHash('sha256').update(initial.key).digest('hex');
   execFileSync('.venv/Scripts/python.exe',['-c',
    'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("DELETE FROM files WHERE owner=?",(sys.argv[2],)); c.execute("DELETE FROM conversations WHERE owner=?",(sys.argv[2],)); c.commit(); c.close()',
-   path.resolve('runtime/archive-sync-review/archive.sqlite3'),owner]);
+   path.resolve(process.env.ARCHIVE_DIR || 'runtime/archive-sync-review','archive.sqlite3'),owner]);
   await sync(q);
   const remote=await q.request.get(origin+'/api/archive/conversations/'+initial.id,{headers:{'X-Archive-Key':initial.key}});
   const remoteBody=await remote.json();assert.equal(remoteBody.record.messages.length,2);assert.equal(remoteBody.files[0].sha256,sha);assert(remoteBody.files[0].valid);

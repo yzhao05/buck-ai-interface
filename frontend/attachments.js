@@ -33,11 +33,14 @@ window.BuckAttachments = (() => {
   }
   return {
     save(conversation, sha256, filename, blob, epoch = 0) {
-      return transaction("readwrite", store => {
+      return transaction("readwrite", (store, done) => {
         const key=conversation+":"+sha256, request=store.get(key);
         request.onsuccess=()=>{
           // A slow background download must not overwrite a newer re-upload.
-          if (!request.result || (request.result.epoch || 0)<=epoch) store.put({key,conversation,sha256,filename,blob,epoch});
+          if (!request.result || (request.result.epoch || 0)<=epoch) {
+            const value={key,conversation,sha256,filename,blob,epoch,version:crypto.randomUUID()};
+            store.put(value);done(value);
+          }
         };
       });
     },

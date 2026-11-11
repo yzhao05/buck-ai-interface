@@ -104,9 +104,9 @@ entry('history', '历史会话列表 / 新建会话', 'history-list new-chat',
       '点击历史项切换并恢复其消息、表单、实验和可恢复附件；点击新建会话会保存现有历史并打开新会话，不是删除历史。新会话不自动继承当前CSV。正在运行或保存失败时可能阻止切换。', 'frontend/history.js')
 entry('delete-chat', '删除当前会话', 'delete-chat', '删除 会话 不可撤销 delete conversation',
       '经确认后删除当前会话、实验记录及浏览器/后端保存的CSV；离线删除将在重连后同步，不能撤销。与新建会话、清除当前数据不同。纯询问该按钮用途不授权执行删除。', 'frontend/history.js')
-entry('sync', '立即同步与备份状态', 'sync-now sync-status history-status csv-storage-status',
+entry('sync', '立即同步与备份状态', 'sync-now sync-verify sync-status history-status csv-storage-status',
       '同步 备份 恢复 存储 sync backup archive',
-      '立即核对并补齐浏览器和后端的会话、实验记录与CSV备份。以同步状态判断是否完成；仅本地存在不代表已备份。后端存储若非持久卷，跨部署仍可能丢失。同步不是开始辨识，也不是下载报告。', 'frontend/sync.js')
+      '立即同步按版本补齐浏览器和后端的会话、实验记录与CSV备份，优先处理当前会话，其余分批后台继续；未变化的会话跳过全文传输。状态显示会话处理及CSV上传、下载进度，后台处理不会替换正在编辑的界面。CSV上传与下载仍校验SHA256，平时复用已校验文件版本；距上次校验超过一天时再次核验，校验备份完整性可手动逐个核验全部CSV，耗时较长。以同步状态判断是否完成；仅本地存在不代表已备份。后端存储若非持久卷，跨部署仍可能丢失。同步不是开始辨识，也不是下载报告。', 'frontend/sync.js')
 entry('experiment-history', '已保存实验', 'experiment-history experiment-runs',
       '已保存实验 次数 摘要 experiment history saved runs',
       '每次完成辨识后保存实验摘要，切换方法或PWM不覆盖旧记录。记录展示文件、方法、PWM和参数，可让助手比较同会话多次实验。摘要不等于完整原始CSV、全波形或逐轮训练数据；不能把同一文件多次计算当作独立实验。', 'frontend/experiments.js')

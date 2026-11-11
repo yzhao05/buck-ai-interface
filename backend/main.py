@@ -771,4 +771,4 @@ app.include_router(archive.router)
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")
 # Added last so CORS also wraps auth and payload-limit error responses.
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST", "DELETE"],
-                   allow_headers=[APP_TOKEN_HEADER, "Content-Type", "X-Session-ID", "X-Archive-Key"], allow_credentials=False)
+                   allow_headers=[APP_TOKEN_HEADER, "Content-Type", "X-Session-ID", "X-Archive-Key", "X-Archive-Protocol"], allow_credentials=False)

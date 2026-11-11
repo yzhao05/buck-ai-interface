@@ -125,13 +125,14 @@ function errorText(body) {
   if (Array.isArray(body.detail)) return body.detail.map(e => `${e.loc?.slice(1).join(".")}: ${e.msg}`).join("；");
   return "请求失败，请检查后端服务。";
 }
-async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = ""} = {}) {
+async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = "", archiveProtocol = ""} = {}) {
   if (!base) throw new Error("请在连接设置中填写魔搭创空间的应用地址，或启动本地后端。");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   const headers = {"X-Session-ID": sessionId};
   if (accessToken && path !== "/api/health") headers[appTokenHeader()] = `Bearer ${accessToken}`;
   if (archiveCode) headers["X-Archive-Key"] = archiveCode;
+  if (archiveProtocol) headers["X-Archive-Protocol"] = archiveProtocol;
   if (body && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
   try {
     const response = await fetch(base.replace(/\/$/, "") + path, {method, headers,
@@ -184,6 +185,7 @@ function controls() {
   $("chat-input").disabled = state.syncBusy;
   $("open-settings").disabled = state.syncBusy || archiveRunning;
   $("sync-now").disabled = waiting || !state.connected || archiveRunning;
+  $("sync-verify").disabled = waiting || !state.connected || archiveRunning;
   $("apply-mapping").disabled = !state.dataset || waiting;
   $("load-demo").disabled = waiting;
   $("toggle-csv-library").disabled = !activeConversation || (waiting && $("csv-library-menu").hidden);
@@ -1369,7 +1371,8 @@ $("open-settings").onclick=async()=>{$("api-url").value=base;$("access-token").v
       .some(input=>input.type==='checkbox'?input.checked:Boolean(input.value)))fillPlecsBinding(p.analysis_binding);
   }}catch{/* PLECS configuration is optional. */}
 };
-$("sync-now").onclick=()=>void synchronizeArchive();
+$("sync-now").onclick=()=>void synchronizeArchive({currentFirst:true});
+$("sync-verify").onclick=()=>void synchronizeArchive({background:true,verify:true});
 $("copy-sync-code").onclick=async()=>{
   try { await navigator.clipboard.writeText($("sync-code").value);ui($("settings-status"),"同步恢复码已复制，请妥善保管。"); }
   catch { ui($("settings-status"),"复制失败，请手动复制同步恢复码。"); }
@@ -1422,7 +1425,7 @@ $("settings-form").onsubmit=async event=>{
       const plecsConfig=readPlecsSettings();
       await syncPlecsConfig(plecsConfig);
       localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(plecsConfig));
-      const reopened=await synchronizeArchive({preferRemote:true});
+      const reopened=await synchronizeArchive({preferRemote:true,currentFirst:true});
       if(!reopened && !state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
       scheduleArchiveSync();
       $("settings-dialog").close();ui($("settings-status"), "");
@@ -1445,7 +1448,7 @@ window.addEventListener("pagehide",persistConversation);
 new ResizeObserver(()=>drawCharts()).observe($("current-chart"));
 $("conversation-panel").classList.add("is-empty");
 controls();void (async()=>{await initializeHistory();if(await connect()){
-  const reopened=await synchronizeArchive({preferRemote:true});
+  const reopened=await synchronizeArchive({preferRemote:true,currentFirst:true});
   if(!reopened){
     if(!state.dataset)await restoreAttachment(activeConversation?.attachment);
     await recoverExperiments();

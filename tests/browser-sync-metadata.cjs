@@ -6,7 +6,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/health',async route=>{const r=await route.fetch(),body=await r.json();body.archive_enabled=false;await route.fulfill({json:body});});
  try{
-  await page.goto('http://127.0.0.1:8001');await page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked());
+  await page.goto(process.env.TEST_BASE_URL || 'http://127.0.0.1:8001');await page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked());
   await page.locator('#enter-identification').click();
   await page.evaluate(()=>{
    persistConversation();

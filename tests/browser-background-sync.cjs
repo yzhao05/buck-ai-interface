@@ -82,6 +82,7 @@ const baseUrl=process.env.TEST_BASE_URL || 'http://127.0.0.1:8001';
     return route.continue();
   });
   gate=new Promise(resolve=>release=resolve);reached=new Promise(resolve=>arrived=resolve);
+  await page.locator('#chat-input').fill('等待任务结束同步的新修改');
   await start();
   await page.evaluate(()=>{state.chatBusy=true;});
   release();

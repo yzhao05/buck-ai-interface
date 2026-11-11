@@ -21,6 +21,62 @@ def record():
             "messages":[{"id":"one","created":100,"role":"user","content":"hello"}],"attachment":None}
 
 
+def test_incremental_versions_cover_metadata_files_and_tombstones(client):
+    r=record();url='/api/archive/conversations/'+r['id']
+    headers={'X-Archive-Protocol':'2'}
+    first=client.post(url+'?verify=false',json=r).json()
+    token=first['revision']
+    index=client.get('/api/archive',headers=headers).json()['conversations'][0]
+    assert index['revision']==token and index['updated']==100
+    assert client.post(url+'?verify=false',json=r).json()['revision']==token
+    # Same timestamp, changed contents still changes the token.
+    changed={**r,'messages':r['messages']+[{'id':'two','created':100,'role':'assistant','content':'new'}]}
+    second=client.post(url+'?verify=false',json=changed).json()['revision']
+    assert second!=token
+    raw=b't,i,v\n0,1,2\n';sha=hashlib.sha256(raw).hexdigest()
+    assert client.post(url+'/files/'+sha+'?epoch=0',files={'file':('test.csv',raw)}).status_code==200
+    third=client.get('/api/archive',headers=headers).json()['conversations'][0]['revision']
+    assert third!=second
+    fast=client.get(url+'?verify=false').json()
+    assert fast['files'][0]['verified'] is False
+    assert client.get(url+'?verify=true').json()['files'][0]['verified'] is True
+    client.delete(url)
+    deleted=client.get('/api/archive',headers=headers).json()['conversations'][0]
+    assert deleted['deleted'] and deleted['revision']!=third
+    assert client.post(url,json=r).json()['deleted'] is True
+
+
+def test_fast_manifest_does_not_read_csv_bytes():
+    class MetadataOnly:
+        def execute(self, sql, args):
+            return [{'rowid':1,'sha':'a'*64,'filename':'large.csv','size':10000000}]
+        def blobopen(self, *args, **kwargs):
+            pytest.fail('Incremental metadata reads must not read CSV bytes')
+    rows=archive.ArchiveStore._manifest(MetadataOnly(),'owner','id',0,verify=False)
+    assert rows[0]['size']==10000000 and rows[0]['verified'] is False
+
+
+def test_incremental_protocol_allowed_for_separate_frontend(client):
+    response=client.options('/api/archive',headers={'Origin':main.origins[0],
+        'Access-Control-Request-Method':'GET',
+        'Access-Control-Request-Headers':'X-Archive-Key,X-Archive-Protocol,X-Session-ID'})
+    assert response.status_code==200
+    assert 'x-archive-protocol' in response.headers['access-control-allow-headers'].lower()
+
+
+def test_version_migration_keeps_legacy_archive(tmp_path):
+    import json
+    import sqlite3
+    r=record()
+    with sqlite3.connect(tmp_path/'archive.sqlite3') as db:
+        db.execute('CREATE TABLE conversations (owner TEXT,id TEXT,deleted INTEGER,payload TEXT,PRIMARY KEY(owner,id))')
+        db.execute('INSERT INTO conversations VALUES(?,?,0,?)',('owner',r['id'],json.dumps(r)))
+    store=archive.ArchiveStore(tmp_path)
+    token=store.index('owner',versions=True)[0]['revision']
+    assert token and store.get('owner',r['id'])['record']==r
+    assert archive.ArchiveStore(tmp_path).index('owner',versions=True)[0]['revision']==token
+
+
 def test_private_sync_merge_persistence_and_tombstones(client):
     r=record();url="/api/archive/conversations/"+r["id"]
     assert client.post(url,json=r).status_code==200

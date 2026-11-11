@@ -63,40 +63,66 @@ class ArchiveStore:
                     db.execute("PRAGMA journal_mode=WAL")
                     db.execute("CREATE TABLE IF NOT EXISTS conversations (owner TEXT, id TEXT, deleted INTEGER NOT NULL DEFAULT 0, payload TEXT, PRIMARY KEY(owner,id))")
                     db.execute("CREATE TABLE IF NOT EXISTS files (owner TEXT, id TEXT, epoch INTEGER, sha TEXT, filename TEXT, raw BLOB, PRIMARY KEY(owner,id,sha))")
+                    db.execute("CREATE TABLE IF NOT EXISTS archive_versions (owner TEXT, id TEXT, revision TEXT, updated INTEGER, PRIMARY KEY(owner,id))")
+                    # Tokens change for metadata, file writes and deletions, including
+                    # legacy clients. No CSV bytes are read to build the index.
+                    for event in ('INSERT', 'UPDATE'):
+                        db.execute(f"""CREATE TRIGGER IF NOT EXISTS archive_conversation_{event.lower()}
+                            AFTER {event} ON conversations BEGIN
+                            INSERT OR REPLACE INTO archive_versions VALUES
+                            (NEW.owner, NEW.id, lower(hex(randomblob(16))), COALESCE(json_extract(NEW.payload,'$.updated'),0)); END""")
+                    for event, row in (('INSERT','NEW'), ('UPDATE','NEW'), ('DELETE','OLD')):
+                        db.execute(f"""CREATE TRIGGER IF NOT EXISTS archive_file_{event.lower()}
+                            AFTER {event} ON files BEGIN UPDATE archive_versions
+                            SET revision=lower(hex(randomblob(16))) WHERE owner={row}.owner AND id={row}.id; END""")
+                    db.execute("""INSERT OR IGNORE INTO archive_versions
+                        SELECT owner,id,lower(hex(randomblob(16))),COALESCE(json_extract(payload,'$.updated'),0) FROM conversations""")
                     db.commit()
                     self._initialized = True
             with db: yield db
         finally: db.close()
 
-    def index(self, owner):
+    def index(self, owner, versions=False):
         with self.connect() as db:
+            if versions:
+                return [dict(r) for r in db.execute("""SELECT c.id,c.deleted,v.revision,v.updated
+                    FROM conversations c LEFT JOIN archive_versions v ON c.owner=v.owner AND c.id=v.id
+                    WHERE c.owner=?""", (owner,))]
             return [{"id":r["id"], "deleted":bool(r["deleted"])} for r in db.execute("SELECT id,deleted FROM conversations WHERE owner=?",(owner,))]
 
-    def get(self, owner, identifier):
+    @staticmethod
+    def _revision(db, owner, identifier):
+        row = db.execute("SELECT revision FROM archive_versions WHERE owner=? AND id=?", (owner, identifier)).fetchone()
+        return row['revision'] if row else None
+
+    def get(self, owner, identifier, verify=True):
         with self.connect() as db:
             db.execute("BEGIN")
             row = db.execute("SELECT * FROM conversations WHERE owner=? AND id=?",(owner,identifier)).fetchone()
             if row is None: raise HTTPException(404, "Archive conversation not found")
             if row["deleted"]: return {"deleted":True,"id":identifier}
             record = json.loads(row["payload"])
-            files = self._manifest(db, owner, identifier, record["file_epoch"])
-            return {"deleted":False,"record":record,"files":files}
+            files = self._manifest(db, owner, identifier, record["file_epoch"], verify)
+            return {"deleted":False,"record":record,"files":files,"revision":self._revision(db, owner, identifier)}
 
     @staticmethod
-    def _manifest(db, owner, identifier, epoch):
+    def _manifest(db, owner, identifier, epoch, verify=True):
         files = []
         rows = db.execute("SELECT rowid,sha,filename,length(raw) AS size FROM files WHERE owner=? AND id=? AND epoch=?",
                           (owner, identifier, epoch))
         for row in rows:
-            digest = hashlib.sha256()
-            with db.blobopen("files", "raw", row["rowid"], readonly=True) as blob:
-                while chunk := blob.read(64 * 1024):
-                    digest.update(chunk)
+            valid = True  # Uploads are verified; periodic/explicit audits recheck storage.
+            if verify:
+                digest = hashlib.sha256()
+                with db.blobopen("files", "raw", row["rowid"], readonly=True) as blob:
+                    while chunk := blob.read(64 * 1024):
+                        digest.update(chunk)
+                valid = digest.hexdigest() == row['sha']
             files.append({"sha256":row["sha"], "filename":row["filename"], "size":row["size"],
-                          "valid":digest.hexdigest() == row["sha"]})
+                          "valid":valid, "verified":verify})
         return files
 
-    def merge(self, owner, incoming):
+    def merge(self, owner, incoming, verify=True):
         identifier = incoming["id"]
         if len(json.dumps(incoming, ensure_ascii=False).encode()) > 8*1024*1024:
             raise HTTPException(413, "Conversation archive exceeds 8 MB")
@@ -128,10 +154,12 @@ class ArchiveStore:
             encoded = json.dumps(merged,ensure_ascii=False)
             if len(encoded.encode()) > 8*1024*1024 or len(messages)>10000 or len(experiments)>200:
                 raise HTTPException(413,"Conversation archive is full; start a new conversation")
-            db.execute("INSERT OR REPLACE INTO conversations VALUES(?,?,0,?)",(owner,identifier,encoded))
+            if row is None or json.loads(row['payload']) != merged:
+                db.execute("INSERT OR REPLACE INTO conversations VALUES(?,?,0,?)",(owner,identifier,encoded))
             db.execute("DELETE FROM files WHERE owner=? AND id=? AND epoch<>?",(owner,identifier,merged["file_epoch"]))
-            files = self._manifest(db, owner, identifier, merged["file_epoch"])
-        return {"deleted":False, "record":merged, "files":files}
+            files = self._manifest(db, owner, identifier, merged["file_epoch"], verify)
+            revision = self._revision(db, owner, identifier)
+        return {"deleted":False, "record":merged, "files":files, "revision":revision}
 
     def delete(self, owner, identifier):
         with self.connect() as db:
@@ -169,21 +197,21 @@ def owner(x_archive_key: str = Header(...)):
 
 
 @router.get("")
-def index(account=Depends(owner)):
-    return {"conversations":store.index(account)}
+def index(account=Depends(owner), x_archive_protocol: str = Header(default='')):
+    return {"conversations":store.index(account, versions=x_archive_protocol == '2')}
 
 
 @router.get("/conversations/{identifier}")
-def get_conversation(identifier: UUID, account=Depends(owner)):
-    return store.get(account,str(identifier))
+def get_conversation(identifier: UUID, verify: bool = True, account=Depends(owner)):
+    return store.get(account,str(identifier),verify=verify)
 
 
 @router.post("/conversations/{identifier}")
-def merge_conversation(identifier: UUID, body: SavedConversation, account=Depends(owner)):
+def merge_conversation(identifier: UUID, body: SavedConversation, verify: bool = True, account=Depends(owner)):
     if identifier != body.id: raise HTTPException(422,"Conversation ID mismatch")
     log_memory('before_archive_merge')
     try:
-        return store.merge(account,body.model_dump(mode="json"))
+        return store.merge(account,body.model_dump(mode="json"),verify=verify)
     finally:
         log_memory('after_archive_merge')
 
