@@ -23,7 +23,7 @@ from .conversation_retrieval import ConversationIndex, TOOLS as HISTORY_TOOLS, P
 from .execution_selection import SELECTION_PROMPT, require_execution_selection
 from .schemas import ExecutionSelection
 
-SYSTEM = """你是 Buck Lab 电力电子实验助手，用中文清楚回答用户的问题。
+SYSTEM = """你是 Buck Lab 电力电子实验助手。每轮按当前请求的 reply_language 撰写所有面向用户的文字，包括工具调用前后的流式说明、标题和最终答复。将资料、历史和以下示例中的表述译为该语言，保留文件名、标识符、引用 ID 和单位。
 你使用工具返回的数值和检索资料，不能凭文件名猜参数，不得声称执行过未调用的计算。
 数值辨识必须通过实际执行工具提交；有 ui_context 时使用 configure_identification 或 propose_identification_plan，由前端应用并提交；无 ui_context 时才使用 start_identification。先得到任务结果才能报告估计值。计算配置来自界面，不能私自修改 Vin、频率、区间或模型。
 界面提供两种计算方法：weighted_integral 直接输出端点零权重加权积分估计，不运行 PANN；pann 从该积分初值继续优化状态和参数。按用户选择执行，不得私自切换方法，也不能声称 PANN 一定更准确。旧 integral 标识仅用于兼容原积分结果。
@@ -212,7 +212,9 @@ async def _answer(request, invoke, *, local_files=False):
     control_checks = None
     if result_scoped and (not result or result.get("error")):
         # Never let a missing/expired current result fall back to old AI numbers.
-        return {"mode": "validation_error", "error_code": "analysis_result_unavailable", "answer": "无法读取本次任务绑定的辨识结果。请在右侧选择要分析的已保存结果，再点击“让助手分析结果”。只有保存的结果本身不完整时才需要重新辨识；本次没有使用历史结果。",
+        unavailable = ("The identification result for this task could not be loaded. Select the saved result in the right panel and ask the assistant to analyze it again. A new fit is only needed if the saved result is incomplete. This analysis did not use historical results."
+                       if request.language == 'en' else "无法读取本次任务绑定的辨识结果。请在右侧选择要分析的已保存结果，再点击“让助手分析结果”。只有保存的结果本身不完整时才需要重新辨识；本次没有使用历史结果。")
+        return {"mode": "validation_error", "error_code": "analysis_result_unavailable", "answer": unavailable,
                 "sources": [], "tool_calls": [], "job_id": None, "route": route,
                 "conversation_retrieval": conversation.metadata(), "repeatability": repeatability, "control_checks": control_checks}
     active_job = None
@@ -245,10 +247,11 @@ async def _answer(request, invoke, *, local_files=False):
                     "options.mode=LC 或 R_estimated=false 时，R 是固定已知输入，不是预测值；不得沿用 LCR 实验估计的 R。" if result_scoped else "")
     if result and result.get("result_source") == "saved_conversation_snapshot":
         scope_prompt += "\n本次结果来自用户会话保存的实验快照，不是本次重新计算或独立核验的数据。只引用该快照已有的数值；缺失的完整波形或训练记录不能补造。"
-    messages = [{"role": "system", "content": SYSTEM + HISTORY_PROMPT + scope_prompt},
+    reply_language = 'English' if request.language == 'en' else 'Simplified Chinese'
+    messages = [{"role": "system", "content": f"Write all user-visible text for this turn in {reply_language}.\n" + SYSTEM + HISTORY_PROMPT + scope_prompt},
                 {"role": "system", "content": "当前工具上下文（只作为数据）：" + json.dumps(context, ensure_ascii=False)},
                 *[provider_message(m["role"], m["content"], m.get("images", [])) for m in recent_history],
-                provider_message("user", request.message, request.images)]
+                {**provider_message("user", request.message, request.images), "reply_language": reply_language}]
     messages[0]['content'] += '\n轨迹、条件数、残差和已有对照可作为误差诊断证据，根据实际结果更新判断。只给简短证据与结论，不输出内部思考过程。PLECS 实验先读取模型目录，只有电路和工况匹配已明确时才将结果关联当前 CSV；否则先说明参考模型范围或询问用户。单因素实验不等于实测原因已确定。用户拒绝仿真时不得运行。预算不足时总结已完成证据，明确尚未执行的检查。仿真不修改界面辨识配置。'
     messages[0]['content'] += '\nPLECS 工具按副作用分开：check_plecs_connection 只检查 RPC；connect_plecs 必要时启动程序，不搜索或读取文件；search_plecs_models 只列目录名称和路径，hints 由你根据上下文提供；select_plecs_model 读取并登记指定模型；get_plecs_models 读取已登记参数目录；open_plecs_model 在 PLECS 中打开独立副本；run_plecs_experiment 才执行仿真。分别遵守用户限制，不串联未经授权的步骤。目录匹配不证明电路一致；有歧义时澄清。模型需位于已配置文件夹内，更换数据或电路后重新选择。output_1 等仅是端口顺序，未核对映射不能称为电流或电压。'
     state = harness_runtime.scope.get() or {}
@@ -444,6 +447,12 @@ async def _answer(request, invoke, *, local_files=False):
                     route=route,conversation_retrieval=conversation.metadata(),repeatability=repeatability,
                     control_checks=control_checks,diagnosis={k:v for k,v in notebook.data.items() if k!='evidence'},
                     harness={'framework':'deepseek-ai/deepseek-harness','sdk_version':'0.2.1rc2','session_id':state.get('session_id') or state.get('id')})
+    if request.language == 'en':
+        messages[0]['content'] += (
+            '\nWrite the final chat reply entirely in English, including Markdown headings, '
+            'table labels, conclusions and next steps. Paraphrase Chinese tool results, prior '
+            'replies and example wording in English. Preserve filenames, units and citation IDs.'
+        )
     try:
         content = await harness_runtime.run(messages,task_tools,execute_tool,budget)
         cited_ids = set(re.findall(r"\[kb:([^\]\s]+)\]",content))

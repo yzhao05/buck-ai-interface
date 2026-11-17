@@ -14,9 +14,10 @@ from backend.schemas import ChatRequest
 from conftest import REAL_RUN
 
 
-@pytest.mark.parametrize('stop_reason', ['end_turn', 'max_tokens', 'long_answer'])
-def test_first_ui_question_with_real_harness(monkeypatch, stop_reason):
+@pytest.mark.parametrize(('stop_reason','language'), [('end_turn','en'), ('max_tokens','zh'), ('long_answer','zh')])
+def test_first_ui_question_with_real_harness(monkeypatch, stop_reason, language):
     requests = []
+    answer_text = 'Interface controls [kb:ui-overview]' if language == 'en' else '界面功能说明 [kb:ui-overview]'
 
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -30,7 +31,7 @@ def test_first_ui_question_with_real_harness(monkeypatch, stop_reason):
                          for item in payload['messages'] if isinstance(item['content'], list))
             block = {'type': 'text', 'text': ''} if called else {
                 'type': 'tool_use', 'id': 'search1', 'name': 'mcp__buck__search_knowledge', 'input': {}}
-            delta = {'type': 'text_delta', 'text': '界面功能说明 [kb:ui-overview]'} if called else {
+            delta = {'type': 'text_delta', 'text': answer_text} if called else {
                 'type': 'input_json_delta', 'partial_json': json.dumps({'query': '前端工作台总览', 'top_k': 4})}
             frames = [
                 {'type': 'message_start', 'message': {'id': 'm1', 'type': 'message', 'role': 'assistant',
@@ -63,9 +64,12 @@ def test_first_ui_question_with_real_harness(monkeypatch, stop_reason):
     async def no_execution(*_):
         raise AssertionError('UI explanation must not run numerical work')
 
+    events = []
+    token = harness_runtime.scope.set({'emit':lambda kind, data: events.append((kind,data))})
     try:
-        result = asyncio.run(chat.answer(ChatRequest(message='告诉我前端的各个按键有什么作用', reasoning_mode='auto'), no_execution))
+        result = asyncio.run(chat.answer(ChatRequest(message='告诉我前端的各个按键有什么作用', reasoning_mode='auto', language=language), no_execution))
     finally:
+        harness_runtime.scope.reset(token)
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
@@ -75,8 +79,14 @@ def test_first_ui_question_with_real_harness(monkeypatch, stop_reason):
         assert result['finish_reason'] == 'max-tokens'
     else:
         assert result['mode'] == 'deepseek', result
+        assert result['answer'] == answer_text
+        assert ('text_delta', {'text':answer_text}) in events
         assert any(d['id'] == 'ui-overview' for d in result['sources'])
     assert len(requests) == 2
+    expected_language = 'English' if language == 'en' else 'Simplified Chinese'
+    for payload in requests:
+        assert f'Write all user-visible text for this turn in {expected_language}.' in str(payload['system'])
+        assert f'"reply_language": "{expected_language}"' in str(payload['messages'])
     assert result['agent_budget']['reserved_cost_usd'] < .5
     assert result['agent_budget']['unsettled_model_calls'] == 0
     print('First UI question budget:', result['agent_budget'])
@@ -120,6 +130,7 @@ def test_provider_retries_preserve_original_error_and_do_not_spend_again(monkeyp
 @pytest.mark.parametrize('expired', [False, True])
 def test_sdk_timeout_is_not_mislabeled_as_total_budget(monkeypatch, expired):
     import deepseek_harness
+    monkeypatch.setenv('AGENT_TIME_LIMIT_S', '300')
     budget = Budget(False)
     closed = []
 
@@ -216,16 +227,98 @@ def test_cleanup_failure_preserves_original_error(monkeypatch, failure_type):
     assert not list(harness_runtime.ROOT.rglob('buck.patch.yml'))
 
 
-@pytest.mark.parametrize('value', ['nan', 'inf', '-inf', '0', '-1'])
-def test_invalid_time_setting_is_rejected_before_capping(monkeypatch, value):
+@pytest.mark.parametrize('value', ['nan', 'inf', '-inf', '-1'])
+def test_invalid_time_setting_is_rejected(monkeypatch, value):
     monkeypatch.setenv('AGENT_TIME_LIMIT_S', value)
     with pytest.raises(ValueError, match='budget settings'):
         Budget(False)
 
 
-def test_valid_time_setting_still_has_hard_cap(monkeypatch):
+def test_positive_time_setting_is_respected(monkeypatch):
     monkeypatch.setenv('AGENT_TIME_LIMIT_S', '1200')
-    assert Budget(False).seconds == 900
+    budget = Budget(False)
+    assert budget.seconds == 1200
+    budget.started -= 1201
+    with pytest.raises(BudgetExceeded, match='time budget'):
+        budget.remaining()
+
+
+@pytest.mark.parametrize('value', [None, '0'])
+def test_unlimited_time_keeps_other_budgets(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv('AGENT_TIME_LIMIT_S', raising=False)
+    else:
+        monkeypatch.setenv('AGENT_TIME_LIMIT_S', value)
+    budget = Budget(False)
+    budget.started -= 1000000
+    assert budget.remaining() is None
+    assert budget.metadata()['time_limit_s'] is None
+    json.dumps(budget.metadata(), allow_nan=False)
+    assert budget.reserve({'messages': []}) > 0
+    budget.calls = budget.rounds
+    with pytest.raises(BudgetExceeded, match='model step'):
+        budget.reserve({})
+    budget.calls = 0
+    budget.reserved = budget.limit
+    with pytest.raises(BudgetExceeded, match='estimated cost'):
+        budget.reserve({})
+
+
+def test_local_tool_stops_at_mcp_timeout_without_task_deadline(monkeypatch):
+    import deepseek_harness
+    cancelled = threading.Event()
+
+    async def invoke(name, args):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    class Runtime:
+        def __init__(self, base_url, api_key, **kwargs):
+            self.url, self.key = base_url, api_key
+
+        def start(self):
+            with httpx.Client(trust_env=False, timeout=3) as client:
+                result = client.post(self.url+'/mcp', headers={'Authorization':'Bearer '+self.key},
+                                     json={'id':1, 'method':'tools/call', 'params':{'name':'slow'}}).json()['result']
+            assert result['isError'] and 'timed out' in result['content'][0]['text']
+            assert cancelled.wait(2)
+            raise RuntimeError('mock turn finished')
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(deepseek_harness, 'DeepSeekHarness', Runtime)
+    monkeypatch.setattr(harness_runtime, 'MCP_TOOL_TIMEOUT_S', 0.1)
+    monkeypatch.setenv('AGENT_TIME_LIMIT_S', '0')
+    with pytest.raises(RuntimeError, match='mock turn finished'):
+        asyncio.run(REAL_RUN([], [{'function':{'name':'slow'}}], invoke, Budget(False)))
+
+
+@pytest.mark.parametrize('remaining,expected', [(None, 150), (30, 30), (1200, 150)])
+def test_simulation_timeout_is_independent_of_unlimited_task(monkeypatch, remaining, expected):
+    from backend import simulation_analysis
+    arguments = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"status":"completed"}', b''
+
+    async def spawn(*args, **kwargs):
+        arguments.extend(args)
+        return Process()
+
+    monkeypatch.setattr(simulation_analysis, 'directory', lambda *_: None)
+    monkeypatch.setattr(simulation_analysis.asyncio, 'create_subprocess_exec', spawn)
+    token = harness_runtime.scope.set({'remaining': lambda: remaining})
+    try:
+        assert asyncio.run(simulation_analysis.evaluate_async('owner', 'experiment', 'result')) == {'status': 'completed'}
+    finally:
+        harness_runtime.scope.reset(token)
+    assert arguments[-1] == str(expected)
 
 
 @pytest.mark.parametrize('complete', [False, True])

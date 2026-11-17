@@ -25,7 +25,12 @@ class Budget:
         self.thinking = thinking
         self.rounds = 14 if thinking else 7
         self.started = time.monotonic()
-        self.seconds = float(os.getenv('AGENT_TIME_LIMIT_S', '300'))
+        # Zero disables the whole-answer deadline; None is accepted by Python
+        # wait_for, Future.result and httpx as an unlimited timeout.
+        seconds = float(os.getenv('AGENT_TIME_LIMIT_S', '0'))
+        if not math.isfinite(seconds) or seconds < 0:
+            raise ValueError('Agent budget settings require a finite nonnegative time limit')
+        self.seconds = seconds or None
         self.limit = float(os.getenv('AGENT_COST_LIMIT_USD', '0.50'))
         self.model = os.getenv('DEEPSEEK_MODEL', 'deepseek-flash')
         prices = DEEPSEEK_PRICES.get(self.model)
@@ -39,14 +44,15 @@ class Budget:
         self.max_output_tokens = int(os.getenv('AGENT_MAX_OUTPUT_TOKENS', '32768' if thinking else '8192'))
         if self.max_output_tokens <= 0:
             raise ValueError('Agent output token limit must be positive')
-        if not all(math.isfinite(x) and x > 0 for x in (self.seconds, self.limit, self.input_price, self.output_price, self.cached_input_price)):
+        if not all(math.isfinite(x) and x > 0 for x in (self.limit, self.input_price, self.output_price, self.cached_input_price)):
             raise ValueError('Agent budget settings must be positive')
-        self.seconds = min(900, self.seconds)
         self.reserved = 0.
         self.calls = 0
         self.reservations = {}
 
     def remaining(self):
+        if self.seconds is None:
+            return None
         remaining = self.seconds - (time.monotonic() - self.started)
         if remaining <= 0:
             raise BudgetExceeded('time budget reached')

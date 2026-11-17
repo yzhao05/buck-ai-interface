@@ -28,6 +28,9 @@ scope = contextvars.ContextVar('harness_scope', default=None)
 ROOT = Path(os.getenv('AGENT_RUNTIME_DIR') or Path(__file__).resolve().parents[1] / 'runtime') / 'harness'
 active = {}
 runtime_slots = threading.BoundedSemaphore(agent_capacity())
+MCP_TOOL_TIMEOUT_S = 900
+# This suffix also identifies the application prompt in already-saved SDK sessions.
+PERSONA_SUFFIX = '\n工具以 mcp__buck__ 前缀提供。用户输入在 JSON 消息列表中。'
 
 
 def rpc_diagnostic(message):
@@ -48,6 +51,7 @@ class Gateway:
         self.secret = secrets.token_urlsafe(32)
         self.error = None
         self.provider_stage = 'not_reached'
+        self.persona = None
         self.image_marker = None
         self.image_blocks = []
         self.require_image_marker = False
@@ -102,6 +106,7 @@ class Gateway:
                         if gateway.error is not None:
                             raise gateway.error
                         gateway.provider_stage = 'gateway_received'
+                        gateway.refresh_persona(body)
                         gateway.restore_images(body)
                         if gateway.budget.calls >= gateway.budget.rounds:
                             raise BudgetExceeded('model step budget reached')
@@ -208,6 +213,35 @@ class Gateway:
         self.server.daemon_threads = True
         self.url = 'http://127.0.0.1:'+str(self.server.server_port)
 
+    def refresh_persona(self, body):
+        """Promote the current app context over the SDK's persisted first-turn context."""
+        if self.persona is None:
+            return
+        def app_text(text):
+            return isinstance(text, str) and text.endswith(PERSONA_SUFFIX)
+
+        system = body.get('system')
+        if app_text(system):
+            body['system'] = self.persona
+        elif isinstance(system, list):
+            blocks = [b for b in system if b.get('type') == 'text' and app_text(b.get('text'))]
+            if not blocks:
+                return
+            for block in blocks:
+                block['text'] = self.persona
+        else:
+            return
+        # On resume the SDK can also append persona changes as system messages.
+        # The provider already has the current one in its top-level system field.
+        def redundant(message):
+            if message.get('role') != 'system':
+                return False
+            content = message.get('content')
+            return app_text(content) or (isinstance(content, list) and len(content) == 1
+                and content[0].get('type') == 'text' and app_text(content[0].get('text')))
+
+        body['messages'] = [m for m in body['messages'] if not redundant(m)]
+
     def restore_images(self, body):
         """Expand only the app-generated suffix of a user prompt, before budget accounting."""
         if not self.image_marker:
@@ -299,7 +333,14 @@ async def _run(messages, tools, invoke, budget):
             future = context.copy().run(asyncio.run_coroutine_threadsafe,invoke(name,args),loop)
             pending.add(future)
         try:
-            return future.result(timeout=budget.remaining())
+            remaining = budget.remaining()
+            timeout = MCP_TOOL_TIMEOUT_S if remaining is None else min(remaining, MCP_TOOL_TIMEOUT_S)
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            if future.cancel():
+                budget.remaining()
+                raise TimeoutError('MCP tool execution timed out') from None
+            raise
         except BaseException:
             future.cancel()
             raise
@@ -311,11 +352,12 @@ async def _run(messages, tools, invoke, budget):
         patches = [{'id':name,'disabled':True} for name in ('persistent-bash','persistent-pwsh','tool-fs','tool-working-directory','llm-retry','mcp-resources')]
         patches.append({'insert':[{'id':'buck-tools','name':'@deepseek-ai/dsh-mcp-client',
             'config':{'serverName':'buck','transport':'streamable-http','url':gateway.url+'/mcp',
-                      'headers':{'Authorization':'Bearer '+gateway.secret},'toolCallTimeoutMs':int(budget.seconds*1000),
+                      'headers':{'Authorization':'Bearer '+gateway.secret},'toolCallTimeoutMs':MCP_TOOL_TIMEOUT_S*1000,
                       'startupTimeoutMs':15000,'failOnStartupError':True}}]})
         system = '\n'.join(m['content'] for m in messages if m['role']=='system')
+        gateway.persona = system + PERSONA_SUFFIX
         patches.append({'id':'system-prompt','config':{'includeHarnessIdentity':False,'includeRuntimeContext':False,
-            'personaPrefix':system+'\n工具以 mcp__buck__ 前缀提供。用户输入在 JSON 消息列表中。'}})
+            'personaPrefix':gateway.persona}})
         path = home/'buck.patch.yml'
         path.write_text(json.dumps(patches),encoding='utf-8')
         # Supply prior chat as data; the official runtime owns subsequent turns.
@@ -333,7 +375,10 @@ async def _run(messages, tools, invoke, budget):
                         header,data = block['image_url']['url'].split(',',1)
                         images.append({'type':'image','data':data,'mimeType':header[5:].split(';')[0]})
                 content = '\n'.join(text)
-            history.append({'role':message['role'],'content':content})
+            turn = {'role':message['role'],'content':content}
+            if 'reply_language' in message:
+                turn['reply_language'] = message['reply_language']
+            history.append(turn)
         prompt = [{'type':'text','text':json.dumps(history,ensure_ascii=False)},*images]
         if images:
             # Stable across recovery of this task, even if a previous turn used the fallback.

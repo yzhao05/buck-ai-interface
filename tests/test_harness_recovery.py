@@ -20,10 +20,11 @@ def test_session_restart_uses_task_tool_history(tmp_path,monkeypatch,tool,can_re
         async def fail(_):
             harness_runtime.scope.get()['emit']('tool_start',{'name':tool})
             return {'mode':'provider_error'}
-        async def resume(_):
+        async def resume(body):
             assert harness_runtime.scope.get()['can_restart_session'] is can_restart
+            assert body.language == 'en'
             return {'mode':'deepseek'}
-        task_id = agent_tasks.launch('owner',ChatRequest(message='Compare results'),fail)['id']
+        task_id = agent_tasks.launch('owner',ChatRequest(message='Compare results', language='en'),fail)['id']
         await agent_tasks.running[task_id]
         agent_tasks.launch('owner',None,resume,task_id,resume=True)
         await agent_tasks.running[task_id]

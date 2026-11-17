@@ -49,11 +49,14 @@ function updatePlecsControls(){
   $("bridge-instructions").hidden=direct;
   ui($("bridge-check"),direct?"检查本机 PLECS 连接":"检查连接器状态");
 }
+let settingsSubmission=0;
 async function syncPlecsConfig(config=localPlecsConfig()){
   if(!config)return false;
-  const local=isLocalBackend(base);
-  if(!local && !(await api('/api/bridge/status')).paired)return false;
-  await api(local?'/api/plecs/settings':'/api/bridge/settings',{method:'POST',body:config,timeout:5000});
+  const address=base, owner=sessionId, submission=settingsSubmission;
+  const local=isLocalBackend(address);
+  if(!local && !(await api('/api/bridge/status',{timeout:null})).paired)return false;
+  if(address!==base || owner!==sessionId || submission!==settingsSubmission)return false;
+  await api(local?'/api/plecs/settings':'/api/bridge/settings',{method:'POST',body:config,timeout:null});
   return true;
 }
 function notice(text = "", success = false) { ui($("notice-text"), text); $("notice").hidden = !text; $("notice").className = "notice" + (success ? " success" : ""); }
@@ -127,8 +130,8 @@ function errorText(body) {
 }
 async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = "", archiveProtocol = ""} = {}) {
   if (!base) throw new Error("请在连接设置中填写魔搭创空间的应用地址，或启动本地后端。");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
+  const controller = timeout === null ? null : new AbortController();
+  const timer = controller && setTimeout(() => controller.abort(), timeout);
   const headers = {"X-Session-ID": sessionId};
   if (accessToken && path !== "/api/health") headers[appTokenHeader()] = `Bearer ${accessToken}`;
   if (archiveCode) headers["X-Archive-Key"] = archiveCode;
@@ -136,7 +139,7 @@ async function api(path, {method = "GET", body, timeout = 90000, asBlob = false,
   if (body && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
   try {
     const response = await fetch(base.replace(/\/$/, "") + path, {method, headers,
-      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, signal: controller.signal});
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined, signal: controller?.signal});
     if (response.ok && asBlob) return await response.blob();
     if (response.status === 204) return {};
     let data;
@@ -150,7 +153,7 @@ async function api(path, {method = "GET", body, timeout = 90000, asBlob = false,
     if (!response.ok) throw Object.assign(new Error(errorText(data)), {status:response.status});
     return data;
   } catch (error) {
-    if (controller.signal.aborted) {
+    if (controller?.signal.aborted) {
       const route = path.split(/[?#]/, 1)[0];
       throw new Error(`请求超时（${timeout / 1000} 秒）：${method} ${route}`);
     }
@@ -941,6 +944,7 @@ async function applyIdentificationAction(action, context) {
   return prefix+" "+(started?.job_id ? tr("辨识任务已提交，进度与结果将在右侧显示。") : tr("未能启动实验：")+tr(started?.error || "请检查当前任务和输入设置。"));
 }
 async function sendMessage(value, {analysisRequest=false}={}) {
+  const language=window.BuckI18n.language;
   const images=chatImages();
   const text = value.trim() || (images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { window.alert("Backend is not connected. Please connect to the backend and try again."); return; }
@@ -994,7 +998,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       } catch { /* Invalid drafts remain a form validation error. */ }
     }
     try { await syncPlecsConfig(); } catch (error) { notice(error.message); }
-    const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language:window.BuckI18n.language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
+    const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
       ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options,pwm_source_setting:$('pwm-source').value,
         plecs_ports:actionContext.plecs ? plecsPortContext(actionContext.plecs) : null,
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
@@ -1020,7 +1024,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       const article = message("assistant", failureText, "请求未完成");
       decorateResponse(article, response);
       const failedReply = rememberMessage("assistant", failureText, {
-        request_message_id:requestMessage.id, route:response.route, reply_elapsed_s:response.reply_elapsed_s, tool_calls:response.tool_calls,
+        mode:response.mode, request_message_id:requestMessage.id, route:response.route, reply_elapsed_s:response.reply_elapsed_s, tool_calls:response.tool_calls,
         agent_budget:response.agent_budget, plecs_experiments:response.plecs_experiments,diagnosis:response.diagnosis,simulation_evaluations:response.simulation_evaluations,
         control_checks:response.control_checks, retrieved_sources:response.retrieved_sources,
         error_code:response.error_code,budget_reason:response.budget_reason,finish_reason:response.finish_reason,
@@ -1042,7 +1046,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     const replyMode=response.mode === "deepseek" && !response.error_code ? "DeepSeek" : "请求未完成";
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
-    const savedReply=rememberMessage("assistant", answer, {route:response.route, reply_elapsed_s:response.reply_elapsed_s, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
+    const savedReply=rememberMessage("assistant", answer, {mode:response.mode,route:response.route, reply_elapsed_s:response.reply_elapsed_s, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,
       error_code:response.error_code,
       agent_task_id:response.agent_task_id,diagnosis:response.diagnosis,request_message_id:requestMessage.id,conversation_retrieval:response.conversation_retrieval,
       repeatability:response.repeatability,
@@ -1055,7 +1059,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
   } catch (error) {
     const elapsed = finishPending?.();
     const note = window.BuckHarness.taskNotice(error);
-    const text = note?.text || error.message;
+    const text = note?.text || tr(error.message);
     const mode = note ? "任务状态" : "请求未完成";
     const metadata = {...note?.response, reply_elapsed_s:elapsed};
     const article = message("assistant",text,mode);
@@ -1399,17 +1403,20 @@ $("forget-access-token").onclick=()=>{
 $("close-settings").onclick=()=>$("settings-dialog").close();
 $("settings-form").onsubmit=async event=>{
   event.preventDefault();
+  let submission=settingsSubmission;
   try {
     const url=new URL($("api-url").value.trim());
     if(!["http:","https:"].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error("请输入有效的 http(s) 后端地址。");
     if(location.protocol==="https:"&&url.protocol!=="https:")throw new Error("HTTPS 页面需要连接 HTTPS 后端。");
     if(historyLocked() || archiveRunning)throw new Error("请等待当前请求结束后切换连接。");
+    const plecsConfig=readPlecsSettings();
     const next=url.toString().replace(/\/$/,"");
     if(base&&next!==base&&state.dataset)throw new Error("切换后端前请先清除当前数据。");
     const backendChanged=next!==base;
     const nextCode=$("sync-code").value.trim().toLowerCase();
     if (nextCode && !/^[a-f0-9]{64}$/.test(nextCode)) throw new Error("同步恢复码应为 64 位十六进制字符。");
     const codeChanged=!backendChanged && nextCode && nextCode!==archiveKey;
+    submission=++settingsSubmission;
     if(backendChanged || codeChanged)persistConversation();
     base=next;accessToken=$("access-token").value.trim();
     let remembered=true;
@@ -1421,18 +1428,24 @@ $("settings-form").onsubmit=async event=>{
     if (codeChanged || (backendChanged && nextCode && nextCode!==archiveKey)) localStorage.setItem(archiveKeyStorage(),nextCode);
     ui($("settings-status"), "正在连接…");
     if(backendChanged || codeChanged){state.connected=false;resetExperiment();await initializeHistory();}
+    if(submission!==settingsSubmission)return;
+    const owner=sessionId;
+    const stillCurrent=()=>submission===settingsSubmission && base===next;
     if(await connect()){
-      const plecsConfig=readPlecsSettings();
+      if(!stillCurrent() || sessionId!==owner)return;
       await syncPlecsConfig(plecsConfig);
+      if(!stillCurrent() || sessionId!==owner)return;
       localStorage.setItem(`buck-plecs:${base}`,JSON.stringify(plecsConfig));
       const reopened=await synchronizeArchive({preferRemote:true,currentFirst:true});
+      if(!stillCurrent())return;
       if(!reopened && !state.dataset && activeConversation?.attachment)await restoreAttachment(activeConversation.attachment);
+      if(!stillCurrent())return;
       scheduleArchiveSync();
       $("settings-dialog").close();ui($("settings-status"), "");
       if(!remembered)notice("已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。");
     }
-    else ui($("settings-status"), "连接未成功，请检查页面提示。");
-  }catch(e){ui($("settings-status"), e.message);}
+    else if(stillCurrent())ui($("settings-status"), "连接未成功，请检查页面提示。");
+  }catch(e){if(submission===settingsSubmission)ui($("settings-status"), e.message);}
 };
 $("chat-input").addEventListener("input",persistConversation);
 $("reasoning-mode").addEventListener("change",persistConversation);

@@ -11,7 +11,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
  const paused=()=>page.waitForFunction(()=>currentIdentificationPlan()?.status==='paused'&&!historyLocked());
  const send=async text=>{await page.locator('#chat-input').fill(text);await page.locator('#send-chat').click();};
  try{
-  await page.goto('http://127.0.0.1:8001');await ready();
+  await page.goto(process.env.TEST_BASE_URL||'http://127.0.0.1:8001');await ready();
   await page.locator('#load-demo').click();await ready();
   await page.route('**/api/identify',route=>route.request().postDataJSON().options.method==='pann'
     ? route.fulfill({json:{job_id:'failed-pann'}}):route.continue());
@@ -23,8 +23,14 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#plan-continue').click();await paused();
   assert.deepEqual(fits.map(f=>f.options.method),['weighted_integral','pann','pann']);
   const submissions=fits.length;
+  await page.locator('#language-toggle').click();
   await page.locator('#fixed-r').fill('8');await page.locator('#plan-continue').click();await paused();
-  assert.match(await page.locator('#plan-note').innerText(),/数据或参数已更改/);assert.equal(fits.length,submissions);
+  const reason=await page.locator('#plan-note').innerText();
+  assert.match(reason,/changed/i);
+  assert.equal(await page.locator('.message.assistant .message-content').last().innerText(),reason);
+  assert.equal(await page.evaluate(()=>activeConversation.messages.at(-1).content),reason);
+  assert.equal(fits.length,submissions);
+  await page.locator('#language-toggle').click();
   await page.locator('#plan-cancel').click();
   const duplicate=await page.evaluate(async()=>{
     const action={id:'replay-plan',type:'identification_plan',parser:'deepseek',version:2,methods:['weighted_integral','pann'],filename:null,changes:{pwm_source:'measured'},

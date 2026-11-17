@@ -19,6 +19,11 @@ window.BuckHarness = (()=>{
   function taskError(taskState,id){
     return Object.assign(new Error(taskState),{taskState,agentTaskId:id});
   }
+  function setActiveTask(id){
+    state.agentTask=id;
+    document.getElementById('agent-steer').disabled=!id;
+    document.getElementById('agent-cancel').disabled=!id;
+  }
   function taskNotice(error){
     const text=({cancelled:'任务已停止，可恢复。',interrupted:'任务已中断，可恢复。',disconnected:'连接中断，后台任务可能仍在运行。请点击“找回 / 恢复任务”重新连接。'})[error.taskState];
     return text?{text:tr(text),response:{agent_task_id:error.agentTaskId,task_state:error.taskState}}:null;
@@ -31,7 +36,7 @@ window.BuckHarness = (()=>{
     }
   }
   async function followEvents(id){
-    state.agentTask=id;
+    setActiveTask(id);
     document.getElementById('agent-progress').hidden=false;
     document.getElementById('agent-progress').open=true;
     document.getElementById('agent-preview').textContent='';
@@ -59,6 +64,7 @@ window.BuckHarness = (()=>{
         if(item.kind==='result')result=item.data;
         if(item.kind==='end'){
           ended=true;
+          setActiveTask(null);
           // The final task snapshot is authoritative, including a null result.
           // Old result events belong to previous attempts after a resume.
           result=item.data.result;
@@ -75,7 +81,8 @@ window.BuckHarness = (()=>{
     return {...result,agent_task_id:id};
   }
   async function request(body){
-    const task=await api('/api/agent/tasks',{method:'POST',body,timeout:30000});
+    setActiveTask(null);
+    const task=await api('/api/agent/tasks',{method:'POST',body,timeout:null});
     rememberTask(task.id);
     return follow(task.id);
   }
@@ -100,7 +107,8 @@ window.BuckHarness = (()=>{
       rememberTask(latest.id);
       const savedReply=readConversation(activeConversation.id)?.messages?.find(({response})=>
         response?.agent_task_id===latest.id && !response.task_state && response.mode!=='provider_error'
-        && (!response.error_code || response.mode==='validation_error' || response.ui_action_status));
+        && (!response.error_code || response.mode==='validation_error' || response.ui_action_status
+          || (!response.mode && response.error_code==='analysis_result_unavailable')));
       if(latest.state==='completed' && savedReply){
         rememberTask(null);
         showOutcome(savedReply.content,savedReply.response.error_code==='ui_action_failed'?'界面操作失败':'此任务已完成，回答已在当前会话中');return;
@@ -127,11 +135,20 @@ window.BuckHarness = (()=>{
     }finally{finishPending?.();state.chatBusy=false;controls();}
   }
   function bind(){
+    setActiveTask(null);
     document.getElementById('agent-steer').onclick=async()=>{
-      const input=document.getElementById('agent-instruction'),text=input.value.trim();if(!text||!state.agentTask)return;
-      try{await api(`/api/agent/tasks/${state.agentTask}/steer`,{method:'POST',body:{message:text}});input.value='';status('追加指令已送达 Harness');}catch(error){status(error.message);}
+      const input=document.getElementById('agent-instruction'),text=input.value.trim(),id=state.agentTask;
+      if(!text||!id)return;
+      try{
+        await api(`/api/agent/tasks/${id}/steer`,{method:'POST',body:{message:text}});
+        if(id===state.agentTask){if(input.value.trim()===text)input.value='';status('追加指令已送达 Harness');}
+      }catch(error){if(id===state.agentTask)status(error.message);}
     };
-    document.getElementById('agent-cancel').onclick=async()=>{try{if(state.agentTask){await api(`/api/agent/tasks/${state.agentTask}/cancel`,{method:'POST'});status('正在停止任务…');}}catch(error){status(error.message);}};
+    document.getElementById('agent-cancel').onclick=async()=>{
+      const id=state.agentTask;if(!id)return;
+      try{await api(`/api/agent/tasks/${id}/cancel`,{method:'POST'});if(id===state.agentTask)status('正在停止任务…');}
+      catch(error){if(id===state.agentTask)status(error.message);}
+    };
     document.getElementById('agent-resume').onclick=()=>recover().catch(error=>status(error.message));
     document.getElementById('bridge-pair').onclick=async event=>{
       const button=event.currentTarget;
@@ -161,19 +178,23 @@ window.BuckHarness = (()=>{
       }catch(error){ui(document.getElementById('settings-status'),error.message);}
       finally{button.disabled=false;}
     };
+    let statusRequest=0;
     document.getElementById('bridge-check').onclick=async()=>{
+      const request=++statusRequest, owner=sessionId;
       const target=document.getElementById('api-url').value.trim().replace(/\/$/,'');
       const output=document.getElementById('settings-status');
       if(target!==base.replace(/\/$/,'')){ui(output,'请先保存并连接新后端。');return;}
+      const current=()=>request===statusRequest && owner===sessionId && target===base.replace(/\/$/,'')
+        && target===document.getElementById('api-url').value.trim().replace(/\/$/,'');
       try{
         const direct=isLocalBackend(target);
-        const result=await api(direct?'/api/plecs/status':'/api/bridge/status');
-        if(target!==document.getElementById('api-url').value.trim().replace(/\/$/,''))return;
+        const result=await api(direct?'/api/plecs/status':'/api/bridge/status',{timeout:null});
+        if(!current())return;
         ui(output,direct?(result.ready?'本机 PLECS RPC 已就绪。':'本机 PLECS RPC 未就绪，请确认 PLECS 已启动并启用端口 1080。'):
           result.online?'本机连接器在线':result.paired?'已配对，连接器离线':'尚未配对');
-      }catch(error){output.textContent=error.message;}
+      }catch(error){if(current())ui(output,error.message);}
     };
   }
-  function reset(){state.agentTask=null;ui(document.getElementById('bridge-instructions'),'');document.getElementById('agent-progress').open=false;document.getElementById('agent-preview').textContent='';document.getElementById('agent-instruction').value='';status('Agent 任务进度与恢复');}
+  function reset(){setActiveTask(null);ui(document.getElementById('bridge-instructions'),'');document.getElementById('agent-progress').open=false;document.getElementById('agent-preview').textContent='';document.getElementById('agent-instruction').value='';status('Agent 任务进度与恢复');}
   return {request,recover,bind,reset,taskNotice,showOutcome,replyText};
 })();

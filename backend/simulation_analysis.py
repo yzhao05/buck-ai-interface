@@ -203,7 +203,9 @@ async def evaluate_async(owner, identifier, result_id):
     seconds = 150
     state = scope.get() or {}
     if state.get('remaining'):
-        seconds = min(seconds,state['remaining']())
+        remaining = state['remaining']()
+        if remaining is not None:
+            seconds = min(seconds,remaining)
     process = await asyncio.create_subprocess_exec(sys.executable,'-m','backend.simulation_analysis',owner,identifier,result_id or '',str(seconds),
         cwd=str(Path(__file__).resolve().parents[1]),stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL,
         **({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}))

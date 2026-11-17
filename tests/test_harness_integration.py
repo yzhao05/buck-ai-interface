@@ -74,7 +74,13 @@ def test_official_harness_mcp_stream_resume_and_tool_roster(monkeypatch, thinkin
                 json.loads(line)
             assert json.loads(before_resume.splitlines()[0])['cwd'] == str(home.resolve())
             state['resume']=True
+            messages=[{'role':'system','content':'Use probe then answer in English'},
+                      {'role':'user','content':'继续', 'reply_language':'English'}]
             assert await REAL_RUN(messages,tools,invoke,Budget(thinking))=='verified'
+            assert 'Use probe then answer in English' in str(requests[-1]['system'])
+            last_user = next(m for m in reversed(requests[-1]['messages']) if m['role']=='user')
+            assert '"reply_language": "English"' in str(last_user)
+            assert all(m['role'] != 'system' for m in requests[-1]['messages'])
             assert len(saved[0].read_text(encoding='utf-8')) > len(before_resume)
         finally:harness_runtime.scope.reset(token)
     try:asyncio.run(run())

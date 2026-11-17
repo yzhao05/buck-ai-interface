@@ -232,19 +232,19 @@ async function applyConfigurationExtras(action,staged){
   if('image' in staged){
     BuckCircuit.rememberImage();if(staged.image)BuckCircuit.rememberImage(staged.image.data_url,staged.image.name);
     $('controller-image').value=staged.image?.data_url||'';$('controller-image-name').value=staged.image?.name||'';
-    labels.push('电路图 = '+(staged.image?.name||tr('默认接线图')));
+    labels.push(tr('电路图')+' = '+(staged.image?.name||tr('默认接线图')));
   }
-  if(assets.result_id){await selectExperiment(assets.result_id,{fromChat:true,fetchFull:false});labels.push('结果 = '+assets.result_id);}
+  if(assets.result_id){await selectExperiment(assets.result_id,{fromChat:true,fetchFull:false});labels.push(tr('结果')+' = '+assets.result_id);}
   for(const [key,field] of [['truth_L_H','l'],['truth_C_F','c']])if(key in analysis){
     state.truthDraft[field]=analysis[key]===null?'':convertedField(analysis[key],1e6);state.truthComparison=null;state.truthError='';labels.push(`${key} = ${analysis[key]??''}`);
   }
   if('reference_csv_id' in analysis){
     diagnosticReference=staged.reference?{owner:sessionId,resultId:state.resultId,base,dataset_id:staged.reference.dataset_id,filename:staged.reference.filename}:null;
-    $('diagnostic-reference-confirm').checked=false;refreshDiagnosticReference();labels.push('参考 CSV = '+(staged.reference?.filename||tr('未选择')));
+    $('diagnostic-reference-confirm').checked=false;refreshDiagnosticReference();labels.push(tr('参考 CSV')+' = '+(staged.reference?.filename||tr('未选择')));
   }
   if('reference_confirmed' in analysis)$('diagnostic-reference-confirm').checked=analysis.reference_confirmed;
   if(analysis.calculate_error)calculateParameterError({fromChat:true});
   else if('truth_L_H' in analysis||'truth_C_F' in analysis){captureExperiment({updateTruth:true});displayTruthComparison();}
-  if(staged.reference&&!$('diagnostic-reference-confirm').checked)labels.push('请确认：此参考是否来自同一实验、同一工况，仅去除了测量噪声？确认前不会用它做参考对照。');
+  if(staged.reference&&!$('diagnostic-reference-confirm').checked)labels.push(tr('请确认：此参考是否来自同一实验、同一工况，仅去除了测量噪声？确认前不会用它做参考对照。'));
   return labels;
 }

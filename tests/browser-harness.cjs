@@ -34,6 +34,37 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#bridge-check').click();
   await page.waitForFunction(()=>document.getElementById('settings-status').textContent.includes('已配对'));
   assert.equal(await page.locator('#bridge-instructions').innerText(),pairing);
+  // Exercise the real request wrapper. Compress the former deadlines so a
+  // delayed response would observe an aborted signal with the old frontend.
+  const slow=await page.evaluate(async()=>{
+    const originalFetch=window.fetch, originalTimer=window.setTimeout, owner=sessionId;
+    const writes=[];
+    let changeOwner=false;
+    window.setTimeout=(fn,ms,...args)=>originalTimer(fn,[5000,30000,90000].includes(ms)?0:ms,...args);
+    window.fetch=async(url,init)=>{
+      await new Promise(resolve=>originalTimer(resolve,25));
+      init.signal?.throwIfAborted();
+      const path=new URL(url).pathname;
+      if(path.endsWith('/status')){
+        if(changeOwner)sessionId='other-conversation';
+        return Response.json({paired:true,online:true});
+      }
+      if(path.endsWith('/settings')){writes.push(path);return Response.json({});}
+      if(path==='/api/agent/tasks')return Response.json({id:'slow-task'});
+      if(path.endsWith('/slow-task/events'))return new Response(JSON.stringify({kind:'end',data:{state:'completed',result:{answer:'slow reply'}}})+'\n');
+      return originalFetch(url,init);
+    };
+    try{
+      await document.getElementById('bridge-check').onclick();
+      const status=document.getElementById('settings-status').textContent;
+      const synced=await syncPlecsConfig({});
+      const {answer}=await BuckHarness.request({message:'slow request'});
+      changeOwner=true;
+      const stale=await syncPlecsConfig({});
+      return {status,synced,answer,stale,writes};
+    }finally{sessionId=owner;window.fetch=originalFetch;window.setTimeout=originalTimer;}
+  });
+  assert.deepEqual(slow,{status:'本机连接器在线',synced:true,answer:'slow reply',stale:false,writes:['/api/bridge/settings']});
   for(const host of ['example.ms.show','studio-example.api-inference.modelscope.net']){
     const studio='https://'+host;
     await page.locator('#api-url').fill(studio);
@@ -57,6 +88,42 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   });
   assert.deepEqual(confirmations,[false,false]);
   await page.locator('#close-settings').click();
+  await page.locator('#language-toggle').click();
+  let submittedLanguage;
+  await page.route('**/api/agent/tasks',route=>{
+    submittedLanguage=route.request().postDataJSON().language;
+    return route.fulfill({json:{id:'preview-language',state:'running'}});
+  });
+  await page.evaluate(()=>{
+    const original=window.fetch;
+    window.fetch=(url,options)=>{
+      if(!String(url).endsWith('/preview-language/events'))return original(url,options);
+      window.fetch=original;
+      return Promise.resolve(new Response(new ReadableStream({start(stream){
+        const send=(kind,data)=>stream.enqueue(new TextEncoder().encode(JSON.stringify({kind,data})+'\n'));
+        send('text_delta',{text:'Comparing the two fits.'});
+        window.finishPreview=answer=>{send('end',{state:'completed',result:{mode:'deepseek',answer}});stream.close();};
+      }})));
+    };
+  });
+  await page.locator('#chat-input').fill('比较这两种方法');
+  await page.locator('#send-chat').click();
+  await page.waitForFunction(()=>document.getElementById('agent-preview').textContent.includes('Comparing the two fits.'));
+  assert.equal(submittedLanguage,'en');
+  const finalEnglish='**Current status:** No completed fits are available.\n\n### How to test the claim\n\nCompare the holdout voltage errors.';
+  await page.evaluate(answer=>window.finishPreview(answer),finalEnglish);
+  await page.waitForFunction(()=>!state.chatBusy);
+  const mainReply=page.locator('#chat-messages .assistant .message-content').last();
+  assert.equal(await mainReply.innerText(),await page.locator('#agent-preview').innerText());
+  assert.equal(await mainReply.locator('strong').innerText(),'Current status:');
+  assert.equal(await mainReply.locator('h3').innerText(),'How to test the claim');
+  assert.match(await mainReply.innerText(),/Compare the holdout voltage errors/);
+  assert.equal(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).content),finalEnglish);
+  const labels=await page.evaluate(()=>applyConfigurationExtras(
+    {analysis:{reference_csv_id:null}}, {image:null,reference:null}));
+  assert.deepEqual(labels,['Circuit diagram = Default circuit diagram','Reference CSV = None selected']);
+  await page.unroute('**/api/agent/tasks');
+  await page.locator('#language-toggle').click();
   await page.route('**/api/agent/tasks',route=>route.fulfill({json:{id:'browser-harness',state:'running'}}));
   await page.route('**/api/agent/tasks/browser-harness/steer',route=>{instructions.push(route.request().postDataJSON());return route.fulfill({json:{status:'queued'}});});
   let recoveryEvents=null;
@@ -72,6 +139,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.locator('#agent-instruction').fill('证据足够就停止');await page.locator('#agent-steer').click();
   await page.waitForFunction(()=>!state.chatBusy);
   assert.equal(instructions[0].message,'证据足够就停止');
+  assert(await page.locator('#agent-cancel').isDisabled());
+  assert(await page.locator('#agent-steer').isDisabled());
   assert.match(await page.locator('.message.assistant').last().innerText(),/模型偏差/);
   assert.match(await page.locator('#agent-preview').innerText(),/模型偏差/);
   assert.doesNotMatch(await page.locator('#agent-preview').innerText(),/\[kb:|依据/);
@@ -155,6 +224,14 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   assert.equal(await page.evaluate(()=>activeConversation.messages.at(-1).mode),'请求未完成','Recovered validation failures are not completed analyses');
   const invalidCount=await page.evaluate(()=>activeConversation.messages.length);
   await page.evaluate(()=>localStorage.setItem(`buck-agent:${base}:${sessionId}`,'legacy-analysis'));
+  await page.evaluate(()=>BuckHarness.recover());
+  assert.equal(await page.evaluate(()=>activeConversation.messages.length),invalidCount);
+  // A direct validation reply saved by an older frontend has a code but no response.mode.
+  await page.evaluate(()=>{
+    delete activeConversation.messages.at(-1).response.mode;
+    persistConversation();
+    localStorage.setItem(`buck-agent:${base}:${sessionId}`,'legacy-analysis');
+  });
   await page.evaluate(()=>BuckHarness.recover());
   assert.equal(await page.evaluate(()=>activeConversation.messages.length),invalidCount);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

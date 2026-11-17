@@ -225,10 +225,11 @@ async function continueIdentificationPlan(){
     plan.status='paused';plan.note=error.message;
     if(!plan.done.length&&!plan.jobId&&/确认控制电路/.test(error.message)){
       pendingConfigurationStart={fingerprint:configurationFingerprint()};
-      plan.note+=' '+tr('请确认当前接线和参数一致；回复“确认”后继续此计划。');
+      plan.note+='\n请确认当前接线和参数一致；回复“确认”后继续此计划。';
     }
     // Every blocking prerequisite belongs in the main conversation as well.
-    message('assistant',plan.note,'任务状态');rememberMessage('assistant',plan.note,null,'任务状态');
+    const text=tr(plan.note);
+    message('assistant',text,'任务状态');rememberMessage('assistant',text,null,'任务状态');
   }}
   finally{
     state.planRunning=false;
