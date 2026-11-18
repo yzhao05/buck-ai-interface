@@ -133,3 +133,12 @@ def test_pdf_endpoint_auth_validation_and_saved_result(snapshot, monkeypatch):
     invalid["result"]["chart"]["time_s"] = list(range(10001))
     assert client.post("/api/reports/pdf", json=invalid).status_code == 422
     assert client.post("/api/reports/pdf", json=snapshot, headers={"X-Session-ID": "invalid"}).status_code == 400
+
+
+def test_known_parasitics_are_preserved_in_report(snapshot):
+    snapshot["language"]="en"
+    snapshot["result"]["options"].update(include_parasitics=True,inductor_resistance_ohm=.25,capacitor_esr_ohm=.12)
+    report=ReportRequest.model_validate(snapshot)
+    assert report.result.options.capacitor_esr_ohm==.12
+    text=" ".join(p.extract_text() for p in PdfReader(BytesIO(build_pdf(report))).pages)
+    assert "Known series resistances" in text and "0.25" in text and "0.12" in text

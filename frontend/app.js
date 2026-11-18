@@ -206,15 +206,19 @@ function controls() {
   $("controller-settings").hidden = !reconstructed;
   $("fit-mode").querySelector('[value="LCR"]').disabled = reconstructed;
   if (reconstructed) $("fit-mode").value = "LC";
+  const parasiticEnabled = $("include-parasitics").value === "true";
+  $("parasitic-settings").hidden = !parasiticEnabled;
+  const parasiticMissing = parasiticEnabled && ["inductor-resistance","capacitor-esr"].some(id=>!validNumericInput($(id)));
+  $("parasitic-error").hidden = !parasiticMissing;
   const sameResult = resultMatchesCurrent(state.result);
-  $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting || sameResult;
+  $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting || sameResult || parasiticMissing;
   $("identify-complete-hint").hidden = !state.result;
   ui($("identify-complete-hint"), sameResult
     ? "当前配置已完成辨识。修改上方参数后可重新辨识。"
     : "左侧设置已更改。右侧保留上次结果，点击开始参数辨识后更新。");
   $("fixed-r-label").hidden = $("fit-mode").value !== "LC";
   $("method-hint").hidden = $("fit-method").value !== "weighted_integral";
-  for (const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction","pwm-source","controller-confirmed"]) $(id).disabled = waiting;
+  for (const id of ["include-parasitics","inductor-resistance","capacitor-esr","map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction","pwm-source","controller-confirmed"]) $(id).disabled = waiting;
   renderIdentificationPlan();
 }
 async function connect() {
@@ -271,13 +275,20 @@ function validNumericInput(el) {
   const probe=el.cloneNode();probe.disabled=false;probe.value=el.value;
   return Boolean(el.value.trim()) && !el.validity.badInput && Number.isFinite(Number(el.value)) && probe.checkValidity();
 }
-function options() {
+function options({allowIncompleteParasitics=false}={}) {
   const numeric = (id) => {
     const el = $(id);
     if (!validNumericInput(el) || (id==="fixed-r" && Number(el.value)<=0.01)) throw new Error("请检查工况输入范围：" + el.closest("label")?.textContent.trim());
     return Number(el.value);
   };
-  return {vin:numeric("vin"), frequency_hz:numeric("frequency")*1000,
+  const includeParasitics = $("include-parasitics").value === "true";
+  const missingDraft = id => allowIncompleteParasitics && $(id).value === "" && !$(id).validity.badInput;
+  if(includeParasitics && ["inductor-resistance","capacitor-esr"].some(id=>!missingDraft(id) && !validNumericInput($(id))))
+    throw new Error(tr("请填写电感绕组电阻和电容 ESR（Ω，0～1000），再开始辨识。"));
+  return {include_parasitics:includeParasitics,
+    inductor_resistance_ohm:includeParasitics && !missingDraft("inductor-resistance") ? numeric("inductor-resistance") : null,
+    capacitor_esr_ohm:includeParasitics && !missingDraft("capacitor-esr") ? numeric("capacitor-esr") : null,
+    vin:numeric("vin"), frequency_hz:numeric("frequency")*1000,
     pwm_source:pwmSource(), controller_confirmed:$("controller-confirmed").value === "yes",
     controller:pwmSource() === "controller" ? window.BuckCircuit.read() : null,
     pwm_denoise:pwmSource()==='controller' ? $("pwm-denoise").value : 'sg',
@@ -300,7 +311,7 @@ function resultMatchesCurrent(result) {
   try {
     return Object.entries(options()).every(([key,value]) => value && typeof value === "object"
       ? Object.entries(value).every(([field,number])=>result.options?.[key]?.[field] === number)
-      : (result.options?.[key] ?? null) === value);
+      : (result.options?.[key] ?? (key==="include_parasitics" ? false : null)) === value);
   } catch { return false; }
 }
 function invalidateResult() {
@@ -986,7 +997,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     let actionContext=null;
     if (!currentOnly) {
       try {
-        const draftOptions=options(), epochInput=$("pann-epochs");
+        const draftOptions=options({allowIncompleteParasitics:true}), epochInput=$("pann-epochs");
         // Integral mode does not use the hidden epoch field. An unfinished
         // epoch edit must not make every unrelated chat request fail with 422.
         if (validNumericInput(epochInput)) draftOptions.epochs=Number(epochInput.value);
@@ -1281,6 +1292,9 @@ for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","pann-state
   if(state.mapping)readyStatus();
   persistConversation();
 };
+for(const id of ["include-parasitics","inductor-resistance","capacitor-esr"]) $(id).addEventListener("input",()=>{
+  $("controller-confirmed").value="no";controls();BuckCircuit.render(true);persistConversation();
+});
 $("pwm-source").onchange=()=>{
   prepareControllerDefaults();
   controls(); if (state.mapping) readyStatus(); persistConversation();

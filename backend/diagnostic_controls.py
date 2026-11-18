@@ -5,16 +5,25 @@ from .data import extract
 from .schemas import FitOptions, Mapping
 from .identification import rollout, metric
 from .controller import closed_loop_rollout, profile_for, validate_profile
+from .parasitics import resistances
+
+
+def comparison_options(raw):
+    """Legacy results without parasitic fields represent the ideal circuit."""
+    result = {k: v for k, v in raw.items() if k not in
+              {'method', 'epochs', 'pann_initial_state', 'pann_window_cycles'}}
+    enabled = result.setdefault('include_parasitics', False)
+    for key in ('inductor_resistance_ohm', 'capacitor_esr_ohm'):
+        result[key] = result.get(key) if enabled else None
+    return result
 
 
 def compatible(current, candidate):
     if candidate.get('method') != 'pann' or current.get('file_sha256') != candidate.get('file_sha256'):
         return False
-    ignored = {'method', 'epochs', 'pann_initial_state', 'pann_window_cycles'}
     return (current.get('mapping') == candidate.get('mapping') and
             all(current.get(k) == candidate.get(k) for k in ('train_start_s', 'train_end_s', 'validation_end_s')) and
-            {k:v for k,v in current.get('options', {}).items() if k not in ignored} ==
-            {k:v for k,v in candidate.get('options', {}).items() if k not in ignored})
+            comparison_options(current.get('options', {})) == comparison_options(candidate.get('options', {})))
 
 
 def run_controls(data, source, *, result_id, source_id, reference=None):
@@ -76,7 +85,8 @@ def run_controls(data, source, *, result_id, source_id, reference=None):
     cases = {}
     for name, p, x in [('integral_measured',seed,measured_state), ('integral_pann_state',seed,state),
                        ('pann_measured',parameters,measured_state), ('pann_pann_state',parameters,state)]:
-        predicted = (closed_loop_rollout(a[:,0],p,options.vin,x,profile) if controller else rollout(a,p,options.vin,x))
+        predicted = (closed_loop_rollout(a[:,0],p,options.vin,x,profile) if controller else
+                     rollout(a,p,options.vin,x,series_resistances=resistances(options)))
         if not np.isfinite(predicted).all():
             raise ValueError('对照前向预测产生非有限值，未报告结果。')
         cases[name] = {'parameters':dict(zip(('L_H','C_F','R_ohm'),map(float,p))),
@@ -99,6 +109,8 @@ def run_controls(data, source, *, result_id, source_id, reference=None):
         'parameter_source':source.get('result_source','server_completed_result'),
         'measured_initial_state_policy':'nonnegative_projection_of_first_measurement',
         'pwm_source':options.pwm_source,'train_end_s':source['train_end_s'],'validation_end_s':end,
+        'power_stage_model':'known_series_resistances' if options.include_parasitics else 'ideal',
+        'known_parasitics':dict(zip(('inductor_resistance_ohm','capacitor_esr_ohm'),resistances(options))),
         'cases':cases,'verified_numerical_effects':effects,'reference':reference_status,
         'physical_causes_verified':[],
         'interpretation':'Only numerical effects of parameter/state replacement are verified under this fixed model. Delta is alternative minus baseline; negative means lower RMSE. Effects can interact. These tests do not prove ESR, load changes, sensor bias, or parameter truth. A reference is user-declared; it never changes training, initial states, selected parameters or the 5% gate.'}

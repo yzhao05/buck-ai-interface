@@ -36,7 +36,7 @@ DOCUMENTS = [
      "content": "本项目借鉴 PE-GPT 的界面、任务调度、专业知识与物理模型协作方式。LLM 解释工具结果，不能代替数值算法。本项目是 Buck 专用改编，不是原 DAB 设计流程的完整复现。"},
     {"id": "buck-physics", "title": "Buck 模型与 L/C/R 定义", "url": "https://github.com/XinzeLee/PANN",
      "tags": "buck 电路 原理 方程 电感 电容 电阻 lcr 参数 辨识",
-     "content": "理想非同步 Buck 导通时 L diL/dt = s Vin - vo，C dvo/dt = iL - vo/R。断续导通零电流区间使用 DCM 约束。R 是负载电阻，不是 ESR 或绕组电阻。积分辨识从电流变化估计 L，联合电压变化和积分量估计 C 与电导 1/R。需要有效动态、已知 Vin 和开关信息；可使用实际 PWM，也可在确认指定控制器配置后重建 PWM。重建模式固定已知 R 识别 L/C，电容方程还需扣除反馈取样支路电流。"},
+     "content": "默认不考虑寄生电阻；开启时用户必须提供已知rL/rC，计算见buck-parasitics-model、buck-parasitics-integral、buck-parasitics-pann；不能把它们当作待估负载R。以下仅为理想模型：理想非同步 Buck 导通时 L diL/dt = s Vin - vo，C dvo/dt = iL - vo/R。断续导通零电流区间使用 DCM 约束。R 是负载电阻，不是 ESR 或绕组电阻。积分辨识从电流变化估计 L，联合电压变化和积分量估计 C 与电导 1/R。需要有效动态、已知 Vin 和开关信息；可使用实际 PWM，也可在确认指定控制器配置后重建 PWM。重建模式固定已知 R 识别 L/C，电容方程还需扣除反馈取样支路电流。"},
     {"id": "identification-limits", "title": "辨识与验证的边界（本项目方法说明）", "url": None,
      "tags": "误差 准确 验证 可信 噪声 结果 初值 修改 计划",
      "content": "波形拟合误差不等于参数误差。未提供独立真值不能计算 L/C/R 真实误差。实测 PWM 模式使用同记录后段的实测 PWM 连续前向预测，不是自主闭环验证；已知控制器重建模式在训练段重建开关信息，验证时控制器由预测电压驱动，不使用留出段电压或实测 PWM。两者都不是独立工况验证。检查非均匀采样、PWM 时间对齐、Vin、负载突变、初始状态和遗漏寄生。先做单因素对照实验；真实参数不得通过文件名进入拟合。"},

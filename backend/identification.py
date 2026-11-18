@@ -1,6 +1,6 @@
 """Bounded integral identification and independent held-out forward rollout.
 
-Ideal asynchronous Buck, constant Rload over selected interval. The fitter
+Asynchronous Buck with optional known rL/ESR, constant Rload over selected interval. The fitter
 never reads filenames, nominal component values, or held-out measurements.
 """
 import time
@@ -12,6 +12,7 @@ from scipy.optimize import lsq_linear
 from .data import Dataset, chart_data, extract
 from .schemas import FitOptions, Mapping
 from .convergence import assess_result
+from .parasitics import resistances, fit_capacitor
 
 
 def review_reasons(metrics, diagnostics, method):
@@ -55,13 +56,15 @@ def weak_integral_seed(train, options):
     phi(u)=u^2(1-u)^2. Integration by parts replaces noisy endpoint differences
     with -integral(phi' * measurement). Three-point Gauss quadrature exactly
     integrates the piecewise-linear measurements times this quartic weight.
-    PWM stays ZOH. No smoothing targets or known component values are supplied.
+    PWM stays ZOH. No smoothed targets or ground-truth L/C values are supplied;
+    fixed load R and known series resistances follow the selected options.
     """
+    rl, rc = resistances(options)
     t = train[:, 0]
     left, right = window_indices(t, options.frequency_hz, (2., 5., 10.), 60)
     nodes, weights = np.polynomial.legendre.leggauss(3)
     fractions = (nodes + 1) / 2
-    rows, l_rows = [], []
+    rows, l_rows, cap_changes = [], [], []
     inactive = (train[:, 1] <= max(1e-6, np.max(np.abs(train[:, 1])) * .003)) & (train[:, 3] == 0)
     for a, b in zip(left, right):
         times = t[a:b + 1]
@@ -76,12 +79,15 @@ def weak_integral_seed(train, options):
         change = -np.sum((quadrature * dphi)[:, :, None] * measured, axis=(0, 1))
         pwm_integral = np.sum(quadrature * phi * train[a:b, 3, None])
         sense_integral = 0.
+        sense_change = 0.
         if train.shape[1] == 5:
             sense = train[a:b, None, 4] + fractions * np.diff(train[a:b+1, 4])[:, None]
             sense_integral = np.sum(quadrature * phi * sense)
+            sense_change = -np.sum(quadrature * dphi * sense)
+        cap_changes.append((change[0], sense_change))
         rows.append((change[1], integrals[1], integrals[0]-sense_integral))
         if not inactive[a:b+1].any():
-            l_rows.append((change[0], options.vin * pwm_integral - integrals[1]))
+            l_rows.append((change[0], options.vin * pwm_integral - integrals[1] - rl*integrals[0]))
     if len(l_rows) < 12:
         raise ValueError("加权积分初始化的有效电感窗口不足。")
     l_rows = np.asarray(l_rows)
@@ -90,7 +96,10 @@ def weak_integral_seed(train, options):
         raise ValueError("加权积分初始化缺少足够的电流或电压动态。")
     l_fit = lsq_linear(l_rows[:, :1] * 1e-4, l_rows[:, 1], bounds=([.001], [1000]))
     design = np.column_stack((rows[:, 0] * 1e-3, rows[:, 1]))
-    if options.mode == "LC":
+    if rc:
+        changes = np.asarray(cap_changes)
+        capacitance, resistance, condition, cap_bound = fit_capacitor(rows[:, 0], changes[:, 0], changes[:, 1], rows[:, 1], rows[:, 2], options)
+    elif options.mode == "LC":
         target = rows[:, 2] - rows[:, 1] / options.resistance_ohm
         c_fit = lsq_linear(design[:, :1], target, bounds=([.00001], [1000]))
         capacitance, resistance, condition = c_fit.x[0]*1e-3, options.resistance_ohm, 1.
@@ -105,11 +114,12 @@ def weak_integral_seed(train, options):
         capacitance, resistance = c_fit.x[0]*1e-3, 1/c_fit.x[1]
     return np.array([l_fit.x[0]*1e-4, capacitance, resistance]), {
         "windows": len(rows), "L_windows": len(l_rows), "CR_condition_number": condition,
-        "parameter_at_bound": bool(np.any(l_fit.active_mask) or np.any(c_fit.active_mask)),
+        "parameter_at_bound": bool(np.any(l_fit.active_mask) or (cap_bound if rc else np.any(c_fit.active_mask))),
         "method": "端点零权重积分初始化（仅训练段，2/5/10周期窗口）"}
 
 
 def integral_fit(train, options):
+    rl, rc = resistances(options)
     t, current, voltage, pwm = train.T
     left, right = window_indices(t, options.frequency_hz)
     iv = cumulative_trapezoid(voltage, t, initial=0)
@@ -125,10 +135,12 @@ def integral_fit(train, options):
     if active.sum() < 12:
         raise ValueError("可用导通动态不足，无法可靠辨识 L；请选择包含电流变化的时间段。")
     x = di[active, None] * 1e-4
-    y = (iu[right] - iu[left] - v_integral)[active]
+    y = (iu[right] - iu[left] - v_integral - rl*i_integral)[active]
     l_fit = lsq_linear(x, y, bounds=([0.001], [1000]))
     inductance = float(l_fit.x[0] * 1e-4)
-    if options.mode == "LC":
+    if rc:
+        capacitance, resistance, condition, cap_bound = fit_capacitor(dv, di, np.zeros_like(dv), v_integral, i_integral, options)
+    elif options.mode == "LC":
         design = dv[:, None] * 1e-3
         target = i_integral - v_integral / options.resistance_ohm
         c_fit = lsq_linear(design, target, bounds=([0.00001], [1000]))
@@ -144,7 +156,7 @@ def integral_fit(train, options):
             raise ValueError("C/R 回归病态，当前数据不能独立确定参数；需要更丰富的动态激励。")
         c_fit = lsq_linear(design, i_integral, bounds=([0.00001, 1e-5], [1000, 100]))
         capacitance, resistance = float(c_fit.x[0] * 1e-3), float(1 / c_fit.x[1])
-    boundary = bool(np.any(l_fit.active_mask) or np.any(c_fit.active_mask))
+    boundary = bool(np.any(l_fit.active_mask) or (cap_bound if rc else np.any(c_fit.active_mask)))
     return np.array([inductance, capacitance, resistance]), {
         "windows": int(len(left)), "L_windows": int(active.sum()),
         "CR_condition_number": condition, "parameter_at_bound": boundary,
@@ -152,7 +164,7 @@ def integral_fit(train, options):
     }
 
 
-def rollout(a, params, vin, initial_state=None):
+def rollout(a, params, vin, initial_state=None, *, series_resistances=(0., 0.)):
     """Continuous rollout with observed PWM. No measurement reset after x0.
 
     Solve separately between observed gate edges; DCM zero-current events
@@ -160,6 +172,7 @@ def rollout(a, params, vin, initial_state=None):
     """
     t, _, _, gate = a.T
     L, C, R = params
+    rl, rc = series_resistances
     edges = np.r_[0, np.flatnonzero(np.diff(gate)) + 1, len(a) - 1]
     edges = np.unique(edges)
     out = np.zeros((len(a), 2))
@@ -167,6 +180,11 @@ def rollout(a, params, vin, initial_state=None):
     if state.shape != (2,) or not np.isfinite(state).all():
         raise ValueError("前向验证初始状态无效。")
     out[0] = state
+    state[1] = (1+rc/R)*state[1]-rc*state[0]  # vo -> internal vC
+    def terminal(states):
+        result = np.array(states, copy=True)
+        result[..., 1] = (result[..., 1]+rc*result[..., 0])/(1+rc/R)
+        return result
     def zero_current(tt, xx):
         return xx[0]
     zero_current.terminal = True
@@ -175,10 +193,11 @@ def rollout(a, params, vin, initial_state=None):
         times = t[left:right + 1]
         on = gate[left] > 0.5
         if not on and state[0] <= 1e-10:
-            segment = np.column_stack((np.zeros(len(times)), state[1] * np.exp(-(times - times[0]) / (R * C))))
+            segment = np.column_stack((np.zeros(len(times)), state[1] * np.exp(-(times - times[0]) / ((R+rc) * C))))
         else:
             def rhs(tt, xx):
-                return [(vin * on - xx[1]) / L, (xx[0] - xx[1] / R) / C]
+                vo = (xx[1]+rc*xx[0])/(1+rc/R)
+                return [(vin * on - vo - rl*xx[0]) / L, (xx[0] - vo / R) / C]
             sol = solve_ivp(rhs, (times[0], times[-1]), state, rtol=2e-7, atol=1e-9,
                             dense_output=True, events=None if on else zero_current)
             if not sol.success:
@@ -189,8 +208,8 @@ def rollout(a, params, vin, initial_state=None):
                 v_stop = sol.y_events[0][0, 1]
                 tail = times >= stop
                 segment[tail, 0] = 0
-                segment[tail, 1] = v_stop * np.exp(-(times[tail] - stop) / (R * C))
-        out[left:right + 1] = segment
+                segment[tail, 1] = v_stop * np.exp(-(times[tail] - stop) / ((R+rc) * C))
+        out[left:right + 1] = terminal(segment)
         state = segment[-1].copy()
     if not np.isfinite(out).all():
         raise ValueError("前向仿真出现非有限值。")
@@ -208,6 +227,7 @@ def metric(t, actual, predicted):
 
 def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progress=None):
     started = time.perf_counter()
+    rl, rc = resistances(options)
     def stage(name):
         if progress is not None:
             progress(name)
@@ -297,7 +317,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
             "uses_heldout_measurements": False,
         }
     else:
-        predicted = rollout(a, params, options.vin, initial_state)
+        predicted = rollout(a, params, options.vin, initial_state, **({"series_resistances": (rl, rc)} if rl or rc else {}))
         diagnostics["drive_source"] = "measured PWM"
     metrics = metric(valid[:, 0], valid[:, 1:3], predicted[split:])
     from .measurement_diagnostics import assess_measurements
@@ -326,6 +346,10 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         notes.append("已计入反馈取样支路电流；忽略 ESR、绕组电阻、死区和器件压降。R 为用户提供的恒定负载电阻，未参与估计。")
     else:
         notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
+    diagnostics["power_stage_model"] = "known_series_resistances" if options.include_parasitics else "ideal"
+    diagnostics["known_parasitics"] = {"inductor_resistance_ohm": rl, "capacitor_esr_ohm": rc, "voltage_measurement": "output_terminal_vo"}
+    if options.include_parasitics:
+        notes = [n.replace("忽略 ESR、绕组电阻、死区和器件压降", "已计入已知 ESR 与绕组电阻；忽略死区和器件压降").replace("忽略反馈取样支路、ESR、绕组电阻、死区和器件压降", "已计入已知 ESR 与绕组电阻；忽略反馈取样支路、死区和器件压降") for n in notes]
     return {"parameters": {"L_H": float(params[0]), "C_F": float(params[1]), "R_ohm": float(params[2])},
             "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality, "review_reasons": reasons,
             "assessment": assess_result(metrics, diagnostics, options.method),

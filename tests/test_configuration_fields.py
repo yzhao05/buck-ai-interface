@@ -9,6 +9,37 @@ from backend.configuration_fields import validate_structure
 from test_configuration import provider, request
 
 
+def test_incomplete_parasitics_are_editable_but_never_executable():
+    from backend.schemas import ChatRequest, FitRequest
+    from pydantic import ValidationError
+    req = ChatRequest(message='填写电感绕组电阻', ui_context={
+        'request_id':'draft', 'options':{'include_parasitics':True}})
+    proposal = ConfigureIdentification(open_panel=False, start_after_apply=False, changes={'inductor_resistance_ohm':.25})
+    draft, _ = validate_structure(req, proposal, proposal.changes.model_dump(exclude_unset=True))
+    assert draft.inductor_resistance_ohm == .25 and draft.capacitor_esr_ohm is None
+    req.ui_context.options = draft
+    proposal = ConfigureIdentification(open_panel=False, changes={'capacitor_esr_ohm':.12}, start_after_apply=True)
+    complete, _ = validate_structure(req, proposal, proposal.changes.model_dump(exclude_unset=True))
+    assert complete.capacitor_esr_ohm == .12
+    with pytest.raises(ValidationError, match='必须填写'):
+        validate_structure(req, ConfigureIdentification(open_panel=False, changes={}, start_after_apply=True), {})
+    with pytest.raises(ValidationError, match='必须填写'):
+        FitRequest(dataset_id='test', mapping={'time':'t','current':'i','voltage':'v'}, options=draft.model_dump())
+    cleared, _ = validate_structure(req, ConfigureIdentification(open_panel=False, changes={}, start_after_apply=False), {'inductor_resistance_ohm':None})
+    assert cleared.inductor_resistance_ohm is None
+    with pytest.raises(ValidationError):
+        ChatRequest(message='x', ui_context={'request_id':'draft','options':{'include_parasitics':True,'capacitor_esr_ohm':-1}})
+
+
+def test_chat_can_complete_missing_parasitic_fields(monkeypatch):
+    from backend.schemas import FitOptionsDraft
+    provider(monkeypatch, {'open_panel':False,'changes':{'inductor_resistance_ohm':.25,'capacitor_esr_ohm':.12},'start_after_apply':False})
+    req = request('电感绕组电阻0.25欧，电容ESR为0.12欧')
+    req.ui_context.options = FitOptionsDraft(include_parasitics=True)
+    result = asyncio.run(chat.answer(req, None))
+    assert result['ui_action']['changes'] == {'inductor_resistance_ohm':.25,'capacitor_esr_ohm':.12}
+
+
 @pytest.mark.parametrize('message,changes',[
     ('训练轮数改为300',{'epochs':300}),
     ('时间窗口改为0–0.8 ms',{'start_s':0,'end_s':.0008}),

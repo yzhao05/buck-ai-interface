@@ -27,7 +27,7 @@ def test_catalogue_pages_cover_every_document_once_without_full_text():
         offset = page['next_offset']
     assert ids == [d['id'] for d in DOCUMENTS]
     categories = [list_knowledge(category=category, limit=100) for category in ('method', 'formula', 'ui')]
-    assert [p['total'] for p in categories] == [9, 24, 61]
+    assert [p['total'] for p in categories] == [9, 27, 62]
     assert set(ids) == {d['id'] for page in categories for d in page['entries']}
     assert list_knowledge(offset=10000)['entries'] == []
 

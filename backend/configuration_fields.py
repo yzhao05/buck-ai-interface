@@ -1,6 +1,6 @@
 """Validate explicit patches against the form and its private attachment catalog."""
 
-from .schemas import ControllerParameters, FitOptions, Mapping
+from .schemas import ControllerParameters, FitOptions, FitOptionsDraft, Mapping
 
 
 def leaves(values, prefix):
@@ -16,7 +16,7 @@ def validate_structure(request, proposal, changes):
     """Validate model-selected values and resource IDs without parsing prose."""
     extras = {key: getattr(proposal, key).model_dump(exclude_unset=True) for key in ('mapping', 'assets', 'analysis')}
     for path, value in leaves({'changes': changes, **extras}, ''):
-        if value is None and path not in ('changes.start_s', 'changes.end_s', 'mapping.pwm', 'assets.circuit_id', 'analysis.reference_csv_id', 'analysis.truth_L_H', 'analysis.truth_C_F'):
+        if value is None and path not in ('changes.start_s', 'changes.end_s', 'changes.inductor_resistance_ohm', 'changes.capacitor_esr_ohm', 'mapping.pwm', 'assets.circuit_id', 'analysis.reference_csv_id', 'analysis.truth_L_H', 'analysis.truth_C_F'):
             raise ValueError('Cannot clear field: ' + path)
     catalog = request.ui_context.catalog
     if extras['assets'].get('result_id') and (extras['assets'].get('csv_id') or extras['mapping'] or getattr(proposal,'start_after_apply',False) or getattr(proposal,'execute',False)):
@@ -34,7 +34,8 @@ def validate_structure(request, proposal, changes):
     if patch.get('pwm_source', request.ui_context.pwm_source_setting) == 'auto':
         mapping = {**(request.ui_context.mapping.model_dump() if request.ui_context.mapping else {}), **extras['mapping']}
         patch['pwm_source'] = 'controller' if mapping and not mapping.get('pwm') else 'measured'
-    merged = FitOptions.model_validate({**current, **patch})
+    model = FitOptions if (getattr(proposal, 'start_after_apply', False) or getattr(proposal, 'execute', False)) else FitOptionsDraft
+    merged = model.model_validate({**current, **patch})
     if 'train_fraction' in changes and abs(changes['train_fraction'] * 20 - round(changes['train_fraction'] * 20)) > 1e-8:
         raise ValueError('训练占比与界面一致，仅支持 50%–85%，每档 5%')
     if merged.start_s is not None and merged.end_s is not None and merged.start_s >= merged.end_s:
@@ -49,6 +50,7 @@ def validate_structure(request, proposal, changes):
 FIELD_PROMPT = """
 此工具用于实验与分析表单。连接设置中的 PLECS 输出通道由 configure_plecs_ports 单独修改。口令与回答模式只能手动设置。
 changes 可设置 vin(V)、frequency_hz(Hz)、train_fraction(0.50–0.85，每档0.05)、pwm_source(auto/measured/controller)、
+include_parasitics(bool)、inductor_resistance_ohm(Ω)、capacitor_esr_ohm(Ω)。开启寄生电阻必须由用户提供两项非负数值，可显式为0；不得猜测。
 pann_initial_state(joint/measured)、pann_window_cycles(0自动/1/2/3)、controller_confirmed。
 controller 是局部补丁，仅写指定元件：R1_ohm/R2_ohm/R3_ohm/R4_ohm(Ω)、C2_F/C3_F(F)、opamp_gain、reference_V、pwm_gain、
 duty_min/duty_max(0–1)、carrier_phase_at_t0(0–1)、initial_c2_V/initial_c3_V。kΩ×1000,nF×1e-9,kHz×1000,百分比÷100。

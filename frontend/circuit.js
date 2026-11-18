@@ -12,7 +12,9 @@ window.BuckCircuit = (() => {
     ["duty_max","占空比上限","",1,.9,.000001,1], ["carrier_phase_at_t0","载波初始相位","周期",1,0,0,.999999],
     ["initial_c2_V","C2 初始电压","V",1,0,-2000,2000], ["initial_c3_V","C3 初始电压","V",1,0,-2000,2000],
     ["frequency","开关频率","kHz",1,100,.1,2000], ["vin","输入电压","V",1,28,.1,2000],
-    ["fixed-r","已知负载电阻","Ω",1,6,.011,100000]
+    ["fixed-r","已知负载电阻","Ω",1,6,.011,100000],
+    ["inductor-resistance","电感绕组电阻 rL","Ω",1,0,0,1000],
+    ["capacitor-esr","电容 ESR rC","Ω",1,0,0,1000]
   ];
   let draftImage = "", draftImageName = "", uploading = false, renderKey = "", generation = 0;
   const number = value => Number.isFinite(Number(value)) ? Number(Number(value).toPrecision(6)).toString() : "—";
@@ -55,17 +57,19 @@ window.BuckCircuit = (() => {
       svg.append(g);
     };
     txt(25,28,I.translate("功率级 · 固定负载"),{"font-size":18,"font-weight":600});
-    wire("M65 85V65H180 M230 65H310 M430 65H830 M65 135V200H830 M550 65V110 M550 150V200 M735 65V95 M735 155V200 M275 65V115 M275 155V200");
+    wire("M65 85V65H180 M230 65H310 M430 65H448 M510 65H830 M65 135V200H830 M550 65V110 M550 185V200 M735 65V95 M735 155V200 M275 65V115 M275 155V200");
     svg.append(node("circle",{cx:65,cy:110,r:25,fill:"white",stroke:"#42666a","stroke-width":2.5}));
     txt(59,104,"+");txt(59,126,"−");label(23,245,"vin","Vin = ","V");
     wire("M180 65l43 -21 M230 65h5");dot(180,65);dot(230,65);txt(235,49,"T1");
     wire("M310 65q15 -33 30 0q15 -33 30 0q15 -33 30 0q15 -33 30 0");
+    resistor(448,65,62);label(438,99,"inductor-resistance","rL = ","Ω");
     txt(330,28,"L · "+I.translate("待辨识"),{fill:"#bf8533"});
     wire("M275 115v8 m-13 0h26 M262 155l13 -32l13 32z");txt(236,180,"D1");
-    wire("M530 110h40 M530 125h40 M550 125v25");
+    wire("M530 110h40 M530 125h40 M550 125v10 m-8 0h16v35h-16z m8 35v15");
+    label(579,180,"capacitor-esr","rC = ","Ω");
     txt(579,137,"C · "+I.translate("待辨识"),{fill:"#bf8533"});
     verticalResistor(735,95);label(765,132,"fixed-r","R = ","Ω");
-    ground(450,200);dot(275,65);dot(550,65);dot(735,65);txt(844,70,"vo");txt(445,51,"iL →");
+    ground(450,200);dot(275,65);dot(550,65);dot(735,65);txt(844,70,"vo");txt(490,51,"iL →");
     txt(25,287,I.translate("控制级 · 接线固定"),{"font-size":18,"font-weight":600});
     // vo -- R1 -- va -- (R2 || C2) -- vm; vm -- R4 -- ground.
     wire("M40 390H105 M177 390H245 M245 350V425 M245 350H285 M357 350H410 M410 350V425 M245 425H295 M345 425H410 M410 390H590");
@@ -90,7 +94,7 @@ window.BuckCircuit = (() => {
   }
   function valuesFromSaved() {
     const saved=read();
-    return Object.fromEntries(specs.map(([key,,,scale,value])=>[key,key in saved ? saved[key]/scale : Number(el(key)?.value || value)]));
+    return Object.fromEntries(specs.map(([key,,,scale,value])=>[key,key in saved ? Number((saved[key]/scale).toPrecision(15)) : ["inductor-resistance","capacitor-esr"].includes(key) && el("include-parasitics").value!=="true" ? 0 : Number(el(key)?.value || value)]));
   }
   function draftValues() { return Object.fromEntries(specs.map(([key])=>[key,Number(el("circuit-"+key).value)])); }
   function fillDrawing(target, values, image, interactive) {
@@ -112,6 +116,10 @@ window.BuckCircuit = (() => {
   function open() {
     const values=valuesFromSaved();
     specs.forEach(([key])=>el("circuit-"+key).value=values[key]);
+    for(const key of ["inductor-resistance","capacitor-esr"]){
+      el("circuit-"+key).disabled=el("include-parasitics").value!=="true";
+      if(el("include-parasitics").value==="true")el("circuit-"+key).value=el(key).value;
+    }
     draftImage=validImage(el("controller-image").value) ? el("controller-image").value : "";
     draftImageName=el("controller-image-name").value;
     I.text(el("circuit-error"),"");renderDraft();el("circuit-dialog").showModal();
@@ -165,6 +173,8 @@ window.BuckCircuit = (() => {
     el("controller-parameters").value=JSON.stringify(params);el("controller-image").value=draftImage;
     el("controller-image-name").value=draftImageName;
     for(const id of ["frequency","vin","fixed-r"])el(id).value=values[id];
+    if(el("include-parasitics").value==="true")
+      for(const id of ["inductor-resistance","capacitor-esr"])el(id).value=values[id];
     el("circuit-dialog").close();render();document.dispatchEvent(new Event("buck-circuit-change"));
   };
   document.addEventListener("buck-language-change",()=>{render(true);if(el("circuit-dialog").open)renderDraft();});

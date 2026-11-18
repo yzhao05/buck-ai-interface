@@ -3,6 +3,7 @@
 以本地 PLECS 原模型、Case16A/B 与独立 Case17 为依据。公式按 KCL/KVL 推导；外部资料用于核对适用域。
 当前支持实测 PWM 两状态模型与已确认配置的控制器重建模式：后者计入反馈取样支路，固定已知 R 辨识 L/C，并以完整四状态自主闭环验证；控制器参数保持已知，不参与辨识。两种模式均为同一记录后段留出，不是独立工况验证。标称值不是未知 CSV 的真值。
 界面提供抗噪加权积分与 PANN：前者直接输出端点零权重积分估计，后者以此初始化再微调；旧 integral API 仅保留作实测 PWM 模式的基础积分复现。
+已知寄生模式使用用户填写的电感串联rL、电容串联ESR rC；默认理想模式令两者为0。新增公式由KCL/KVL推导，不表示原始PLECS样例已包含寄生。CSV电压统一为输出端vo。
 本文由 `tests/build_formula_reference.py` 从 `buck.py` 生成；修改 `buck.py` 后重新生成。
 
 完整参数、连接和源文件 SHA-256 见 [模型证据](model_evidence.json)。
@@ -31,6 +32,9 @@
 - [L/C/R 积分辨识回归 / Integral identification](#buck-identification-formulas)
 - [可辨识性、噪声与参数误差 / Identifiability](#buck-identifiability)
 - [波形统计、验证与误差指标 / Validation metrics](#buck-validation)
+- [已知绕组电阻与电容 ESR：非理想 Buck 状态模型](#buck-parasitics-model)
+- [含已知寄生电阻的积分与抗噪加权积分辨识](#buck-parasitics-integral)
+- [含已知寄生电阻的 PANN 递推与验证](#buck-parasitics-pann)
 
 <a id="buck-map"></a>
 
@@ -240,7 +244,7 @@ EL=L iL^2/2；EC=C vC^2/2。
 
 ## ESR、绕组电阻与器件压降 / Nonideal power stage
 
-**适用条件：** 扩展模型：输出电容串联 rC，电感串联 rL，MOSFET Ron，二极管 Vf+rD iL。它们未加入当前网页辨识器。
+**适用条件：** 扩展模型：输出电容串联 rC，电感串联 rL，MOSFET Ron，二极管 Vf+rD iL。当前网页可选计入用户填写的已知 rL、rC；Ron、Vf、rD 尚未计入。实现公式见 buck-parasitics-integral 与 buck-parasitics-pann。
 
 ```text
 vo=vC+rC iC，C dvC/dt=iC，iC=iL-vo/Rload-isense。
@@ -509,7 +513,7 @@ vo_hat/vin_hat=Gvg/Dcl；vo_hat/idist_hat=-Zout/Dcl。
 
 ## L/C/R 积分辨识回归 / Integral identification
 
-**适用条件：** 已知 Vin、理想非同步 Buck、区间内 Rload 恒定。实测 PWM 模式忽略反馈取电，支持 L/C/R 联合辨识或固定 R 的 L/C 辨识；已确认配置的控制器重建模式计入 isense，仅支持固定已知 R 的 L/C 辨识。下列先给基础积分式，再给当前抗噪加权积分式。
+**适用条件：** 本条仅适用于未开启寄生电阻的理想模型（或 rL=rC=0）。已知 Vin、理想非同步 Buck、区间内 Rload 恒定。实测 PWM 模式忽略反馈取电，支持 L/C/R 联合辨识或固定 R 的 L/C 辨识；已确认配置的控制器重建模式计入 isense，仅支持固定已知 R 的 L/C 辨识。下列先给基础积分式，再给当前抗噪加权积分式。
 
 ```text
 对窗口 [ta,tb]：L ΔiL=∫(q Vin-vo)dt，记 yL=∫(q Vin-vo)dt。
@@ -573,3 +577,77 @@ RMS/NRMSE 归一化定义需说明，不要与按峰峰值归一化混用。实�
 参考与核对依据：
 
 - [本项目积分辨识与连续前向验证实现](../identification.py)
+
+<a id="buck-parasitics-model"></a>
+
+## 已知绕组电阻与电容 ESR：非理想 Buck 状态模型
+
+**适用条件：** include_parasitics=true；rL、rC 为用户提供的非负已知常数，不参与估计。不开启时两者按0计算。电路为L串rL、C串rC；R为负载。无ESL、漏电、器件压降或故障支路。
+
+```text
+G=1/R；iC=iL-G vo-isense；vo=vC+rC iC。
+vC=(1+rC G)vo-rC(iL-isense)。
+导通/续流：L diL/dt=q Vin-vo-rL iL；C dvC/dt=iL-G vo-isense。
+实测PWM：isense=0；vo=(vC+rC iL)/(1+rC G)。
+控制器重建：isense=a vo+b(x2,x3)，vo=[vC+rC(iL-b)]/[1+rC(G+a)]；a、b由既有RC控制网络求得。
+关断且iL=0：保持iL=0，C dvC/dt=-G vo-isense；不强行使用L di/dt=-vo。
+实测PWM的零电流段：vC(t)=vC(t0)exp[-(t-t0)/((R+rC)C)]。
+rL=rC=0时vC=vo，精确退化为理想模型。
+```
+
+CSV映射电压为输出端vo，不是理想电容内部vC。连续验证以内部vC积分，再转换为vo比较；控制器也由vo驱动。两种PWM路径分别保持原有取样支路处理。开启后rL/rC缺失即拒绝计算，可明确填0，不能把空白当0。正常寄生电阻不代表损坏。
+
+参考与核对依据：
+
+- [本项目积分辨识与连续前向验证实现](../identification.py)
+- [RC 控制器与含寄生电阻的闭环验证](../controller.py)
+
+<a id="buck-parasitics-integral"></a>
+
+## 含已知寄生电阻的积分与抗噪加权积分辨识
+
+**适用条件：** 与buck-parasitics-model相同；rL/rC固定已知。LC固定R；LCR仅实测PWM支持。仅使用训练段。
+
+```text
+端点差分算子D(f)=f(tb)-f(ta)，积分算子I(f)=∫f dt。
+抗噪加权时替换为D(f)=-∫φ' f dt、I(f)=∫φ f dt；φ=u²(1-u)²，端点φ=0。
+电感：L D(iL)=I(q Vin-vo-rL iL)。排除含关断零电流的电感窗口。
+电容：z=D(vo)-rC D(iL)+rC D(isense)；V=I(vo)；J=I(iL-isense)。
+C[z+rC G D(vo)]+G V=J。
+LC：G已知，使用列z+rC G D(vo)，目标J-G V，对C做带正值边界最小二乘。
+LCR：最小化Σ{C[z+rC G D(vo)]+G V-J}²；保留C G交叉项，不能沿用理想两列线性回归。
+LCR雅可比列：z+rC G D(vo)，C rC D(vo)+V；缩放并检查列相关性。
+rC=0退化到原积分公式；rL=0时电感积分式也恢复原式。
+```
+
+原始integral采用端点差分，加权积分采用分部积分避免直接求导；两者均支持已知寄生电阻。PANN也使用对应加权积分作为初值。开启非理想模型不会自动估计rL/rC。弱动态、噪声或C/G相关仍可导致辨识不可靠。
+
+参考与核对依据：
+
+- [本项目积分辨识与连续前向验证实现](../identification.py)
+- [已知寄生电阻与含 ESR 的 C/R 回归](../parasitics.py)
+
+<a id="buck-parasitics-pann"></a>
+
+## 含已知寄生电阻的 PANN 递推与验证
+
+**适用条件：** rL/rC固定输入；参数仍为L、C和可选R。窗口状态以[iL,vo]表示，训练损失比较输出端vo。
+
+```text
+每步由状态恢复vC,k=(1+rC/R)vo,k-rC(iL,k-isense,k)。
+iL,k+1=max(0,iL,k+Δt/L·[va,k-vo,k-rL iL,k])。
+关断且iL,k<=0时va,k=vo,k；其他情况va,k=qk Vin。
+vC,k+1=vC,k+Δt/C·[iL,k-vo,k/R-isense,k]。
+vo,k+1=[vC,k+1+rC(iL,k+1-isense,k+1)]/(1+rC/R)。
+实测PWM取isense=0；重建训练提供当前步和下一步的取样电流，均来自训练段。
+损失为iL、vo通道按训练尺度归一化后的波形均方误差；rL/rC没有梯度优化。
+初始化、训练、连续留出验证使用同一组已知寄生电阻；参数与初始状态取同一最佳训练轮次。
+```
+
+初值联合估计仍仅使用训练段。留出段不重置到观测：实测PWM连续积分；重建PWM由预测vo驱动RC控制器，联立取电与ESR代数关系。默认关闭与显式零电阻保留理想算法。高损耗或极小L/C可能导致Euler数值不稳定，需检查步长与模型，不能将发散解释成器件损坏。
+
+参考与核对依据：
+
+- [含寄生电阻的 PANN 递推实现](../pann_parasitics.py)
+- [本项目积分辨识与连续前向验证实现](../identification.py)
+- [RC 控制器与含寄生电阻的闭环验证](../controller.py)

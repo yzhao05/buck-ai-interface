@@ -1,6 +1,8 @@
 /* Chat uses the same form controls and validation limits as manual edits. */
 "use strict";
 const configurationFields={
+  include_parasitics:["include-parasitics",1,"电感与电容寄生电阻"],
+  inductor_resistance_ohm:["inductor-resistance",1,"电感绕组电阻 rL"],capacitor_esr_ohm:["capacitor-esr",1,"电容 ESR rC"],
   method:['fit-method',1,'计算方法'],mode:['fit-mode',1,'辨识目标'],resistance_ohm:['fixed-r',1,'负载电阻'],
   vin:['vin',1,'输入电压'],frequency_hz:['frequency',.001,'开关频率 (kHz)'],train_fraction:['train-fraction',100,'训练区间占比'],
   epochs:['pann-epochs',1,'训练轮数'],pann_initial_state:['pann-state',1,'窗口初值'],pann_window_cycles:['pann-cycles',1,'窗口长度'],
@@ -31,6 +33,9 @@ function identificationReviewFeedback(){
     `Vin = ${$('vin').value} V`,`${tr('开关频率 (kHz)')} = ${$('frequency').value}`,
     `${tr('训练区间占比')} = ${$('train-fraction').value}%`,`${tr('PWM 来源')} = ${tr(pwmSource()==='controller'?'控制器重建':'实测 PWM')}`,
     `${tr('开始时间 (ms)')} = ${$('start-ms').value||tr('自动')}`,`${tr('结束时间 (ms)')} = ${$('end-ms').value||tr('自动')}`];
+  settings.push(`${tr('电感与电容寄生电阻')} = ${selected('include-parasitics')}`);
+  if($('include-parasitics').value==='true')settings.push(
+    `rL = ${$('inductor-resistance').value || tr('未填写')} Ω`, `rC = ${$('capacitor-esr').value || tr('未填写')} Ω`);
   if($('fit-mode').value==='LC')settings.push(`${tr('负载电阻')} = ${$('fixed-r').value} Ω`);
   if($('fit-method').value==='pann')settings.push(`${tr('训练轮数')} = ${$('pann-epochs').value}`);
   let requirement=tr('请核对这些设置是否与本次数据及实验工况一致。');
@@ -44,6 +49,7 @@ const convertedField=(value,scale)=>value===null?'':typeof value==='number'?Stri
 function validConfigurationChanges(c){
   if(!c || Array.isArray(c) || typeof c!=='object')return false;
   for(const [key,value] of Object.entries(c)){
+    if(key==='include_parasitics' && typeof value!=='boolean')return false;
     if(key==='controller_confirmed'){if(typeof value!=='boolean')return false;continue;}
     if(key==='controller'){
       if(!value || typeof value!=='object' || Array.isArray(value))return false;
@@ -59,7 +65,7 @@ function validConfigurationChanges(c){
     const input=$(spec[0]),val=convertedField(value,spec[1]);
     if(input.tagName==='SELECT'){
       if(![...input.options].some(o=>o.value===val))return false;
-    }else if(value===null){if(!['start_s','end_s'].includes(key))return false;}
+    }else if(value===null){if(!['start_s','end_s','inductor_resistance_ohm','capacitor_esr_ohm'].includes(key))return false;}
     else {
       if(typeof value!=='number'||!Number.isFinite(value))return false;
       const probe=input.cloneNode();probe.disabled=false;probe.value=val;
@@ -73,7 +79,7 @@ function applyConfigurationChanges(c,{resetConfirmation=false}={}){
   const labels=[];
   const circuitChanged=['vin','frequency_hz','resistance_ohm'].some(k=>k in c&&Number($(configurationFields[k][0]).value)!==c[k]*configurationFields[k][1])
     || (c.controller&&Object.entries(c.controller).some(([k,v])=>BuckCircuit.read()[k]!==v));
-  if(resetConfirmation || circuitChanged)$('controller-confirmed').value='no';
+  if(resetConfirmation || circuitChanged || ['include_parasitics','inductor_resistance_ohm','capacitor_esr_ohm'].some(k=>k in c))$('controller-confirmed').value='no';
   for(const [key,value] of Object.entries(c)){
     if(key==='controller'){
       $('controller-parameters').value=JSON.stringify({...BuckCircuit.read(),...value});

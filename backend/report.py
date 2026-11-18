@@ -42,6 +42,9 @@ class Metrics(Snapshot):
 
 
 class ReportOptions(Snapshot):
+    include_parasitics: bool = False
+    inductor_resistance_ohm: Number | None = None
+    capacitor_esr_ohm: Number | None = None
     pwm_denoise: Literal["sg", "modified_sinc", "none"] | None = None
     pwm_filter_cycles: Number | None = None
     vin: Number | None = None
@@ -196,6 +199,9 @@ def build_pdf(request: ReportRequest) -> bytes:
            (t("训练区间", "Training interval"), f"{n(r.train_start_s, 1000)} - {n(r.train_end_s, 1000)} ms"),
            (t("同记录留出区间", "Same-record holdout"), f"{n(r.train_end_s, 1000)} - {n(r.validation_end_s, 1000)} ms"),
            (t("计算耗时", "Computation time"), n(r.elapsed_s) + " s")])
+    table([(t("功率级模型", "Power-stage model"), t("已知寄生电阻", "Known series resistances") if r.options.include_parasitics else t("理想 L/C", "Ideal L/C"))])
+    if r.options.include_parasitics:
+        table([("rL (Ω)", n(r.options.inductor_resistance_ohm)), ("rC / ESR (Ω)", n(r.options.capacitor_esr_ohm))])
     section("02  参数辨识结果", "02  Identified parameters")
     table([(t("预测电感 L", "Predicted inductance L"), n(r.parameters.L_H, 1e6) + " µH"),
            (t("预测电容 C", "Predicted capacitance C"), n(r.parameters.C_F, 1e6) + " µF"),

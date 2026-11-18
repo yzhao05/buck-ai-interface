@@ -78,6 +78,8 @@ def select_window_cycles(train, frequency_hz, requested):
 
 
 def refine(train, initial, options):
+    from .parasitics import resistances
+    rl, rc = resistances(options)
     # Reuse the user's existing Python/PyTorch environment without modifying it.
     # The executable is a server-side setting and cannot be chosen by the LLM.
     if importlib.util.find_spec("torch") is None and os.getenv("PANN_PYTHON"):
@@ -85,7 +87,7 @@ def refine(train, initial, options):
         if not executable.is_file():
             raise ValueError("PANN_PYTHON 指向的解释器不存在，请检查后端配置。")
         payload = {"train": train.tolist(), "initial": initial.tolist(),
-                   "options": {k: getattr(options, k) for k in ("vin", "frequency_hz", "mode", "epochs", "pann_initial_state", "pann_window_cycles")}}
+                   "options": {k: getattr(options, k) for k in ("vin", "frequency_hz", "mode", "epochs", "pann_initial_state", "pann_window_cycles", "include_parasitics", "inductor_resistance_ohm", "capacitor_esr_ohm")}}
         environment = {k: v for k, v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "APP_ACCESS_TOKEN")}
         environment["PYTHONIOENCODING"] = "utf-8"
         # Wait for the selected epoch count, however long the worker needs.
@@ -110,6 +112,10 @@ def refine(train, initial, options):
     torch.set_num_threads(2)
     cycles, window_rule, noise_ratio = select_window_cycles(train, options.frequency_hz, options.pann_window_cycles)
     gate, measured, observed, starts, dt = training_windows(train, options.frequency_hz, cycles)
+    if (rl or rc) and train.shape[1] == 5:
+        next_grid = starts[:, None]+np.arange(1, gate.shape[1]+1)*dt
+        next_sense = np.interp(next_grid, train[:, 0], train[:, 4])
+        gate = np.concatenate((gate, next_sense[:, :, None]), axis=-1)
     u = torch.tensor(gate, dtype=torch.float64)
     target = torch.tensor(measured, dtype=torch.float64)
     observed_start = torch.tensor(observed, dtype=torch.float64)
@@ -139,7 +145,11 @@ def refine(train, initial, options):
             predicted = self.base(inputs[:, :1], states)
             return torch.stack((predicted[:, 0], predicted[:, 1]-dt/self.base.Co*inputs[:, 1]), dim=1)
 
-    model = PANN(SensingCell(cell) if train.shape[1] == 5 else cell)
+    if rl or rc:
+        from .pann_parasitics import SeriesResistanceCell
+        model = PANN(SeriesResistanceCell(cell, rl, rc))
+    else:
+        model = PANN(SensingCell(cell) if train.shape[1] == 5 else cell)
     parameters = [p for p in model.parameters() if p.requires_grad]
     groups = [{"params": parameters, "lr": 0.03}]
     if joint:

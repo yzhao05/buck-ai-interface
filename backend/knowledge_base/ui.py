@@ -194,3 +194,8 @@ entry('message-evidence', '回答下方工具、来源与证据面板', '',
 entry('project-links', 'Buck Lab 标志、实验工作台与项目来源链接', 'source-link',
       '标志 首页 导航 项目来源 Inspired by PE-GPT source link',
       'Buck Lab标志链接当前站点首页，实验工作台是当前导航标签；左栏页脚的 Inspired by PE-GPT 打开参考项目仓库，连接设置中的本项目源码链接打开工作台源码仓库，不执行分析或保存报告。')
+
+entry('parasitics', '基本信息：电感与电容寄生电阻',
+      'include-parasitics parasitic-settings inductor-resistance capacitor-esr parasitic-error circuit-inductor-resistance circuit-capacitor-esr',
+      '内阻 寄生 电阻 绕组 ESR 理想 非理想 resistance winding capacitor parasitic',
+      '选项位于PWM来源之前，默认不考虑，计算rL=rC=0且电路图显示0。开启后两项数值必须显式填写，单位Ω，范围0～1000；空白、负值或非有限值会阻止辨识，显式0有效。两项为已知量，不参与L/C/R辨识。电路图在电感、电容各串联一个电阻，开启后可点击修改并同步左栏。关闭时保留输入草稿但计算按0；历史会话保存模型选择和数值。CSV电压对应输出端vo，ESR内部vC由模型换算。积分与PANN、实测与重建PWM均使用此选择。')

@@ -2,6 +2,17 @@
 "use strict";
 window.BuckI18n = (() => {
   const english = {
+    "未填写": "Not entered",
+    "已计入反馈取样支路电流；已计入已知 ESR 与绕组电阻；忽略死区和器件压降。R 为用户提供的恒定负载电阻，未参与估计。": "Feedback sensing current, known ESR and winding resistance are included; dead time and device voltage drops are omitted. R is the user-provided constant load resistance and is not estimated.",
+    "本模型已计入已知 ESR 与绕组电阻；忽略反馈取样支路、死区和器件压降；R 为选定区间的恒定等效负载电阻。": "This model includes known ESR and winding resistance; it omits the feedback sensing branch, dead time and device voltage drops. R is the constant equivalent load resistance over the selected interval.",
+    "电感与电容寄生电阻": "Inductor and capacitor parasitic resistance",
+    "不考虑 · 理想 L/C": "Ignore · Ideal L/C",
+    "考虑 · 已知绕组电阻与 ESR": "Include · Known winding resistance and ESR",
+    "电感绕组电阻 rL": "Inductor winding resistance rL",
+    "电容 ESR rC": "Capacitor ESR rC",
+    "两项均为已知值，不参与辨识。开启后请填写两项，可显式填写 0；CSV 电压必须是输出端 vo。": "Both are known inputs, not estimated. Enter both values when enabled; explicit zero is allowed. CSV voltage must be terminal vo.",
+    "请填写电感绕组电阻和电容 ESR（Ω，0～1000），再开始辨识。": "Enter both winding resistance and capacitor ESR (0–1000 Ω) before identification.",
+
     "请填写模型文件名、电流和电压通道及 L/C 参数键后再确认。": "Enter the model filename, current and voltage channels, and L/C parameter keys before confirming.",
     "端口已保存在本机，配对连接器后可同步到后端。": "Ports saved locally. Pair the connector to sync them to the backend.",
     "读取电路参数和端口": "Read circuit parameters and output channels",

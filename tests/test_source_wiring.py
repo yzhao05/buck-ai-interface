@@ -29,3 +29,16 @@ def test_relative_backend_imports_exist():
             for module in modules:
                 target=base.joinpath(*module.split('.'))
                 assert target.with_suffix('.py').is_file() or (target/'__init__.py').is_file(),(path,module)
+
+
+def test_formula_local_references_point_to_their_actual_sources():
+    from backend.knowledge_base.buck import FORMULA_DOCUMENTS
+    from build_formula_reference import render
+    from posixpath import relpath
+    rendered = render()
+    for document in FORMULA_DOCUMENTS:
+        for source in document['references']:
+            if source.get('path'):
+                assert (ROOT/source['path']).is_file(), source
+                target = relpath(source['path'], 'backend/knowledge_base')
+                assert f"[{source['title']}]({target})" in rendered

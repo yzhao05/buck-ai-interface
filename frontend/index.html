@@ -47,6 +47,13 @@
         <button type="button" id="enter-identification" class="button primary full" aria-controls="identification-form analysis-panel" aria-expanded="false">进入参数辨识 <span aria-hidden="true">→</span></button>
         <div id="identification-form" hidden>
         <div class="form-heading"><span>基本信息</span><button type="button" id="leave-identification" class="text-button">退出辨识</button></div>
+        <label>电感与电容寄生电阻<select id="include-parasitics"><option value="false">不考虑 · 理想 L/C</option><option value="true">考虑 · 已知绕组电阻与 ESR</option></select></label>
+        <div id="parasitic-settings" hidden>
+          <label>电感绕组电阻 rL<div class="unit-input"><input id="inductor-resistance" type="number" min="0" max="1000" step="any" placeholder="0" required><span>Ω</span></div></label>
+          <label>电容 ESR rC<div class="unit-input"><input id="capacitor-esr" type="number" min="0" max="1000" step="any" placeholder="0" required><span>Ω</span></div></label>
+          <p class="field-note">两项均为已知值，不参与辨识。开启后请填写两项，可显式填写 0；CSV 电压必须是输出端 vo。</p>
+        </div>
+        <p id="parasitic-error" class="field-note" hidden>请填写电感绕组电阻和电容 ESR（Ω，0～1000），再开始辨识。</p>
         <label>PWM 来源<select id="pwm-source"><option value="auto">自动：有 PWM 列则使用，否则重建</option><option value="measured">CSV 实际开关状态</option><option value="controller">三列 CSV · 已知控制器重建</option></select></label>
         <div id="controller-settings" hidden>
           <p class="field-note">计算流程：训练段电压去噪 → RC 控制器重建 PWM → 质量检查 → 固定 R 识别 L、C → 自主闭环验证。</p>

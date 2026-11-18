@@ -25,6 +25,10 @@ def profile_for(options):
         profile.update(values, initial_C2_C3_V=initial)
     profile["frequency_hz"] = options.frequency_hz
     profile["dt_s"] = 1/(options.frequency_hz*500)
+    from .parasitics import resistances
+    rl, rc = resistances(options)
+    if rl or rc:
+        profile.update(inductor_resistance_ohm=rl, capacitor_esr_ohm=rc)
     if profile != PROFILE:
         profile["id"] = "plecs_rc_custom_v1"
     return profile
@@ -112,14 +116,21 @@ def closed_loop_rollout(times, parameters, vin, initial_state, profile=None):
     grid = np.arange(int(np.ceil(times[-1]/dt))+1)*dt
     predicted = np.empty((len(grid), 2))
     predicted[0] = np.maximum(initial_state, 0)
+    rl, rc = p.get("inductor_resistance_ohm", 0.), p.get("capacitor_esr_ohm", 0.)
     q = np.array(p["initial_C2_C3_V"], dtype=float)
+    internal_v = (1+rc/R)*predicted[0,1]-rc*(predicted[0,0]-quantities(q,predicted[0,1],p)[2])
+    sense_slope = quantities(np.zeros(2),1.,p)[2]-quantities(np.zeros(2),0.,p)[2]
     for k in range(len(grid)-1):
         current, vo = predicted[k]
         dq, duty, sense = quantities(q, vo, p)
         gate = ((k % 500)/500+p["carrier_phase_at_t0"]) % 1 < duty
         va = vin if gate else vo if current <= 0 else 0.
-        predicted[k+1] = [max(0., current+dt/L*(va-vo)), vo+dt/C*(current-vo/R-sense)]
+        next_i = max(0., current+dt/L*(va-vo-rl*current))
+        internal_v += dt/C*(current-vo/R-sense)
         q += dt*dq
+        sense_offset = quantities(q,0.,p)[2]
+        next_vo = (internal_v+rc*(next_i-sense_offset))/(1+rc*(1/R+sense_slope))
+        predicted[k+1] = [next_i, next_vo]
         if not np.isfinite(predicted[k+1]).all() or np.max(np.abs(predicted[k+1])) > 1e7 or not np.isfinite(q).all():
             raise ValueError("闭环验证发散，请核对控制电路、负载和辨识参数。")
     return np.column_stack([np.interp(times, grid, predicted[:, j]) for j in (0, 1)])

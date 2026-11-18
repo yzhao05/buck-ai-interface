@@ -70,6 +70,23 @@ class FitOptions(StrictModel):
     pwm_filter_cycles: float = Field(default=6., ge=.1, le=8)
     controller_confirmed: bool = False
     controller: ControllerParameters | None = None
+    include_parasitics: bool = False
+    inductor_resistance_ohm: float | None = Field(default=None, ge=0, le=1000)
+    capacitor_esr_ohm: float | None = Field(default=None, ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def require_parasitics(self):
+        if self.include_parasitics and (self.inductor_resistance_ohm is None or self.capacitor_esr_ohm is None):
+            raise ValueError("考虑寄生电阻时，必须填写电感绕组电阻和电容 ESR（Ω，可显式填写 0）。")
+        return self
+
+
+class FitOptionsDraft(FitOptions):
+    """Editable form state; execution must still validate with FitOptions."""
+
+    @model_validator(mode="after")
+    def require_parasitics(self):
+        return self
 
 
 class FitRequest(AnalysisRequest):
@@ -187,7 +204,7 @@ class PlecsPortAction(StrictModel):
 class IdentificationUIContext(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     # Separate from the displayed historical result's options.
-    options: FitOptions
+    options: FitOptionsDraft
     pwm_source_setting: Literal['auto','measured','controller'] | None = None
     mapping: Mapping | None = None
     columns: list[str] = Field(default_factory=list, max_length=300)

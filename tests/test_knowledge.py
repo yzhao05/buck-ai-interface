@@ -49,7 +49,7 @@ def test_ripple_evidence_reaches_agent_with_primary_source(monkeypatch):
 
 
 def test_formula_reference_and_provenance():
-    assert len({d["id"] for d in FORMULA_DOCUMENTS}) == len(FORMULA_DOCUMENTS) == 24
+    assert len({d["id"] for d in FORMULA_DOCUMENTS}) == len(FORMULA_DOCUMENTS) == 27
     assert all(d["scope"] and d["equations"] and d["references"] for d in FORMULA_DOCUMENTS)
     assert (ROOT / "backend/knowledge_base/FORMULAS.md").read_text(encoding="utf-8") == render()
     assert set(EVIDENCE["models"]) == {"original", "case16a", "case16b", "case17"}

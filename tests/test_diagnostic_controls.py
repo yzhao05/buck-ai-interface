@@ -53,6 +53,34 @@ def test_four_controls_hold_each_other_factor_fixed(experiment):
     assert out['pann_source_result_id']=='source'
 
 
+def test_controls_replay_the_saved_nonideal_model(experiment):
+    data, mapping, _, source = experiment
+    source['options'].update(include_parasitics=True, inductor_resistance_ohm=.25, capacitor_esr_ohm=.12)
+    out = run_controls(data, source, result_id='r', source_id='r')
+    a, _ = extract(data, mapping)
+    a = a[a[:,0] <= source['validation_end_s']+1e-14]
+    split = np.searchsorted(a[:,0],source['train_end_s'])
+    p = list(source['parameters'].values())
+    predicted = rollout(a,p,source['options']['vin'],series_resistances=(.25,.12))
+    expected = metric(a[split:,0],a[split:,1:3],predicted[split:])
+    assert out['cases']['pann_measured']['heldout_measured'] == pytest.approx(expected)
+    assert out['power_stage_model'] == 'known_series_resistances'
+    assert out['known_parasitics']['capacitor_esr_ohm'] == .12
+
+
+def test_legacy_ideal_results_remain_compatible_without_mixing_models(experiment):
+    _, _, current, source = experiment
+    for key in ('include_parasitics','inductor_resistance_ohm','capacitor_esr_ohm'):
+        source['options'].pop(key, None)
+    assert compatible(current, source)
+    source['options'].update(include_parasitics=True, inductor_resistance_ohm=.25, capacitor_esr_ohm=.12)
+    assert not compatible(current, source)
+    current['options'].update(source['options'])
+    assert compatible(current, source)
+    source['options']['capacitor_esr_ohm'] = .13
+    assert not compatible(current, source)
+
+
 def test_reference_only_changes_evaluation_not_predictions(experiment):
     data,mapping,_,source=experiment
     ref=copy.deepcopy(data);ref.sha256='f'*64;ref.frame[mapping.current] += .2
