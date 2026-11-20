@@ -1,5 +1,5 @@
 {
-  "reviewed_on": "2026-10-15",
+  "reviewed_on": "2026-11-20",
   "purpose": "Reference model definitions only; never identification ground truth for an unknown CSV.",
   "models": {
     "original": {
@@ -183,6 +183,118 @@
         "Type          Signal\n      SrcComponent  \"Demux\"\n      SrcTerminal   3\n      DstComponent  \"Scope\"\n      DstTerminal   2",
         "Type          Signal\n      SrcComponent  \"Probe\"\n      SrcTerminal   1\n      Points        [175, 240]\n      Branch {\n        Points        [175, 285]\n        DstComponent  \"Out\"\n        DstTerminal   1\n      }\n      Branch {\n        DstComponent  \"Demux\"\n        DstTerminal   1\n      }",
         "Type          Signal\n      SrcComponent  \"Demux\"\n      SrcTerminal   2\n      DstComponent  \"Scope\"\n      DstTerminal   1"
+      ]
+    },
+    "nonideal": {
+      "source_relative_to_ST4001": "仿真/buck_converter_with_parameter_sweep/buck_with_parasitics.plecs",
+      "sha256": "a6ef68b0f92a18165353ac57727798bfd19ebcd57fd56062d471688ecb13ba2b",
+      "components": {
+        "V_dc": {
+          "type": "DCVoltageSource"
+        },
+        "D1": {
+          "type": "Diode"
+        },
+        "T1": {
+          "type": "Mosfet"
+        },
+        "L1": {
+          "type": "Inductor"
+        },
+        "R": {
+          "type": "Resistor"
+        },
+        "C1": {
+          "type": "Capacitor"
+        },
+        "R1": {
+          "type": "Resistor"
+        },
+        "C2": {
+          "type": "Capacitor"
+        },
+        "C3": {
+          "type": "Capacitor"
+        },
+        "V_ref": {
+          "type": "DCVoltageSource"
+        },
+        "R2": {
+          "type": "Resistor"
+        },
+        "R3": {
+          "type": "Resistor"
+        },
+        "R4": {
+          "type": "Resistor"
+        },
+        "Vm2": {
+          "type": "Voltmeter"
+        },
+        "R5": {
+          "type": "Resistor"
+        },
+        "S1": {
+          "type": "Switch"
+        },
+        "Gain": {
+          "type": "Gain"
+        },
+        "Saturation": {
+          "type": "Saturation"
+        },
+        "Sawtooth\nGenerator": {
+          "type": "TriangleGenerator"
+        },
+        "Relational\nOperator": {
+          "type": "RelationalOperator"
+        },
+        "Step": {
+          "type": "Step"
+        },
+        "Op-Amp": {
+          "type": "Reference"
+        },
+        "R6": {
+          "type": "Resistor"
+        },
+        "R7": {
+          "type": "Resistor"
+        },
+        "L2": {
+          "type": "Inductor"
+        },
+        "C4": {
+          "type": "Capacitor"
+        },
+        "D2": {
+          "type": "Diode"
+        }
+      },
+      "connections": [
+        "Type          Wire\r\n      SrcComponent  \"D1\"\r\n      SrcTerminal   1\r\n      Points        [205, 180]\r\n      Branch {\r\n        Points        [330, 180]\r\n        Branch {\r\n          Points        [440, 180]\r\n          Branch {\r\n            Points        [510, 180]\r\n            DstComponent  \"R5\"\r\n            DstTerminal   1\r\n          }\r\n          Branch {\r\n            DstComponent  \"R\"\r\n            DstTerminal   2\r\n          }\r\n        }\r\n        Branch {\r\n          DstComponent  \"C1\"\r\n          DstTerminal   2\r\n        }\r\n      }\r\n      Branch {\r\n        Points        [110, 180]\r\n        DstComponent  \"V_dc\"\r\n        DstTerminal   2\r\n      }\r\n      Branch {\r\n        DstComponent  \"Ground2\"\r\n        DstTerminal   1\r\n      }",
+        "Type          Wire\r\n      SrcComponent  \"R1\"\r\n      SrcTerminal   1\r\n      Points        [390, 240]\r\n      Branch {\r\n        DstComponent  \"R2\"\r\n        DstTerminal   2\r\n      }\r\n      Branch {\r\n        Points        [430, 240]\r\n        DstComponent  \"C2\"\r\n        DstTerminal   1\r\n      }",
+        "Type          Wire\r\n      SrcComponent  \"R4\"\r\n      SrcTerminal   2\r\n      Points        [390, 360]\r\n      Branch {\r\n        DstComponent  \"Op-Amp\"\r\n        DstTerminal   2\r\n      }\r\n      Branch {\r\n        Points        [390, 305]\r\n        Branch {\r\n          DstComponent  \"R2\"\r\n          DstTerminal   1\r\n        }\r\n        Branch {\r\n          DstComponent  \"C3\"\r\n          DstTerminal   2\r\n        }\r\n        Branch {\r\n          Points        [430, 305]\r\n          DstComponent  \"C2\"\r\n          DstTerminal   2\r\n        }\r\n      }",
+        "Type          Wire\r\n      SrcComponent  \"Ground1\"\r\n      SrcTerminal   1\r\n      Points        [390, 415]\r\n      Branch {\r\n        DstComponent  \"R4\"\r\n        DstTerminal   1\r\n      }\r\n      Branch {\r\n        Points        [430, 415]\r\n        DstComponent  \"V_ref\"\r\n        DstTerminal   2\r\n      }\r\n      Branch {\r\n        Points        [335, 415]\r\n        Branch {\r\n          Points        [270, 415]\r\n          DstComponent  \"Vm2\"\r\n          DstTerminal   2\r\n        }\r\n        Branch {\r\n          DstComponent  \"Op-Amp\"\r\n          DstTerminal   4\r\n        }\r\n      }",
+        "Type          Wire\r\n      SrcComponent  \"Op-Amp\"\r\n      SrcTerminal   1\r\n      Points        [430, 340]\r\n      DstComponent  \"V_ref\"\r\n      DstTerminal   1",
+        "Type          Wire\r\n      SrcComponent  \"R1\"\r\n      SrcTerminal   2\r\n      Points        [390, 60]\r\n      Branch {\r\n        Points        [440, 60]\r\n        Branch {\r\n          DstComponent  \"S1\"\r\n          DstTerminal   2\r\n        }\r\n        Branch {\r\n          DstComponent  \"R\"\r\n          DstTerminal   1\r\n        }\r\n      }\r\n      Branch {\r\n        Points        [330, 60]\r\n        Branch {\r\n          Points        [320, 60]\r\n          Branch {\r\n            DstComponent  \"R6\"\r\n            DstTerminal   2\r\n          }\r\n          Branch {\r\n            Points        [320, 95]\r\n            DstComponent  \"C4\"\r\n            DstTerminal   2\r\n          }\r\n        }\r\n        Branch {\r\n          DstComponent  \"L2\"\r\n          DstTerminal   1\r\n        }\r\n      }",
+        "Type          Wire\r\n      SrcComponent  \"Op-Amp\"\r\n      SrcTerminal   3\r\n      Points        [270, 350]\r\n      Branch {\r\n        Points        [270, 305]\r\n        DstComponent  \"R3\"\r\n        DstTerminal   1\r\n      }\r\n      Branch {\r\n        DstComponent  \"Vm2\"\r\n        DstTerminal   1\r\n      }",
+        "Type          Wire\r\n      SrcComponent  \"S1\"\r\n      SrcTerminal   1\r\n      Points        [510, 60]\r\n      DstComponent  \"R5\"\r\n      DstTerminal   2",
+        "Type          Signal\r\n      SrcComponent  \"Step\"\r\n      SrcTerminal   1\r\n      Points        [465, 20]\r\n      DstComponent  \"S1\"\r\n      DstTerminal   3",
+        "Type          Signal\r\n      SrcComponent  \"Vm2\"\r\n      SrcTerminal   3\r\n      DstComponent  \"Gain\"\r\n      DstTerminal   1",
+        "Type          Wire\r\n      SrcComponent  \"R3\"\r\n      SrcTerminal   2\r\n      DstComponent  \"C3\"\r\n      DstTerminal   1",
+        "Type          Signal\r\n      SrcComponent  \"Gain\"\r\n      SrcTerminal   2\r\n      DstComponent  \"Saturation\"\r\n      DstTerminal   1",
+        "Type          Signal\r\n      SrcComponent  \"Sawtooth\\nGenerator\"\r\n      SrcTerminal   1\r\n      Points        [140, 320; 140, 370]\r\n      DstComponent  \"Relational\\nOperator\"\r\n      DstTerminal   1",
+        "Type          Signal\r\n      SrcComponent  \"Saturation\"\r\n      SrcTerminal   2\r\n      DstComponent  \"Relational\\nOperator\"\r\n      DstTerminal   2",
+        "Type          Signal\r\n      SrcComponent  \"Relational\\nOperator\"\r\n      SrcTerminal   3\r\n      Points        [80, 375; 80, 25]\r\n      DstComponent  \"T1\"\r\n      DstTerminal   3",
+        "Type          Signal\r\n      SrcComponent  \"Demux\"\r\n      SrcTerminal   3\r\n      DstComponent  \"Scope\"\r\n      DstTerminal   2",
+        "Type          Signal\r\n      SrcComponent  \"Probe\"\r\n      SrcTerminal   1\r\n      Points        [175, 240]\r\n      Branch {\r\n        Points        [175, 285]\r\n        DstComponent  \"Out\"\r\n        DstTerminal   1\r\n      }\r\n      Branch {\r\n        DstComponent  \"Demux\"\r\n        DstTerminal   1\r\n      }",
+        "Type          Signal\r\n      SrcComponent  \"Demux\"\r\n      SrcTerminal   2\r\n      DstComponent  \"Scope\"\r\n      DstTerminal   1",
+        "Type          Wire\r\n      SrcComponent  \"C1\"\r\n      SrcTerminal   1\r\n      DstComponent  \"R7\"\r\n      DstTerminal   1",
+        "Type          Wire\r\n      SrcComponent  \"L1\"\r\n      SrcTerminal   2\r\n      DstComponent  \"R6\"\r\n      DstTerminal   1",
+        "Type          Wire\r\n      SrcComponent  \"R7\"\r\n      SrcTerminal   2\r\n      DstComponent  \"L2\"\r\n      DstTerminal   2",
+        "Type          Wire\r\n      SrcComponent  \"D1\"\r\n      SrcTerminal   2\r\n      Points        [205, 60]\r\n      Branch {\r\n        Points        [190, 60]\r\n        Branch {\r\n          DstComponent  \"T1\"\r\n          DstTerminal   2\r\n        }\r\n        Branch {\r\n          Points        [190, 80]\r\n          DstComponent  \"D2\"\r\n          DstTerminal   1\r\n        }\r\n      }\r\n      Branch {\r\n        Points        [220, 60]\r\n        Branch {\r\n          DstComponent  \"L1\"\r\n          DstTerminal   1\r\n        }\r\n        Branch {\r\n          Points        [220, 95]\r\n          DstComponent  \"C4\"\r\n          DstTerminal   1\r\n        }\r\n      }",
+        "Type          Wire\r\n      SrcComponent  \"T1\"\r\n      SrcTerminal   1\r\n      Points        [145, 60]\r\n      Branch {\r\n        Points        [110, 60]\r\n        DstComponent  \"V_dc\"\r\n        DstTerminal   1\r\n      }\r\n      Branch {\r\n        Points        [145, 80]\r\n        DstComponent  \"D2\"\r\n        DstTerminal   2\r\n      }"
       ]
     },
     "case16a": {

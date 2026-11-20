@@ -47,35 +47,42 @@
         <button type="button" id="enter-identification" class="button primary full" aria-controls="identification-form analysis-panel" aria-expanded="false">进入参数辨识 <span aria-hidden="true">→</span></button>
         <div id="identification-form" hidden>
         <div class="form-heading"><span>基本信息</span><button type="button" id="leave-identification" class="text-button">退出辨识</button></div>
-        <label>电感与电容寄生电阻<select id="include-parasitics"><option value="false">不考虑 · 理想 L/C</option><option value="true">考虑 · 已知绕组电阻与 ESR</option></select></label>
+        <label>功率级模型<select id="include-parasitics"><option value="false">不考虑 · 理想 L/C</option><option value="true">考虑 · 非理想功率级</option></select></label>
         <div id="parasitic-settings" hidden>
+          <div id="full-stage-inputs" class="two-fields" hidden>
+            <label>主电感 L<div class="unit-input"><input id="stage-l" type="number" min="0" max="1000000" step="any"><span>µH</span></div></label>
+            <label>绕组并联电容 Cw<div class="unit-input"><input id="stage-cw" type="number" min="0" max="1000000000" step="any"><span>pF</span></div></label>
+            <label>输出电容 C<div class="unit-input"><input id="stage-c" type="number" min="0" max="1000000" step="any"><span>µF</span></div></label>
+            <label>电容串联电感 ESL<div class="unit-input"><input id="stage-esl" type="number" min="0" max="100000000" step="any"><span>nH</span></div></label>
+            <label>开关导通电阻 Ron<div class="unit-input"><input id="stage-ron" type="number" min="0" max="1000" step="any"><span>Ω</span></div></label>
+          </div>
           <label>电感绕组电阻 rL<div class="unit-input"><input id="inductor-resistance" type="number" min="0" max="1000" step="any" placeholder="0" required><span>Ω</span></div></label>
           <label>电容 ESR rC<div class="unit-input"><input id="capacitor-esr" type="number" min="0" max="1000" step="any" placeholder="0" required><span>Ω</span></div></label>
-          <p class="field-note">两项均为已知值，不参与辨识。开启后请填写两项，可显式填写 0；CSV 电压必须是输出端 vo。</p>
+          <p id="parasitic-hint" class="field-note">两项均为已知值，不参与辨识。开启后请填写两项，可显式填写 0；CSV 电压必须是输出端 vo。</p>
         </div>
         <p id="parasitic-error" class="field-note" hidden>请填写电感绕组电阻和电容 ESR（Ω，0～1000），再开始辨识。</p>
         <label>PWM 来源<select id="pwm-source"><option value="auto">自动：有 PWM 列则使用，否则重建</option><option value="measured">CSV 实际开关状态</option><option value="controller">三列 CSV · 已知控制器重建</option></select></label>
-        <div id="controller-settings" hidden>
-          <p class="field-note">计算流程：训练段电压去噪 → RC 控制器重建 PWM → 质量检查 → 固定 R 识别 L、C → 自主闭环验证。</p>
-          <section class="circuit-card" aria-label="参考电路">
+        <section class="circuit-card" aria-label="参考电路">
             <div class="circuit-card-heading"><strong>参考电路</strong><button type="button" id="edit-circuit" class="text-button">放大 / 编辑</button></div>
             <button type="button" id="circuit-preview" class="circuit-preview" aria-label="放大并编辑电路图"></button>
             <div class="circuit-actions"><button type="button" id="upload-circuit" class="text-button">上传电路图片</button><button type="button" id="attach-circuit-image" class="text-button">交给助手分析</button><button type="button" id="show-default-circuit" class="text-button" hidden>恢复默认图</button></div>
             <p class="field-note" id="circuit-caption"></p>
             <input type="hidden" id="controller-parameters" value=""><input type="hidden" id="controller-image" value="">
-          </section>
+        </section>
+        <div id="controller-settings" hidden>
+          <p class="field-note">计算流程：训练段电压去噪 → RC 控制器重建 PWM → 质量检查 → 固定 R 辨识所选参数 → 自主闭环验证。</p>
           <p class="field-note">仅适用于与默认图接线相同的非同步 Buck 和 RC 控制器。默认参数来自 Case09/10，可在图中点击参数修改；计算使用当前设置。上传图片后可交给助手分析，识图建议不会自动写入参数或改变接线模型。</p>
           <label>确认电路配置<select id="controller-confirmed"><option value="no">尚未确认</option><option value="yes">接线与默认图一致，参数与当前设置一致</option></select></label>
           <label>重建电压去噪<select id="pwm-denoise"><option value="sg">SG 平滑 · 基线</option><option value="modified_sinc">Modified-sinc FIR · 候选</option><option value="none">不去噪 · 对照</option></select></label>
           <label>去噪窗口（开关周期）<input id="pwm-filter-cycles" type="number" min="0.1" max="8" step="0.1" value="6"></label>
           <p class="field-note">离线 CSV：仅对训练段的重建电压去噪，原始电流、电压仍用于辨识。质量检查不通过将停止计算；不改变真实控制器或增加锁存。</p>
           <details id="pwm-quality-details" hidden><summary>PWM 重建质量检查</summary><p id="pwm-quality-summary" class="field-note"></p><pre id="pwm-quality-json"></pre></details>
-          <p class="field-note">CSV 必须从 t=0 开始。固定已知负载 R，仅识别 L、C；区间内负载须恒定，结束时间小于 1 ms，建议 0～0.8 ms。训练段重建 PWM，留出段自主闭环验证。</p>
+          <p class="field-note">CSV 必须从 t=0 开始。固定已知负载 R，识别 L、C 及联合模式中的未知寄生电阻；区间内负载须恒定，结束时间小于 1 ms，建议 0～0.8 ms。训练段重建 PWM，留出段自主闭环验证。</p>
         </div>
         <div class="two-fields"><label>输入电压<div class="unit-input"><input type="number" id="vin" value="28" min="0.1" max="2000" step="any"><span>V</span></div></label><label>开关频率<div class="unit-input"><input type="number" id="frequency" value="100" min="0.1" max="2000" step="any"><span>kHz</span></div></label></div>
-        <label>辨识目标<select id="fit-mode"><option value="LCR">L / C / R · 联合辨识</option><option value="LC">L / C · 固定负载 R</option></select></label>
+        <label>辨识目标<select id="fit-mode"><option value="LCR">L / C / R · 联合辨识</option><option value="LC">L / C · 固定负载 R</option><option value="LC_RL_RC">L / C / rL / rC · 联合辨识</option><option value="FULL_STAGE">非理想功率级 · 七参数</option></select></label>
         <label id="fixed-r-label" hidden>已知负载电阻<div class="unit-input"><input id="fixed-r" type="number" value="6" min="0.01" max="100000" step="any"><span>Ω</span></div></label>
-        <label>计算方法<select id="fit-method"><option value="pann" selected disabled>PANN · 需后端 PyTorch</option><option value="weighted_integral">抗噪加权积分 · 直接辨识</option></select></label>
+        <label>计算方法<select id="fit-method"><option value="pann" selected disabled>PANN · 需后端 PyTorch</option><option value="weighted_integral">抗噪加权积分 · 直接辨识</option><option value="circuit_fit" disabled>开关电路波形拟合</option></select></label>
         <p id="method-hint" class="field-note" hidden>直接输出加权积分估计，不做 PANN 微调，无需 PyTorch。</p>
         <div id="pann-settings" hidden>
           <label>窗口初值<select id="pann-state"><option value="joint">从含噪数据联合估计（推荐）</option><option value="measured">固定测量初值（对照）</option></select></label>
@@ -157,6 +164,8 @@
         <div id="result-library-menu" class="result-library-menu" hidden><p id="result-library-status"></p><div id="result-library-list"></div></div>
         <p id="result-archive-note" class="result-archive-note" hidden></p>
         <div class="parameter-grid"><div><span>预测电感 L</span><strong id="result-l">—</strong><small>μH</small></div><div><span>预测电容 C</span><strong id="result-c">—</strong><small>μF</small></div><div><span id="r-label">负载电阻 R</span><strong id="result-r">—</strong><small>Ω</small></div></div>
+        <div id="result-parasitics" class="parameter-grid" hidden><div><span id="result-rl-label">电感绕组电阻 rL</span><strong id="result-rl">—</strong><small>Ω</small></div><div><span id="result-rc-label">电容 ESR rC</span><strong id="result-rc">—</strong><small>Ω</small></div></div>
+        <div id="full-stage-results" class="parameter-grid" hidden></div>
         <section id="truth-comparison" class="truth-comparison" aria-label="参数真值对照">
           <div class="two-fields"><label>真实电感 L<div class="unit-input"><input id="truth-l" type="number" step="any" min="0" placeholder="输入真实电感" disabled><span>μH</span></div></label><label>真实电容 C<div class="unit-input"><input id="truth-c" type="number" step="any" min="0" placeholder="输入真实电容" disabled><span>μF</span></div></label></div>
           <button id="calculate-parameter-error" class="button subtle small" type="button" disabled>计算相对误差</button>
@@ -213,7 +222,7 @@
   <dialog id="circuit-dialog" aria-labelledby="circuit-title">
     <form id="circuit-form">
       <div class="dialog-heading"><h2 id="circuit-title">电路图与参数</h2><button type="button" id="close-circuit" class="icon-button" aria-label="关闭">×</button></div>
-      <p>点击默认图中的参数即可编辑。L、C 为待辨识量；R 是已知负载。接线拓扑固定。</p>
+      <p>在参数栏编辑工况和器件值。七参数模式下留空辨识，正数固定，0 忽略。</p>
       <div class="circuit-editor-layout"><div class="circuit-drawing-column">
         <div id="circuit-drawing" class="circuit-drawing"></div>
         <p>C2 初始电压 = va − vm；C3 初始电压 = vb − vm。载波相位以周期为单位。小屏幕可左右滑动查看完整电路图。</p>

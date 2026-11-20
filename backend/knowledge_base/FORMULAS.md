@@ -1,12 +1,12 @@
 # Buck 功率与控制电路公式知识库
 
-以本地 PLECS 原模型、Case16A/B 与独立 Case17 为依据。公式按 KCL/KVL 推导；外部资料用于核对适用域。
-当前支持实测 PWM 两状态模型与已确认配置的控制器重建模式：后者计入反馈取样支路，固定已知 R 辨识 L/C，并以完整四状态自主闭环验证；控制器参数保持已知，不参与辨识。两种模式均为同一记录后段留出，不是独立工况验证。标称值不是未知 CSV 的真值。
-界面提供抗噪加权积分与 PANN：前者直接输出端点零权重积分估计，后者以此初始化再微调；旧 integral API 仅保留作实测 PWM 模式的基础积分复现。
+模型依据包括 PLECS 原模型、非理想模型 buck_with_parasitics、Case16A/B 与独立 Case17。非理想模型的接线、支路方程和辨识规则见 buck-nonideal 条目。
+简化功率级支持实测 PWM 两状态模型与已确认配置的控制器重建模式：后者计入反馈取样支路，固定已知 R 辨识 L/C，并以完整四状态自主闭环验证；控制器参数保持已知，不参与辨识。两种模式均为同一记录后段留出，不是独立工况验证。标称值不是未知 CSV 的真值。
+七参数模型采用实测 PWM 的开关电路波形拟合。简化模型提供抗噪加权积分与 PANN：前者直接输出端点零权重积分估计，后者以此初始化再微调；旧 integral API 仅保留作实测 PWM 模式的基础积分复现。
 已知寄生模式使用用户填写的电感串联rL、电容串联ESR rC；默认理想模式令两者为0。新增公式由KCL/KVL推导，不表示原始PLECS样例已包含寄生。CSV电压统一为输出端vo。
 本文由 `tests/build_formula_reference.py` 从 `buck.py` 生成；修改 `buck.py` 后重新生成。
 
-完整参数、连接和源文件 SHA-256 见 [模型证据](model_evidence.json)。
+各模型的连接和源文件 SHA-256 见 [模型证据](model_evidence.json)。
 
 - [Buck 电路与公式总览 / Circuit map](#buck-map)
 - [符号、单位与电流方向 / Symbols and units](#buck-symbols)
@@ -17,7 +17,7 @@
 - [电感、电容纹波与选值 / Ripple and sizing](#buck-ripple-sizing)
 - [DCM 变换比与 CCM 边界 / Discontinuous conduction](#buck-dcm)
 - [电流 RMS、器件应力与储能 / Electrical stress](#buck-rms-stress)
-- [ESR、绕组电阻与器件压降 / Nonideal power stage](#buck-nonideal)
+- [非理想 Buck 接线、绕组寄生电容与输出 ESL / Nonideal power stage](#buck-nonideal)
 - [损耗、温升与寿命边界 / Loss and thermal estimates](#buck-loss-thermal)
 - [功率级平均状态空间 / Averaged state space](#buck-average)
 - [功率级传递函数、极点与阻尼 / Plant transfer functions](#buck-transfer)
@@ -88,7 +88,7 @@ Rload 是功率负载；rC 是电容 ESR；rL 是绕组电阻；R1～R4 是反�
 
 ## PLECS 参考工况与初值 / Model definitions
 
-**适用条件：** 这些是 .plecs 文件内部读取的设定值，未据此运行新的 PLECS 仿真，也不能用来猜上传数据的参数。
+**适用条件：** 本条数值仅属于原参数扫描模型、Case16A/B 和 Case17。非理想七参数模型的器件值以当前用户输入或本次辨识结果为准。
 
 ```text
 原参数扫描模型：Vin=28 V，varL=40 μH，C1=500 μF，R=6 Ω，varR=1 Ω，fs=100 kHz。
@@ -242,12 +242,16 @@ EL=L iL^2/2；EC=C vC^2/2。
 
 <a id="buck-nonideal"></a>
 
-## ESR、绕组电阻与器件压降 / Nonideal power stage
+## 非理想 Buck 接线、绕组寄生电容与输出 ESL / Nonideal power stage
 
-**适用条件：** 扩展模型：输出电容串联 rC，电感串联 rL，MOSFET Ron，二极管 Vf+rD iL。当前网页可选计入用户填写的已知 rL、rC；Ron、Vf、rD 尚未计入。实现公式见 buck-parasitics-integral 与 buck-parasitics-pann。
+**适用条件：** buck_with_parasitics.plecs 的七参数模式 FULL_STAGE 用 CSV 实测 PWM、绕组电流和端电压拟合 L、rL、Cw、C、rC、ESL、Ron，负载固定。逐项留空则估计，正数为已知，0 忽略。L=0 对应短接理想绕组，C=0 对应断开输出电容支路。低带宽数据可能无法分离小寄生量。
 
 ```text
-vo=vC+rC iC，C dvC/dt=iC，iC=iL-vo/Rload-isense。
+SW 到 vo 有两条并联支路：L1（主电感 L）与 R6（绕组电阻 rL）串联；C4（绕组电容 Cw）跨接在整条串联支路两端。
+vo 经 L2（电容串联电感 ESL）、R7（电容串联电阻 rC）和 C1（输出电容 C）串联回地。D2 的阳极接 SW、阴极接 Vin，D1 的阳极接地、阴极接 SW。
+取 vW=vSW−vo，绕组支路电流 iL 从 SW 流向 vo，则 vW=L1·diL/dt+rL·iL，iCw=Cw·dvW/dt。
+输出电解支路电流 iC 从 vo 流向地，则 iC=iL+iCw−vo/Rload−isense，vo=vC+rC·iC+ESL·diC/dt，C1·dvC/dt=iC。
+忽略 Cw 与 ESL 后的简化方程：vo=vC+rC iC，C dvC/dt=iC，iC=iL-vo/Rload-isense。
 若 isense=0：vo=(vC+rC iL)/(1+rC/Rload)。
 导通：L diL/dt=Vin-vo-(rL+Ron)iL。
 续流：L diL/dt=-vo-Vf-(rL+rD)iL。
@@ -255,10 +259,13 @@ CCM 小纹波稳态：Vo≈d Vin-(1-d)Vf-Io[rL+d Ron+(1-d)rD]。
 理想与非理想参数不可混同：Rload≠rL≠rC。
 ```
 
-有反馈取电时需联立输出端 KCL 求 vo，而非直接套用 isense=0 的代数式。原 PLECS T1 Ron=0、D1 Vf=Ron=0，未设置独立 ESR/绕组电阻；默认理想元件也没有可计算的真实损耗参数。
+T1 是 MOS 开关，Ron 表示其导通电阻，D2 模拟体二极管，D1 提供续流路径。开关 S1 受阶跃信号控制，将附加负载 varR 并入输出端。输出取样经 RC 补偿、调制增益与限幅后参与 PWM 控制。
+引用具体器件值时，应说明该值来自用户在当前实验的输入还是本次波形辨识。尚未辨识的空白项标为待辨识；负载切换时刻以当前实验记录为准。
+简化模式的积分与 PANN 方程见 buck-parasitics-integral 和 buck-parasitics-pann。有反馈取电时需联立输出端 KCL。Vf、rD 用于考虑二极管压降的解析扩展，七参数拟合采用理想二极管钳位。
 
 参考与核对依据：
 
+- [七参数开关电路拟合与可辨识性检查](../full_stage.py)
 - [本地 PLECS 模型连接与参数证据](model_evidence.json)
 - [TI SLVA057: Understanding Buck Power Stages](https://www.ti.com/lit/an/slva057/slva057.pdf)
 
@@ -582,7 +589,7 @@ RMS/NRMSE 归一化定义需说明，不要与按峰峰值归一化混用。实�
 
 ## 已知绕组电阻与电容 ESR：非理想 Buck 状态模型
 
-**适用条件：** include_parasitics=true；rL、rC 为用户提供的非负已知常数，不参与估计。不开启时两者按0计算。电路为L串rL、C串rC；R为负载。无ESL、漏电、器件压降或故障支路。
+**适用条件：** include_parasitics=true；LC/LCR模式rL、rC为用户提供的非负已知常数。LC_RL_RC模式自动开启寄生电阻并固定负载R，前端每项正数固定、空白估计、0忽略。旧接口未启用 joint_zero_is_fixed 时按旧语义重放。不开启时两者按0计算。电路为L串rL、C串rC；R为负载。无ESL、漏电、器件压降或故障支路。
 
 ```text
 G=1/R；iC=iL-G vo-isense；vo=vC+rC iC。
@@ -595,7 +602,7 @@ vC=(1+rC G)vo-rC(iL-isense)。
 rL=rC=0时vC=vo，精确退化为理想模型。
 ```
 
-CSV映射电压为输出端vo，不是理想电容内部vC。连续验证以内部vC积分，再转换为vo比较；控制器也由vo驱动。两种PWM路径分别保持原有取样支路处理。开启后rL/rC缺失即拒绝计算，可明确填0，不能把空白当0。正常寄生电阻不代表损坏。
+CSV映射电压为输出端vo，不是理想电容内部vC。连续验证以内部vC积分，再转换为vo比较；控制器也由vo驱动。两种PWM路径分别保持原有取样支路处理。LC/LCR开启后rL/rC缺失即拒绝计算，可明确填0。LC_RL_RC 网页输入留空才估计，显式 0 表示忽略该电阻。正常寄生电阻不代表损坏。
 
 参考与核对依据：
 
@@ -606,7 +613,7 @@ CSV映射电压为输出端vo，不是理想电容内部vC。连续验证以内�
 
 ## 含已知寄生电阻的积分与抗噪加权积分辨识
 
-**适用条件：** 与buck-parasitics-model相同；rL/rC固定已知。LC固定R；LCR仅实测PWM支持。仅使用训练段。
+**适用条件：** 与buck-parasitics-model相同；LC/LCR下rL/rC固定已知，LCR仅实测PWM支持；LC_RL_RC固定R并逐项固定或估计寄生电阻，支持实测与控制器重建。仅使用训练段。
 
 ```text
 端点差分算子D(f)=f(tb)-f(ta)，积分算子I(f)=∫f dt。
@@ -617,10 +624,14 @@ C[z+rC G D(vo)]+G V=J。
 LC：G已知，使用列z+rC G D(vo)，目标J-G V，对C做带正值边界最小二乘。
 LCR：最小化Σ{C[z+rC G D(vo)]+G V-J}²；保留C G交叉项，不能沿用理想两列线性回归。
 LCR雅可比列：z+rC G D(vo)，C rC D(vo)+V；缩放并检查列相关性。
-rC=0退化到原积分公式；rL=0时电感积分式也恢复原式。
+固定rC=0退化到原积分公式；固定rL=0时电感积分式也恢复原式。
+LC_RL_RC：L D(iL)+rL I(iL)=I(q Vin-vo)，未知rL时联合回归L、rL；固定rL时移到右侧。
+iC=iL-vo/R-isense，C D(vo)-B D(iC)=I(iC)，B=C rC。
+未知rC先线性估计C、B，再约束最小二乘细化C>0、0<=rC<=1000，保留C*rC乘积；固定rC时仅回归C。
+电感、电容分别做缩放列条件数检查，并报告两者最大值；加权形式使用同样D、I替换。
 ```
 
-原始integral采用端点差分，加权积分采用分部积分避免直接求导；两者均支持已知寄生电阻。PANN也使用对应加权积分作为初值。开启非理想模型不会自动估计rL/rC。弱动态、噪声或C/G相关仍可导致辨识不可靠。
+原始integral采用端点差分，加权积分采用分部积分避免直接求导；两者均支持已知寄生电阻。PANN也使用对应加权积分作为初值。在简化模型中，选择 LC_RL_RC 才会估计留空的 rL/rC。弱动态、噪声或C/G相关仍可导致辨识不可靠。
 
 参考与核对依据：
 
@@ -631,7 +642,7 @@ rC=0退化到原积分公式；rL=0时电感积分式也恢复原式。
 
 ## 含已知寄生电阻的 PANN 递推与验证
 
-**适用条件：** rL/rC固定输入；参数仍为L、C和可选R。窗口状态以[iL,vo]表示，训练损失比较输出端vo。
+**适用条件：** LC/LCR下rL/rC固定输入；LC_RL_RC固定负载R、始终训练L/C，电阻正数固定、显式 0 忽略，仅训练留空的 rL/rC。窗口状态以[iL,vo]表示，训练损失比较输出端vo。
 
 ```text
 每步由状态恢复vC,k=(1+rC/R)vo,k-rC(iL,k-isense,k)。
@@ -640,11 +651,11 @@ iL,k+1=max(0,iL,k+Δt/L·[va,k-vo,k-rL iL,k])。
 vC,k+1=vC,k+Δt/C·[iL,k-vo,k/R-isense,k]。
 vo,k+1=[vC,k+1+rC(iL,k+1-isense,k+1)]/(1+rC/R)。
 实测PWM取isense=0；重建训练提供当前步和下一步的取样电流，均来自训练段。
-损失为iL、vo通道按训练尺度归一化后的波形均方误差；rL/rC没有梯度优化。
-初始化、训练、连续留出验证使用同一组已知寄生电阻；参数与初始状态取同一最佳训练轮次。
+损失为iL、vo通道按训练尺度归一化后的波形均方误差；LC/LCR下rL/rC没有梯度优化；LC_RL_RC下对未知电阻使用正值参数化并参与梯度，已知正数不更新。
+初始化按固定/未知掩码回归；训练输出五元组[L,C,R,rL,rC]，连续留出验证使用该轮实际电阻，不能使用未知输入占位0；参数与初始状态取同一最佳训练轮次。
 ```
 
-初值联合估计仍仅使用训练段。留出段不重置到观测：实测PWM连续积分；重建PWM由预测vo驱动RC控制器，联立取电与ESR代数关系。默认关闭与显式零电阻保留理想算法。高损耗或极小L/C可能导致Euler数值不稳定，需检查步长与模型，不能将发散解释成器件损坏。
+初值联合估计仍仅使用训练段。留出段不重置到观测：实测PWM连续积分；重建PWM由预测vo驱动RC控制器，联立取电与ESR代数关系。默认关闭与LC/LCR显式零电阻保留理想算法；联合模式的0表示未知，训练正值下限为1e-9Ω，触及边界应复核。高损耗或极小L/C可能导致Euler数值不稳定，需检查步长与模型，不能将发散解释成器件损坏。
 
 参考与核对依据：
 

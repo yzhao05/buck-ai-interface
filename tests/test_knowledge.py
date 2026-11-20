@@ -1,6 +1,7 @@
 """Retrieval regressions and independent electrical checks of the documented equations."""
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,7 @@ EVIDENCE = json.loads((ROOT / "backend/knowledge_base/model_evidence.json").read
     ("ESR 输出纹波是三角波还是开关尖峰", "buck-ripple-sizing"),
     ("Buck CCM ESR ESL ripple waveform spikes", "buck-ripple-sizing"),
     ("负载阶跃 电容 ESR 电压跳变", "buck-ripple-sizing"),
+    ("非理想模型的绕组寄生电容和输出 ESL", "buck-nonideal"),
 ])
 def test_topic_retrieval(query, expected):
     assert expected in [d["id"] for d in retrieve(query)[:3]]
@@ -52,7 +54,20 @@ def test_formula_reference_and_provenance():
     assert len({d["id"] for d in FORMULA_DOCUMENTS}) == len(FORMULA_DOCUMENTS) == 27
     assert all(d["scope"] and d["equations"] and d["references"] for d in FORMULA_DOCUMENTS)
     assert (ROOT / "backend/knowledge_base/FORMULAS.md").read_text(encoding="utf-8") == render()
-    assert set(EVIDENCE["models"]) == {"original", "case16a", "case16b", "case17"}
+    assert set(EVIDENCE["models"]) == {"original", "nonideal", "case16a", "case16b", "case17"}
+
+
+def test_nonideal_knowledge_publishes_topology_only():
+    snapshot = EVIDENCE["models"]["nonideal"]
+    assert set(snapshot) == {"source_relative_to_ST4001", "sha256", "components", "connections"}
+    assert {"L1", "R6", "C4", "L2", "R7", "C1", "T1", "D2", "S1"} <= snapshot["components"].keys()
+    assert all(set(part) == {"type"} for part in snapshot["components"].values())
+    assert snapshot["connections"]
+
+    doc = next(d for d in FORMULA_DOCUMENTS if d["id"] == "buck-nonideal")
+    assert all(symbol in doc["content"] for symbol in ("rL", "Cw", "rC", "ESL", "Ron", "S1"))
+    assert not re.search(r"\d\s*(?:[pnuµμmkM]?(?:H|F|Ω|Hz|V|s)|°C)(?![A-Za-z])", doc["content"])
+    assert not any(ref.get("path", "").endswith(".png") for ref in doc["references"])
 
 
 @pytest.mark.parametrize("message", ["解释 LCR 辨识公式", "derive the parameter identification equations",

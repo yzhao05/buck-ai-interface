@@ -1,8 +1,8 @@
 /* Chat uses the same form controls and validation limits as manual edits. */
 "use strict";
 const configurationFields={
+  ...Object.fromEntries(BuckCircuit.parts.map(([,key,id,label,,scale])=>[key,[id,scale,label]])),
   include_parasitics:["include-parasitics",1,"电感与电容寄生电阻"],
-  inductor_resistance_ohm:["inductor-resistance",1,"电感绕组电阻 rL"],capacitor_esr_ohm:["capacitor-esr",1,"电容 ESR rC"],
   method:['fit-method',1,'计算方法'],mode:['fit-mode',1,'辨识目标'],resistance_ohm:['fixed-r',1,'负载电阻'],
   vin:['vin',1,'输入电压'],frequency_hz:['frequency',.001,'开关频率 (kHz)'],train_fraction:['train-fraction',100,'训练区间占比'],
   epochs:['pann-epochs',1,'训练轮数'],pann_initial_state:['pann-state',1,'窗口初值'],pann_window_cycles:['pann-cycles',1,'窗口长度'],
@@ -14,9 +14,9 @@ let pendingConfigurationStart=null;
 function executionSelectionQuestion(selection,methods,sources,{allowAuto=false}={}){
   const missing=[];
   if(!selection?.method_evidence?.trim() || !Array.isArray(selection.methods) || !methods.every(value=>selection.methods.includes(value)))
-    missing.push(tr('计算方法：抗噪加权积分、PANN，还是两种都运行？'));
+    missing.push(tr(methods.includes('circuit_fit')?'请确认使用开关电路波形拟合。':'计算方法：抗噪加权积分、PANN，还是两种都运行？'));
   if(!selection?.pwm_evidence?.trim() || !Array.isArray(selection.pwm_sources) || !(sources.every(value=>selection.pwm_sources.includes(value)) || (allowAuto&&selection.pwm_sources.includes('auto'))))
-    missing.push(tr('PWM 来源：CSV 实测 PWM、控制器重建，还是明确采用自动判断？'));
+    missing.push(tr(methods.includes('circuit_fit')?'请确认使用 CSV 实测 PWM。':'PWM 来源：CSV 实测 PWM、控制器重建，还是明确采用自动判断？'));
   return missing.length?tr('开始前请先选择：')+'\n\n'+missing.map(item=>'- '+item).join('\n')+'\n\n'+tr('尚未启动辨识；请回复具体选项后继续。'):'';
 }
 function identificationReviewFeedback(){
@@ -34,9 +34,14 @@ function identificationReviewFeedback(){
     `${tr('训练区间占比')} = ${$('train-fraction').value}%`,`${tr('PWM 来源')} = ${tr(pwmSource()==='controller'?'控制器重建':'实测 PWM')}`,
     `${tr('开始时间 (ms)')} = ${$('start-ms').value||tr('自动')}`,`${tr('结束时间 (ms)')} = ${$('end-ms').value||tr('自动')}`];
   settings.push(`${tr('电感与电容寄生电阻')} = ${selected('include-parasitics')}`);
-  if($('include-parasitics').value==='true')settings.push(
+  if($('fit-mode').value==='FULL_STAGE') {
+    for(const [, ,id,label,unit] of BuckCircuit.parts){
+      const value=$(id).value;
+      settings.push(tr(label)+' = '+(value===''?tr('待辨识'):Number(value)===0?tr('忽略'):value+' '+unit));
+    }
+  } else if($('include-parasitics').value==='true')settings.push(
     `rL = ${$('inductor-resistance').value || tr('未填写')} Ω`, `rC = ${$('capacitor-esr').value || tr('未填写')} Ω`);
-  if($('fit-mode').value==='LC')settings.push(`${tr('负载电阻')} = ${$('fixed-r').value} Ω`);
+  if($('fit-mode').value!=='LCR')settings.push(`${tr('负载电阻')} = ${$('fixed-r').value} Ω`);
   if($('fit-method').value==='pann')settings.push(`${tr('训练轮数')} = ${$('pann-epochs').value}`);
   let requirement=tr('请核对这些设置是否与本次数据及实验工况一致。');
   if(pwmSource()==='controller' && $('controller-confirmed').value!=='yes')requirement+=' '+tr('控制器接线与参数尚未确认，请核对后在基本信息中确认电路配置。');
@@ -65,7 +70,7 @@ function validConfigurationChanges(c){
     const input=$(spec[0]),val=convertedField(value,spec[1]);
     if(input.tagName==='SELECT'){
       if(![...input.options].some(o=>o.value===val))return false;
-    }else if(value===null){if(!['start_s','end_s','inductor_resistance_ohm','capacitor_esr_ohm'].includes(key))return false;}
+    }else if(value===null){if(!['start_s','end_s',...BuckCircuit.parts.map(p=>p[1])].includes(key))return false;}
     else {
       if(typeof value!=='number'||!Number.isFinite(value))return false;
       const probe=input.cloneNode();probe.disabled=false;probe.value=val;

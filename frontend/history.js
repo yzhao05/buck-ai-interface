@@ -6,7 +6,7 @@ let pendingAttachment = null;
 const conversationCache = new Map();
 const experimentFields = ["reasoning-mode","vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "pwm-denoise", "pwm-filter-cycles", "controller-confirmed", "controller-parameters", "controller-image", "controller-image-name", "selected-result", "chat-images"];
 const experimentDefaults = {"reasoning-mode":"auto",vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"200", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
-experimentFields.push('controller-image-library', 'include-parasitics', 'inductor-resistance', 'capacitor-esr');
+experimentFields.push('controller-image-library','include-parasitics',...BuckCircuit.parts.map(p=>p[2]));
 Object.assign(experimentDefaults,{"include-parasitics":"false","inductor-resistance":"","capacitor-esr":""});
 experimentDefaults['pwm-denoise']='sg';experimentDefaults['pwm-filter-cycles']='6';
 function historyWarning(text = "") {
@@ -305,7 +305,7 @@ async function openConversation(id, saveCurrent = true) {
   // A legacy "integral" value is no longer in the selector. The new identifier
   // also prevents restoreAttachment from relabelling an old result as weighted.
   if (!$("fit-method").value || (state.connected && $("fit-method").selectedOptions[0]?.disabled)) $("fit-method").value="weighted_integral";
-  $("fixed-r-label").hidden=$("fit-mode").value!=="LC";
+  $("fixed-r-label").hidden=$("fit-mode").value==="LCR";
   ui($("train-label"),$("train-fraction").value+"%");
   $("chat-input").value=record.draft || "";
   for (const item of record.messages) {
@@ -354,6 +354,7 @@ async function analyzeInNewConversation() {
       copied={session_id:crypto.randomUUID(),job_id:crypto.randomUUID(),dataset:null};
     }
     const now=Date.now(),opts=result.options,fields={...source.fields,"chat-images":"","selected-result":copied.dataset ? "" : copied.job_id,
+      ...Object.fromEntries(BuckCircuit.parts.map(([,field,id,,,scale])=>[id,convertedField(opts[field]??null,scale)])),
       "include-parasitics":String(opts.include_parasitics ?? false),"inductor-resistance":String(opts.inductor_resistance_ohm ?? ""),"capacitor-esr":String(opts.capacitor_esr_ohm ?? ""),
       vin:String(opts.vin),frequency:String(opts.frequency_hz/1000),"fit-mode":opts.mode,"fixed-r":String(opts.resistance_ohm),
       "fit-method":opts.method,"pwm-source":opts.pwm_source,"controller-confirmed":opts.controller_confirmed?"yes":"no",

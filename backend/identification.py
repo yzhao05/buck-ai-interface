@@ -12,7 +12,7 @@ from scipy.optimize import lsq_linear
 from .data import Dataset, chart_data, extract
 from .schemas import FitOptions, Mapping
 from .convergence import assess_result
-from .parasitics import resistances, fit_capacitor
+from .parasitics import resistances, fit_capacitor, fit_joint_parameters, JOINT_MODE, PARAMETER_KEYS, estimated_resistances
 
 
 def review_reasons(metrics, diagnostics, method):
@@ -24,8 +24,9 @@ def review_reasons(metrics, diagnostics, method):
             reasons.append({"code": f"{channel}_nrmse", "value": float(value), "threshold": 5})
     if diagnostics["parameter_at_bound"]:
         reasons.append({"code": "parameter_at_bound"})
-    if diagnostics["CR_condition_number"] > 100:
-        reasons.append({"code": "condition_number", "value": float(diagnostics["CR_condition_number"]), "threshold": 100})
+    condition = diagnostics.get("identifiability_condition_number", diagnostics.get("CR_condition_number", 0))
+    if condition > 100:
+        reasons.append({"code": "condition_number", "value": float(condition), "threshold": 100})
     training = diagnostics.get("pann", {}) if method == "pann" else {}
     if training.get("stop_reason") == "time_budget":
         reasons.append({"code": "pann_time_budget", "completed_epochs": training.get("completed_epochs"), "requested_epochs": training.get("epochs")})
@@ -87,11 +88,17 @@ def weak_integral_seed(train, options):
         cap_changes.append((change[0], sense_change))
         rows.append((change[1], integrals[1], integrals[0]-sense_integral))
         if not inactive[a:b+1].any():
-            l_rows.append((change[0], options.vin * pwm_integral - integrals[1] - rl*integrals[0]))
+            l_rows.append((change[0], options.vin * pwm_integral - integrals[1] - rl*integrals[0], integrals[0]))
     if len(l_rows) < 12:
         raise ValueError("加权积分初始化的有效电感窗口不足。")
     l_rows = np.asarray(l_rows)
     rows = np.asarray(rows)
+    if options.mode == JOINT_MODE:
+        changes = np.asarray(cap_changes)
+        params, diagnostics = fit_joint_parameters(l_rows[:,0], l_rows[:,2], l_rows[:,1]+rl*l_rows[:,2],
+            rows[:,0], changes[:,0], changes[:,1], rows[:,1], rows[:,2], options)
+        return params, {**diagnostics, "windows": len(rows), "L_windows": len(l_rows),
+                        "method": "端点零权重积分联合辨识 L/C/rL/rC（固定负载 R，仅训练段）"}
     if np.linalg.norm(l_rows[:, 0]) < 1e-10 or np.linalg.norm(rows[:, 0]) < 1e-10:
         raise ValueError("加权积分初始化缺少足够的电流或电压动态。")
     l_fit = lsq_linear(l_rows[:, :1] * 1e-4, l_rows[:, 1], bounds=([.001], [1000]))
@@ -134,6 +141,11 @@ def integral_fit(train, options):
     active &= np.abs(di) > max(1e-6, np.ptp(current) * 0.002)
     if active.sum() < 12:
         raise ValueError("可用导通动态不足，无法可靠辨识 L；请选择包含电流变化的时间段。")
+    if options.mode == JOINT_MODE:
+        params, diagnostics = fit_joint_parameters(di[active], i_integral[active],
+            (iu[right]-iu[left]-v_integral)[active], dv, di, np.zeros_like(dv), v_integral, i_integral, options)
+        return params, {**diagnostics, "windows": len(left), "L_windows": int(active.sum()),
+                        "method": "多时间窗积分联合辨识 L/C/rL/rC（固定负载 R，仅训练段）"}
     x = di[active, None] * 1e-4
     y = (iu[right] - iu[left] - v_integral - rl*i_integral)[active]
     l_fit = lsq_linear(x, y, bounds=([0.001], [1000]))
@@ -227,7 +239,8 @@ def metric(t, actual, predicted):
 
 def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progress=None):
     started = time.perf_counter()
-    rl, rc = resistances(options)
+    full = options.mode == "FULL_STAGE"
+    rl, rc = (0., 0.) if full else resistances(options)
     def stage(name):
         if progress is not None:
             progress(name)
@@ -270,11 +283,22 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     if options.method in ("weighted_integral", "pann"):
         from .pann_adapter import measurement_noise_std
         negative_tolerance = max(negative_tolerance, 5 * measurement_noise_std(train)[0])
-    if np.min(train[:, 1]) < -negative_tolerance or np.mean(train[:, 1]) < 0:
+    if not full and (np.min(train[:, 1]) < -negative_tolerance or np.mean(train[:, 1]) < 0):
         raise ValueError("检测到明显负电流：当前模型是非同步 Buck，请检查信号方向或使用适配模型。")
     if options.method == "pann" and np.any(train[:, 1] < 0):
         notes.append("保留训练测量中的负向噪声；窗口初值联合估计时约束非负，训练目标不截断。局部噪声估计不能证明信号方向正确。")
-    params, diagnostics = integral_fit(train, options) if options.method == "integral" else weak_integral_seed(train, options)
+    if full:
+        from .full_stage import PARTS, fit, simulate
+        parts, diagnostics = fit(train, options)
+        parameters = dict(zip((part[0] for part in PARTS), map(float, parts)))
+        parameters.update(dict.fromkeys(diagnostics["unobservable_parameters"]))
+        parameters["R_ohm"] = options.resistance_ohm
+        weak = diagnostics.get("weak_parameters", [])
+        if weak:
+            notes.append("当前数据对这些参数的约束较弱，拟合候选值需复核：" + ", ".join(weak))
+    else:
+        params, diagnostics = integral_fit(train, options) if options.method == "integral" else weak_integral_seed(train, options)
+        parameters = None
     initial_state = None
     if options.method == "weighted_integral":
         diagnostics["method"] = "抗噪加权积分辨识（端点零权重，2/5/10周期窗口，无PANN微调）"
@@ -300,8 +324,12 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     if options.method == "weighted_integral":
         diagnostics["rollout_initial_state_source"] = "nonnegative projection of first observed sample"
     stage("validation")
+    if options.mode == JOINT_MODE:
+        rl, rc = map(float, params[3:5])
+        if reconstructed:
+            controller_profile = {**controller_profile, "inductor_resistance_ohm": rl, "capacitor_esr_ohm": rc}
     if reconstructed:
-        predicted = closed_loop_rollout(a[:, 0], params, options.vin,
+        predicted = closed_loop_rollout(a[:, 0], params[:3], options.vin,
                                        a[0, 1:3] if initial_state is None else initial_state, controller_profile)
         diagnostics["controller"] = controller_profile
         diagnostics["drive_source"] = "known controller reconstructed from training voltage only"
@@ -316,8 +344,10 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
             "falling_edges": int(np.count_nonzero(np.diff(train[:, 3]) < 0)),
             "uses_heldout_measurements": False,
         }
+    elif full:
+        predicted = simulate(a[:,0], a[:,3], a[0,1:3], options.vin, options.resistance_ohm, parts)
     else:
-        predicted = rollout(a, params, options.vin, initial_state, **({"series_resistances": (rl, rc)} if rl or rc else {}))
+        predicted = rollout(a, params[:3], options.vin, initial_state, **({"series_resistances": (rl, rc)} if rl or rc else {}))
         diagnostics["drive_source"] = "measured PWM"
     metrics = metric(valid[:, 0], valid[:, 1:3], predicted[split:])
     from .measurement_diagnostics import assess_measurements
@@ -328,8 +358,8 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     train_metrics = metric(a[:split+1, 0], a[:split+1, 1:3], predicted[:split+1])
     if diagnostics["parameter_at_bound"]:
         notes.append("辨识或初始化触及参数边界：模型或数据可能不匹配，不应直接采用参数。")
-    if diagnostics["CR_condition_number"] > 100:
-        notes.append("C/R 相关性较高，参数可能对噪声敏感；建议增加动态激励并更换初值复测。")
+    if diagnostics.get("identifiability_condition_number", diagnostics.get("CR_condition_number", 0)) > 100:
+        notes.append("联合参数相关性较高，参数可能对噪声敏感；建议增加动态激励并更换初值复测。" if full or options.mode == JOINT_MODE else "C/R 相关性较高，参数可能对噪声敏感；建议增加动态激励并更换初值复测。")
     rises = np.flatnonzero(np.diff(a[:, 3]) > 0.5) + 1 if not reconstructed else []
     if len(rises) > 1:
         observed_fs = 1 / np.median(np.diff(a[rises, 0]))
@@ -338,19 +368,30 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     if np.max(np.diff(a[:, 0])) > 0.15 / options.frequency_hz:
         notes.append("部分采样间隔超过开关周期的 15%；边沿时间不确定性可能影响 L 估计。")
     reasons = review_reasons(metrics, diagnostics, options.method)
+    if full and diagnostics.get("weak_parameters"):
+        reasons.append({"code":"weak_circuit_parameters"})
     quality = "需复核" if reasons else "模型内拟合一致"
     if any(reason["code"] in ("current_nrmse", "voltage_nrmse", "parameter_at_bound", "condition_number") for reason in reasons):
         notes.append("留出误差或可辨识性检查未通过经验阈值；检查负载突变、PWM 对齐、初始状态及模型遗漏。")
     if reconstructed:
         notes.append("PWM 由已确认的控制电路和训练段电压重建；含噪电压、控制器初态或载波相位不匹配会影响结果。")
         notes.append("已计入反馈取样支路电流；忽略 ESR、绕组电阻、死区和器件压降。R 为用户提供的恒定负载电阻，未参与估计。")
+    elif full:
+        notes.append("CSV 电流对应绕组电流，电压对应输出端。固定负载，采用理想钳位二极管与实测 PWM。内部初态按首个电流、电压及准稳态支路电流近似，边沿带宽和采样步长会影响小寄生参数。")
     else:
         notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
-    diagnostics["power_stage_model"] = "known_series_resistances" if options.include_parasitics else "ideal"
-    diagnostics["known_parasitics"] = {"inductor_resistance_ohm": rl, "capacitor_esr_ohm": rc, "voltage_measurement": "output_terminal_vo"}
+    if not full:
+        diagnostics["power_stage_model"] = "known_series_resistances" if options.include_parasitics else "ideal"
+        diagnostics["known_parasitics"] = {"inductor_resistance_ohm": rl, "capacitor_esr_ohm": rc, "voltage_measurement": "output_terminal_vo"}
     if options.include_parasitics:
         notes = [n.replace("忽略 ESR、绕组电阻、死区和器件压降", "已计入已知 ESR 与绕组电阻；忽略死区和器件压降").replace("忽略反馈取样支路、ESR、绕组电阻、死区和器件压降", "已计入已知 ESR 与绕组电阻；忽略反馈取样支路、死区和器件压降") for n in notes]
-    return {"parameters": {"L_H": float(params[0]), "C_F": float(params[1]), "R_ohm": float(params[2])},
+    if options.mode == JOINT_MODE:
+        diagnostics["power_stage_model"] = "joint_series_resistances"
+        diagnostics.pop("known_parasitics", None)
+        diagnostics["parasitics"] = {"inductor_resistance_ohm": rl, "capacitor_esr_ohm": rc,
+            "voltage_measurement": "output_terminal_vo", "estimated": dict(zip(("rL_ohm", "rC_ohm"), estimated_resistances(options)))}
+        notes = [n.replace("已知 ESR 与绕组电阻", "ESR 与绕组电阻（按各项设置固定或估计）") for n in notes]
+    return {"parameters": parameters if full else dict(zip(PARAMETER_KEYS, map(float, params))),
             "R_estimated": options.mode == "LCR", "method": options.method, "quality": quality, "review_reasons": reasons,
             "assessment": assess_result(metrics, diagnostics, options.method),
             "metrics": metrics, "training_metrics": train_metrics, "diagnostics": diagnostics,

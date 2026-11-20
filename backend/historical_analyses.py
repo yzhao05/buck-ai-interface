@@ -7,8 +7,9 @@ def explicit_label(content, field):
     # labelled declarations qualify, and conflicting declarations stay unknown.
     plain=content.replace("`", "").replace("**", "")
     if field == "method":
-        pattern=r"(?:\bmethod|辨识方法|计算方法|使用方法|方法)\s*[:：=]\s*(pann\b|weighted_integral\b|integral\b|抗噪加权积分|加权积分|积分辨识)"
+        pattern=r"(?:\bmethod|辨识方法|计算方法|使用方法|方法)\s*[:：=]\s*(pann\b|weighted_integral\b|integral\b|circuit_fit\b|开关电路波形拟合|抗噪加权积分|加权积分|积分辨识)"
         mapping={"pann":"pann", "weighted_integral":"weighted_integral", "integral":"integral",
+                 "circuit_fit":"circuit_fit", "开关电路波形拟合":"circuit_fit",
                  "抗噪加权积分":"weighted_integral", "加权积分":"weighted_integral", "积分辨识":"integral"}
     else:
         pattern=r"(?:\bpwm_source|PWM\s*(?:来源|源))\s*[:：=]\s*(measured\b|controller\b|实测|实际|控制器重建|重建)"

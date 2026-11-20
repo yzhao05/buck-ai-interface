@@ -1,7 +1,8 @@
-// Run against the local backend on port 8001; no model API key is required.
+// Run against BUCK_TEST_URL (default port 8001); no model API key is required.
 const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const target=process.env.BUCK_TEST_URL || 'http://127.0.0.1:8001/';
 (async () => {
   const browser = await chromium.launch({executablePath:process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
   const context = await browser.newContext({viewport:{width:1500,height:1050}});
@@ -9,7 +10,7 @@ const fs = require('node:fs/promises');
   page.on('pageerror',error => errors.push(error.message));
   try {
     await fs.mkdir('runtime',{recursive:true});
-    await page.goto('http://127.0.0.1:8001/');
+    await page.goto(target);
     await page.getByText('后端已连接',{exact:true}).waitFor();
     await page.locator('#chat-input').fill('保留我的草稿');
     await page.locator('#language-toggle').click();
@@ -31,9 +32,10 @@ const fs = require('node:fs/promises');
     const storageState = await context.storageState();
     const fresh = await browser.newContext({storageState});
     const reopened = await fresh.newPage();
-    await reopened.goto('http://127.0.0.1:8001/');
+    await reopened.goto(target);
     assert.equal(await reopened.locator('html').getAttribute('lang'),'en','Language persists in a fresh session');
     await fresh.close();
+    await page.waitForFunction(()=>archiveLastSuccess && !archiveRunning && !historyLocked());
     await page.locator('#open-settings').click();
     assert.equal(await page.locator('#settings-dialog h2').textContent(),'Connect your backend');
     assert.equal(await page.locator('#forget-access-token').textContent(),'Forget saved access code');
@@ -68,7 +70,11 @@ const fs = require('node:fs/promises');
     assert.equal(await page.locator('#current-chart path').first().getAttribute('d'),before);
     await require('./harness-browser-fixture.cjs').install(page);
     const originalAnswer='测试回答：两种语言下保留原始消息。';
-    await page.route('**/api/chat',route=>route.fulfill({json:{mode:'deepseek',answer:originalAnswer}}));
+    const traceNames=await page.evaluate(()=>Object.keys(tools));
+    await page.route('**/api/chat',route=>route.fulfill({json:{mode:'deepseek',answer:originalAnswer,
+      diagnosis:{hypotheses:['open','supported','rejected','unresolved','systematic_floor'].map(status=>({status,cause:'Sampling and model uncertainty',assessment:'Evidence retained.'})),rationale:'Compare independent records.'},
+      simulation_evaluations:[{status:'completed'}],plecs_experiments:[{status:'completed'}],
+      tool_calls:traceNames.map(name=>({name,status:'已执行'}))}}));
     await page.locator('#chat-input').fill('分析当前结果');
     await page.locator('#send-chat').click();
     await page.locator('.message.assistant').filter({hasText:originalAnswer}).waitFor();
@@ -76,6 +82,22 @@ const fs = require('node:fs/promises');
     assert.equal(answer.trim(),originalAnswer);
     await page.locator('#language-toggle').click();
     assert.equal(await page.locator('.message.assistant .message-content').textContent(),answer,'Existing conversation stays unchanged');
+    const evidence=page.locator('.message.assistant').last().locator('.message-tools');
+    assert(!/[\u3400-\u9fff]/.test((await evidence.allTextContents()).join('\n')),'All fixed response-panel labels and tool names must be English');
+    assert.deepEqual(await page.locator('.message.assistant').last().locator('details summary').allTextContents(),[
+      'Error hypotheses and evidence','Simulation re-identification and error comparison','PLECS comparison experiment records']);
+    const hypotheses=page.locator('.message.assistant').last().locator('details').first();
+    const hypothesisText=await hypotheses.textContent();
+    for(const label of ['Pending review','Supported by evidence','Ruled out','Unresolved','Systematic error floor'])assert(hypothesisText.includes(label));
+    assert.equal(await evidence.last().locator(':scope > div').count(),traceNames.length,'Each tool call occupies its own row');
+    await page.locator('#language-toggle').click();
+    assert((await hypotheses.textContent()).includes('尚不能区分'));
+    await page.locator('#language-toggle').click();
+    assert((await hypotheses.textContent()).includes('Unresolved'));
+    const notices=await page.evaluate(()=>[
+      tr(errorText({detail:[{loc:['body','options'],msg:'Value error, 考虑寄生电阻时，必须填写电感绕组电阻和电容 ESR（Ω，可显式填写 0）。'}]})),
+      identificationReviewFeedback(),tr('正在执行任务，剩余会话将在任务结束后继续同步。')]);
+    assert(!/[\u3400-\u9fff]/.test(notices.join('\n')),'Configuration summaries and fixed error notices must be English');
     await page.evaluate(()=>window.scrollTo(0,0));
     await page.screenshot({path:'runtime/interface-english-results.png',fullPage:true});
     for (const width of [390,320,900]) {

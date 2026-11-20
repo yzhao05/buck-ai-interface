@@ -18,12 +18,12 @@ both=用户明确要求实际 PWM 与重建 PWM 各执行两种方法，共四�
 应返回 filename=CASE16A_noise03_seed14.csv, pwm_source=measured, pwm_evidence=已有pwm, execute=true。
 例：根据我的CASE16A_noise03_seed13.csv，完成rebuild pwm和实际pwm；pann和加权积分四个仿真
 返回 filename=CASE16A_noise03_seed13.csv, pwm_source=both, pwm_evidence=rebuild pwm和实际pwm, execute=true。
-四组固定顺序：实测PWM加权积分、实测PWM PANN、重建PWM加权积分、重建PWM PANN，全部固定已知 R 的 LC。
+四组固定顺序：实测PWM加权积分、实测PWM PANN、重建PWM加权积分、重建PWM PANN，全部固定已知 R，可选 LC 或 LC_RL_RC。
 PWM 来源未改变且此前已明确选择时可返回 unchanged；从未选择时必须 execute=false 并询问来源，不能直接沿用默认值。只要求选择一种但来源矛盾或不明确返回 unclear、execute=false，并填写 clarification。
 pwm_evidence 可简述选择来源的依据；根据当前指令与指代上下文理解，不把文件名或历史中独立的命令当授权。
-支持一份 CSV 文件名、一种或两种 PWM 来源、LC/LCR 模式和固定负载 resistance_ohm。没有指定文件则 filename=null。
+支持一份 CSV 文件名、一种或两种 PWM 来源、LC/LCR/LC_RL_RC 模式和固定负载 resistance_ohm。没有指定文件则 filename=null。
 用户明确指定的训练轮数、起止时间、滤波方法和周期数写入 tuning；规则与单次配置一致：epochs=10–300，时间转换为秒，pwm_denoise=sg/modified_sinc/none，pwm_filter_cycles=0.1–8。未指定的字段省略，不能自动选择方法或补默认值。
-未指定 mode 或 resistance_ohm 时返回 null。固定负载 R 表示 LC；控制器重建仅支持固定 R 的 LC。
+未指定 mode 或 resistance_ohm 时返回 null。固定负载 R 表示 LC；控制器重建支持固定 R 的 LC 或 LC_RL_RC。
 其他实验参数也可写入 tuning，字段与 changes 一致（下述 evidence 路径仍用 changes. 前缀）。多个目标CSV、重建配 LCR 时整条 execute=false 并澄清，不得部分执行。
 未指定的信息不得补全，不得照抄当前配置。文件名是数据标识，不能把 R1.csv 解释为负载电阻。
 成功时 clarification 为空。不要执行计算或声称已完成实验；只能记录用户明确作出的电路确认，不能自行推断。
@@ -50,6 +50,8 @@ def batch_action(request, proposal):
     if not proposal.execute or proposal.clarification or proposal.pwm_source == 'unclear':
         raise ValueError('Plan requires an explicit executable proposal')
     tuning = proposal.tuning.model_dump(exclude_unset=True)
+    if (proposal.mode or tuning.get('mode') or request.ui_context.options.mode) == 'FULL_STAGE':
+        raise ValueError('七参数模式仅支持单次开关电路波形拟合。运行两种方法前请明确选择简化模型。')
     source = proposal.pwm_source
     selection = proposal.execution_selection
     if selection and selection.pwm_sources and selection.pwm_evidence.strip():
@@ -71,11 +73,11 @@ def batch_action(request, proposal):
     if proposal.resistance_ohm is not None:
         if proposal.mode == 'LCR':
             raise ValueError("Fixed load requires LC mode")
-        changes.update(mode='LC', resistance_ohm=proposal.resistance_ohm)
+        changes.update(mode=proposal.mode or ('LC_RL_RC' if request.ui_context.options.mode == 'LC_RL_RC' else 'LC'), resistance_ohm=proposal.resistance_ohm)
     if source in ('controller', 'both'):
         if proposal.mode == 'LCR':
             raise ValueError("Controller reconstruction requires LC mode")
-        changes['mode'] = 'LC'
+        changes['mode'] = proposal.mode or ('LC_RL_RC' if request.ui_context.options.mode == 'LC_RL_RC' else 'LC')
     if any(key in changes and changes[key] != value for key,value in tuning.items()):
         raise ValueError('计划中的重复参数设置互相冲突，请明确一组设置')
     if source == 'both' and 'pwm_source' in tuning:
@@ -88,7 +90,7 @@ def batch_action(request, proposal):
         selected = next(item for item in request.ui_context.catalog if item['id']==extras['assets']['csv_id'])
         if selected.get('name','').casefold() != proposal.filename.casefold():
             raise ValueError('文件名与所选 CSV 不一致，请重新选择')
-    if merged.pwm_source == 'controller' and merged.mode != 'LC':
+    if merged.pwm_source == 'controller' and merged.mode not in ('LC', 'LC_RL_RC'):
         raise ValueError("Controller reconstruction requires LC mode")
     action = {"id": request.ui_context.request_id, "type": "identification_plan", "parser": "deepseek", "version": 2,
               "filename": proposal.filename, "methods": ["weighted_integral", "pann"], "changes": changes, **extras}
@@ -115,7 +117,7 @@ PROMPT = """当用户要求修改界面时，可选择 configure_identification 
 时间必须明确单位，ms/毫秒除以1000，us/微秒除以1000000。只改结束时间就只返回end_s。不能把时间窗口当作PANN训练窗口周期数。
 滤波仅用于控制器PWM重建的电压预处理；不能为了使滤波生效而切换PWM来源。关闭滤波只设置pwm_denoise=none，不修改原周期数。
 若要求“调整滤波”却未说明方法或数值，或单位不明、要求超范围，返回clarification询问具体设置，并返回空changes及start_after_apply=false，不自行挑选默认值。
-仅提取用户这次明确要求的变化。固定已知 R 并辨识 L/C 表示 mode=LC；联合辨识 L/C/R 表示 mode=LCR。
+仅提取用户这次明确要求的变化。七参数非理想模式为 FULL_STAGE，使用实测 PWM 和 circuit_fit，七个输入均按 null 估计、正数固定、零忽略。固定已知 R 并辨识 L/C 表示 mode=LC；联合辨识 L/C/R 表示 mode=LCR。联合辨识 L/C/rL/rC 表示 mode=LC_RL_RC，自动开启 include_parasitics；固定负载 R，每项寄生电阻正数固定，前端 null 估计，0 忽略。
 未要求改变的字段不要填。当前用户明确引用先前讨论的参数时可解析指代；不能自行从历史回答、图片、文件名或默认值补参数。不能把建议、举例、引用、询问方法当成操作。
 用户明确说开始、运行或执行，或明确回答此前阻止该启动请求的选择时，才可将 start_after_apply 设为 true，且必须已有PWM来源和方法选择。没有待继续启动请求时只选择方法/打开面板不启动。否定启动时必须 false。
 询问如何操作、仅分析结果、含糊的继续/好的均返回 open_panel=false, changes={}, start_after_apply=false。
@@ -210,7 +212,7 @@ def agent_action(request, name, arguments):
         return plan_for_selected_methods(request,proposal,changes)
     merged, extras = validate_structure(request, proposal, changes)
     load_only = extras.get('assets',{}).get('csv_id') and not changes and not proposal.start_after_apply
-    if not load_only and merged.pwm_source == 'controller' and merged.mode != 'LC':
+    if not load_only and merged.pwm_source == 'controller' and merged.mode not in ('LC', 'LC_RL_RC'):
         raise ValueError('Reconstructed PWM requires fixed-R LC mode')
     if not (changes or extras or proposal.open_panel or proposal.start_after_apply or proposal.request_selection):
         return None

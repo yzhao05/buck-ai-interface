@@ -77,19 +77,21 @@ async function attachCircuitImage(){
   if(validChatImage({name:"circuit.png",data_url:uploaded})){
     setChatImages([...chatImages(),{name:"circuit.png",data_url:uploaded}]);persistConversation();
   }else{
-    // Rasterize the default editable diagram so the provider sees the actual labels.
-    const svg=$("circuit-preview").querySelector("svg");if(!svg)return;
-    const blob=new Blob([new XMLSerializer().serializeToString(svg)],{type:"image/svg+xml;charset=utf-8"});
-    const url=URL.createObjectURL(blob);state.busy=true;controls();
+    const preview=$("circuit-preview"), svg=preview.querySelector("svg"), reference=preview.querySelector("img");
+    if(!svg && !reference)return;
+    const url=svg ? URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)],{type:"image/svg+xml;charset=utf-8"})) : reference.src;
+    state.busy=true;controls();
     try{
       const img=new Image();img.src=url;await img.decode();
-      const canvas=document.createElement("canvas");canvas.width=1800;canvas.height=Math.round(1800*svg.viewBox.baseVal.height/svg.viewBox.baseVal.width);
+      const canvas=document.createElement("canvas");
+      canvas.width=svg ? 1800 : img.naturalWidth;
+      canvas.height=svg ? Math.round(1800*svg.viewBox.baseVal.height/svg.viewBox.baseVal.width) : img.naturalHeight;
       const ctx=canvas.getContext("2d");ctx.fillStyle="white";ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height);
       const file=await new Promise(resolve=>canvas.toBlob(resolve,"image/png"));
       const image=await compressChatImage(new File([file],"default-circuit.png",{type:"image/png"}));
       setChatImages([...chatImages(),image]);persistConversation();
     }catch{notice("电路图读取失败，请上传电路截图后重试。");return;}
-    finally{URL.revokeObjectURL(url);state.busy=false;controls();}
+    finally{if(svg)URL.revokeObjectURL(url);state.busy=false;controls();}
   }
   if(!$("chat-input").value.trim())$("chat-input").value=tr("请分析这张电路图的接线与元件标注，并指出需要核对的地方。");
   persistConversation();$("chat-input").focus();notice("电路图已附加，点击发送后交给助手分析。",true);

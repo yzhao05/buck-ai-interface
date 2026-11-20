@@ -6,13 +6,14 @@ const page=await browser.newPage({viewport:{width:1500,height:1080}}),errors=[];
 page.on('pageerror',e=>errors.push(e.message));
 const ready=()=>page.waitForFunction(()=>state.connected&&activeConversation&&!historyLocked()&&!archiveRunning&&!archiveBootstrap,{},{timeout:90000});
 try{
- await page.goto('http://127.0.0.1:8018');await ready();
+ await page.goto(process.env.BUCK_TEST_URL || 'http://127.0.0.1:8018');await ready();
  await page.locator('#enter-identification').click();
  assert.equal(await page.locator('#include-parasitics').inputValue(),'false');
  await page.locator('#load-demo').click();await ready();
  await page.locator('#fit-method').selectOption('weighted_integral');
  await page.locator('#pwm-source').selectOption('measured');
  await page.locator('#include-parasitics').selectOption('true');
+ await page.locator('#fit-mode').selectOption('LC'); // Exercise the known-resistance model.
  assert(await page.locator('#identify').isDisabled());
  assert(await page.locator('#parasitic-error').isVisible());
  await page.locator('#inductor-resistance').fill('0.25');
@@ -43,6 +44,7 @@ try{
  assert.equal(await page.evaluate(()=>options().capacitor_esr_ohm),null);
  assert((await page.locator('#circuit-preview').textContent()).includes('rC = 0'));
  await page.locator('#include-parasitics').selectOption('true');
+ await page.locator('#fit-mode').selectOption('LC'); // Exercise the known-resistance model.
  await page.locator('#inductor-resistance').fill('0');await page.locator('#capacitor-esr').fill('0');
  assert.equal(await page.evaluate(()=>options().capacitor_esr_ohm),0);
  await page.locator('#pwm-source').selectOption('measured');

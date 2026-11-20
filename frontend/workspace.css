@@ -317,6 +317,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   .pane-collapsed .pane-rail-label { writing-mode: horizontal-tb; }
 }
 .circuit-card { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+#identification-form:has(#include-parasitics option[value="false"]:checked):has(#controller-settings[hidden]) .circuit-card { display: none; }
 .circuit-card-heading, .circuit-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .circuit-card-heading strong { font-size: 12px; }
 .circuit-preview { display: block; width: 100%; padding: 0; margin: 12px 0; border: 1px solid #e0ece9; border-radius: 6px; background: white; cursor: zoom-in; overflow: hidden; }

@@ -8,6 +8,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = {
     "original": "buck_converter_with_parameter_sweep.plecs",
+    "nonideal": "buck_with_parasitics.plecs",
     "case16a": "test/case16A_L60uH_C500uF_PWM.plecs",
     "case16b": "test/case16B_L40uH_C750uF_PWM.plecs",
     "case17": "test/case17_original_buck_L50uH_C1000uF_R3_D022.plecs",
@@ -68,9 +69,14 @@ def main():
     args = parser.parse_args()
     models = {}
     for name, relative in MODELS.items():
+        snapshot = extract(args.source / relative)
+        if name == "nonideal":
+            snapshot = {"sha256": snapshot["sha256"],
+                        "components": {key: {"type": part["type"]} for key, part in snapshot["components"].items()},
+                        "connections": snapshot["connections"]}
         models[name] = {"source_relative_to_ST4001": "仿真/buck_converter_with_parameter_sweep/" + relative,
-                        **extract(args.source / relative)}
-    result = {"reviewed_on": "2026-10-15", "purpose": "Reference model definitions only; never identification ground truth for an unknown CSV.",
+                        **snapshot}
+    result = {"reviewed_on": "2026-11-20", "purpose": "Reference model definitions only; never identification ground truth for an unknown CSV.",
               "models": models, "derivation_crosscheck": "PANN-main/closed_loop_buck.py (read only; original equations checked against KCL)",
               "upstream_rag": "reference/PE-GPT-main/core/llm/llm.py: rag_load uses SimpleDirectoryReader, chunking and VectorStoreIndex; this app uses local lexical retrieval without embeddings."}
     destination = ROOT / "backend/knowledge_base/model_evidence.json"

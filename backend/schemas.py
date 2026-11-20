@@ -58,10 +58,10 @@ class FitOptions(StrictModel):
     start_s: float | None = None
     end_s: float | None = None
     train_fraction: float = Field(default=0.7, ge=0.5, le=0.85)
-    mode: Literal["LC", "LCR"] = "LCR"
+    mode: Literal["LC", "LCR", "LC_RL_RC", "FULL_STAGE"] = "LCR"
     resistance_ohm: float = Field(default=6, gt=0.01, le=100000)
     # "integral" remains available for reproducing older reports/API clients.
-    method: Literal["weighted_integral", "pann", "integral"] = "pann"
+    method: Literal["weighted_integral", "pann", "integral", "circuit_fit"] = "pann"
     epochs: int = Field(default=200, ge=10, le=300)
     pann_initial_state: Literal["joint", "measured"] = "joint"
     pann_window_cycles: int = Field(default=0, ge=0, le=3, description="0: training-noise heuristic; 1/2/3: explicit cycles")
@@ -70,12 +70,32 @@ class FitOptions(StrictModel):
     pwm_filter_cycles: float = Field(default=6., ge=.1, le=8)
     controller_confirmed: bool = False
     controller: ControllerParameters | None = None
+    # Legacy API snapshots interpreted explicit zero as an unknown series resistor.
+    joint_zero_is_fixed: bool = False
+    inductance_h: float | None = Field(default=None, ge=0, le=1)
+    winding_capacitance_f: float | None = Field(default=None, ge=0, le=1e-3)
+    capacitance_f: float | None = Field(default=None, ge=0, le=1)
+    capacitor_esl_h: float | None = Field(default=None, ge=0, le=.1)
+    switch_resistance_ohm: float | None = Field(default=None, ge=0, le=1000)
     include_parasitics: bool = False
     inductor_resistance_ohm: float | None = Field(default=None, ge=0, le=1000)
     capacitor_esr_ohm: float | None = Field(default=None, ge=0, le=1000)
 
     @model_validator(mode="after")
     def require_parasitics(self):
+        if self.mode == "FULL_STAGE":
+            if self.pwm_source != "measured":
+                raise ValueError("七参数波形拟合需要 CSV 中的实测 PWM 列。")
+            if "method" in self.model_fields_set and self.method != "circuit_fit":
+                raise ValueError("七参数模式仅支持开关电路波形拟合（circuit_fit）。")
+            self.method = "circuit_fit"
+            self.include_parasitics = True
+            return self
+        if self.method == "circuit_fit":
+            raise ValueError("开关电路波形拟合只适用于七参数模式。")
+        if self.mode == "LC_RL_RC":
+            self.include_parasitics = True
+            return self
         if self.include_parasitics and (self.inductor_resistance_ohm is None or self.capacitor_esr_ohm is None):
             raise ValueError("考虑寄生电阻时，必须填写电感绕组电阻和电容 ESR（Ω，可显式填写 0）。")
         return self
@@ -86,6 +106,10 @@ class FitOptionsDraft(FitOptions):
 
     @model_validator(mode="after")
     def require_parasitics(self):
+        if self.mode == "FULL_STAGE":
+            return super().require_parasitics()
+        if self.mode == "LC_RL_RC":
+            self.include_parasitics = True
         return self
 
 
@@ -110,7 +134,7 @@ def partial_model(name, source, exclude=()):
 
 ControllerChanges = partial_model('ControllerChanges', ControllerParameters)
 MappingChanges = partial_model('MappingChanges', Mapping)
-FitChanges = partial_model('FitChanges', FitOptions, ('controller', 'pwm_source', 'method'))
+FitChanges = partial_model('FitChanges', FitOptions, ('controller', 'pwm_source', 'method', 'joint_zero_is_fixed'))
 
 
 class IdentificationTuning(FitChanges):
@@ -125,8 +149,8 @@ class IdentificationTuning(FitChanges):
 
 
 class IdentificationChanges(IdentificationTuning):
-    method: Literal["pann", "weighted_integral"] | None = None
-    mode: Literal["LC", "LCR"] | None = None
+    method: Literal["pann", "weighted_integral","circuit_fit"] | None = None
+    mode: Literal["LC", "LCR", "LC_RL_RC", "FULL_STAGE"] | None = None
     resistance_ohm: float | None = Field(default=None, strict=True, gt=0.01, le=100000)
 
 
@@ -145,7 +169,7 @@ class AnalysisChanges(StrictModel):
 
 
 class ExecutionSelection(StrictModel):
-    methods: list[Literal['pann','weighted_integral']] = Field(default_factory=list, max_length=2)
+    methods: list[Literal['pann','weighted_integral','circuit_fit']] = Field(default_factory=list, max_length=3)
     pwm_sources: list[Literal['measured','controller','auto']] = Field(default_factory=list, max_length=3)
     method_evidence: str = Field(default='', max_length=1000)
     pwm_evidence: str = Field(default='', max_length=1000)
@@ -174,7 +198,7 @@ class IdentificationPlanProposal(ConfigurationExtras):
     filename: str | None = Field(max_length=255)
     pwm_source: Literal['measured', 'controller', 'both', 'unchanged', 'unclear']
     pwm_evidence: str = Field(default='', max_length=500)
-    mode: Literal['LC', 'LCR'] | None
+    mode: Literal['LC', 'LCR', 'LC_RL_RC'] | None
     resistance_ohm: float | None = Field(strict=True, gt=0.01, le=100000)
 
 
@@ -257,10 +281,27 @@ class SavedExperiment(StrictModel):
         parameters = self.result.get("parameters", {})
         if not isinstance(parameters, dict):
             raise ValueError("Invalid experiment parameters")
-        for key in ("L_H", "C_F", "R_ohm"):
+        full = (self.result.get("options") or {}).get("mode") == "FULL_STAGE"
+        keys = ("L_H", "C_F", "R_ohm", "rL_ohm", "rC_ohm", "Cw_F", "ESL_H", "Ron_ohm") if full else ("L_H", "C_F", "R_ohm")
+        inactive = ()
+        if full:
+            from .full_stage import unobservable_keys
+            inactive = unobservable_keys(self.result["options"])
+            # Early snapshots used solver placeholders for components in inactive branches.
+            parameters = {**parameters, **dict.fromkeys(inactive)}
+            self.result = {**self.result, "parameters": parameters}
+        for key in keys:
+            if key in inactive:
+                continue
             value = parameters.get(key)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 < value <= 1e30 or not math.isfinite(value):
+            if (not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1e30
+                    or (value == 0 and (not full or key == "R_ohm"))):
                 raise ValueError("Invalid experiment parameters")
+        if isinstance(self.result.get('options'), dict) and self.result['options'].get('mode') == 'LC_RL_RC':
+            for key in ('rL_ohm', 'rC_ohm'):
+                value = parameters.get(key)
+                if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1000 or not math.isfinite(value):
+                    raise ValueError("Invalid experiment series resistance")
         if self.ground_truth and self.ground_truth.result_id != self.id:
             raise ValueError("Ground truth must belong to this experiment")
         return self
@@ -272,9 +313,14 @@ class ResultLibraryEntry(SavedExperiment):
 
 
 class ExperimentParameters(StrictModel):
-    L_H: float = Field(gt=0, le=1e30)
-    C_F: float = Field(gt=0, le=1e30)
+    L_H: float = Field(ge=0, le=1e30)
+    C_F: float = Field(ge=0, le=1e30)
+    Cw_F: float | None = Field(default=None, ge=0)
+    ESL_H: float | None = Field(default=None, ge=0)
+    Ron_ohm: float | None = Field(default=None, ge=0)
     R_ohm: float = Field(gt=0, le=1e30)
+    rL_ohm: float | None = Field(default=None, ge=0, le=1000)
+    rC_ohm: float | None = Field(default=None, ge=0, le=1000)
 
 
 class ExperimentComparisonContext(StrictModel):
@@ -301,7 +347,7 @@ class ChatExperiment(StrictModel):
     comparison_context: ExperimentComparisonContext | None = None
     id: str = Field(min_length=1, max_length=128)
     dataset: ExperimentDataset
-    method: Literal["pann", "weighted_integral", "integral"] | None = None
+    method: Literal["pann", "weighted_integral", "integral", "circuit_fit"] | None = None
     pwm_source: Literal["measured", "controller"] | None = None
     parameters: ExperimentParameters
     ground_truth: ChatGroundTruth | None = None
@@ -317,14 +363,14 @@ class HistoricalAnalysis(StrictModel):
     id: str = Field(min_length=1, max_length=128)
     request_id: str = Field(min_length=1, max_length=128)
     content: str = Field(min_length=1, max_length=100000)
-    method: Literal["pann", "weighted_integral", "integral"] | None = None
+    method: Literal["pann", "weighted_integral", "integral", "circuit_fit"] | None = None
     pwm_source: Literal["measured", "controller"] | None = None
     result_id: str | None = Field(default=None, max_length=128)
 
 
 class AnalysisMetadata(StrictModel):
     kind: Literal["identification_analysis"] = "identification_analysis"
-    method: Literal["pann", "weighted_integral", "integral"] | None = None
+    method: Literal["pann", "weighted_integral", "integral", "circuit_fit"] | None = None
     pwm_source: Literal["measured", "controller"] | None = None
     result_id: str | None = Field(default=None, max_length=128)
     filename: str | None = Field(default=None, max_length=1024)

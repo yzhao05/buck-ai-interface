@@ -68,6 +68,14 @@ def test_controls_replay_the_saved_nonideal_model(experiment):
     assert out['known_parasitics']['capacitor_esr_ohm'] == .12
 
 
+def test_joint_snapshot_matching_distinguishes_fixed_zero_from_estimation():
+    from backend.diagnostic_controls import comparison_options
+    base = {'mode':'LC_RL_RC', 'include_parasitics':True, 'inductor_resistance_ohm':0}
+    legacy = comparison_options(base)
+    assert legacy == comparison_options({**base, 'joint_zero_is_fixed':True, 'inductor_resistance_ohm':None})
+    assert legacy != comparison_options({**base, 'joint_zero_is_fixed':True})
+
+
 def test_legacy_ideal_results_remain_compatible_without_mixing_models(experiment):
     _, _, current, source = experiment
     for key in ('include_parasitics','inductor_resistance_ohm','capacitor_esr_ohm'):

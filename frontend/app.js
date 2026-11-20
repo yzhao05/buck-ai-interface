@@ -125,7 +125,7 @@ function showWaveform() {
 }
 function errorText(body) {
   if (typeof body.detail === "string") return body.detail;
-  if (Array.isArray(body.detail)) return body.detail.map(e => `${e.loc?.slice(1).join(".")}: ${e.msg}`).join("；");
+  if (Array.isArray(body.detail)) return body.detail.map(e => `${e.loc?.slice(1).join(".")}: ${e.msg}`).join("\n");
   return "请求失败，请检查后端服务。";
 }
 async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = "", archiveProtocol = ""} = {}) {
@@ -162,15 +162,31 @@ async function api(path, {method = "GET", body, timeout = 90000, asBlob = false,
   } finally { clearTimeout(timer); }
 }
 function pwmSource() {
+  if ($("fit-mode").value==="FULL_STAGE") return "measured";
   const selected = $("pwm-source").value;
   return selected === "auto" ? (state.mapping && !state.mapping.pwm ? "controller" : "measured") : selected;
 }
 function prepareControllerDefaults() {
   if (pwmSource() !== "controller") return;
   if (!$("start-ms").value) $("start-ms").value = "0";
-  if (!$("end-ms").value) $("end-ms").value = "0.8";
+  if (!$("end-ms").value) {
+    const end = state.summary?.end_s;
+    $("end-ms").value = Number.isFinite(end) && end > 0 ? String(Number(Math.min(0.8, end*1000).toPrecision(12))) : "0.8";
+  }
 }
 function controls() {
+  const full = $("fit-mode").value === "FULL_STAGE";
+  const jointParasitics = full || $("fit-mode").value === "LC_RL_RC";
+  $("full-stage-inputs").hidden=!full;
+  const method=$("fit-method");
+  method.querySelector('[value="circuit_fit"]').disabled=!full;
+  if(full) method.value="circuit_fit";
+  else if(method.value==="circuit_fit") method.value="weighted_integral";
+  if(jointParasitics && $("include-parasitics").value!=="true") {
+    $("include-parasitics").value="true";
+    $("controller-confirmed").value="no";
+  }
+  for(const id of ["inductor-resistance","capacitor-esr"]) $(id).required=!jointParasitics;
   const waiting = historyLocked();
   $("diagnostic-reference-file").disabled=waiting || !state.result;
   $("choose-diagnostic-reference").disabled=waiting || !state.result;
@@ -205,10 +221,14 @@ function controls() {
   const reconstructed = pwmSource() === "controller";
   $("controller-settings").hidden = !reconstructed;
   $("fit-mode").querySelector('[value="LCR"]').disabled = reconstructed;
-  if (reconstructed) $("fit-mode").value = "LC";
+  if (reconstructed && $("fit-mode").value === "LCR") $("fit-mode").value = "LC";
+  ui($("parasitic-hint"), jointParasitics ? "联合模式：负载 R 固定；每项电阻留空辨识，正数固定，0 忽略。CSV 电压必须是输出端 vo。" : "两项均为已知值，不参与辨识。开启后请填写两项，可显式填写 0；CSV 电压必须是输出端 vo。");
+  if(full) ui($("parasitic-hint"),"七项分别设置：留空辨识，正数固定，0 忽略。使用实测 PWM、绕组电流和输出端电压，负载 R 固定。");
   const parasiticEnabled = $("include-parasitics").value === "true";
   $("parasitic-settings").hidden = !parasiticEnabled;
-  const parasiticMissing = parasiticEnabled && ["inductor-resistance","capacitor-esr"].some(id=>!validNumericInput($(id)));
+  const parameterIds=full ? BuckCircuit.parts.map(p=>p[2]) : ["inductor-resistance","capacitor-esr"];
+  const parasiticMissing = parasiticEnabled && parameterIds.some(id=>!(jointParasitics && $(id).value==="" && !$(id).validity.badInput) && !validNumericInput($(id)));
+  ui($("parasitic-error"),full?"请检查七项参数的单位和范围，或清空相应输入框以辨识。":"请填写电感绕组电阻和电容 ESR（Ω，0～1000），再开始辨识。");
   $("parasitic-error").hidden = !parasiticMissing;
   const sameResult = resultMatchesCurrent(state.result);
   $("identify").disabled = !state.identificationOpen || !state.connected || !state.mapping || waiting || sameResult || parasiticMissing;
@@ -216,9 +236,16 @@ function controls() {
   ui($("identify-complete-hint"), sameResult
     ? "当前配置已完成辨识。修改上方参数后可重新辨识。"
     : "左侧设置已更改。右侧保留上次结果，点击开始参数辨识后更新。");
-  $("fixed-r-label").hidden = $("fit-mode").value !== "LC";
+  $("fixed-r-label").hidden = $("fit-mode").value === "LCR";
   $("method-hint").hidden = $("fit-method").value !== "weighted_integral";
   for (const id of ["include-parasitics","inductor-resistance","capacitor-esr","map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit","vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction","pwm-source","controller-confirmed"]) $(id).disabled = waiting;
+  for(const [, , id] of BuckCircuit.parts) $(id).disabled=waiting;
+  if(full) {
+    $("fit-method").disabled=true;
+    $("pwm-source").value="measured";
+    $("pwm-source").disabled=true;
+    if(!state.mapping?.pwm) $("identify").disabled=true;
+  }
   renderIdentificationPlan();
 }
 async function connect() {
@@ -243,7 +270,7 @@ async function connect() {
     const pannOption = $("fit-method").querySelector('[value="pann"]');
     pannOption.disabled = !health.pann_available;
     ui(pannOption, health.pann_available ? "PANN · 物理网络微调" : "PANN · 需后端 PyTorch");
-    if (!health.pann_available && $("fit-method").value !== "weighted_integral") {
+    if (!health.pann_available && $("fit-method").value === "pann") {
       $("fit-method").value = "weighted_integral";
     }
     const source = health.source_url || config.sourceUrl;
@@ -282,12 +309,15 @@ function options({allowIncompleteParasitics=false}={}) {
     return Number(el.value);
   };
   const includeParasitics = $("include-parasitics").value === "true";
-  const missingDraft = id => allowIncompleteParasitics && $(id).value === "" && !$(id).validity.badInput;
+  const full = $("fit-mode").value==="FULL_STAGE";
+  const missingDraft = id => (full || allowIncompleteParasitics || $("fit-mode").value==="LC_RL_RC") && $(id).value === "" && !$(id).validity.badInput;
   if(includeParasitics && ["inductor-resistance","capacitor-esr"].some(id=>!missingDraft(id) && !validNumericInput($(id))))
     throw new Error(tr("请填写电感绕组电阻和电容 ESR（Ω，0～1000），再开始辨识。"));
   return {include_parasitics:includeParasitics,
+    ...($("fit-mode").value==="LC_RL_RC" ? {joint_zero_is_fixed:true} : {}),
     inductor_resistance_ohm:includeParasitics && !missingDraft("inductor-resistance") ? numeric("inductor-resistance") : null,
     capacitor_esr_ohm:includeParasitics && !missingDraft("capacitor-esr") ? numeric("capacitor-esr") : null,
+    ...(full ? Object.fromEntries(BuckCircuit.parts.map(([,field,id,,,scale])=>[field,missingDraft(id)?null:Number((numeric(id)/scale).toPrecision(15))])) : {}),
     vin:numeric("vin"), frequency_hz:numeric("frequency")*1000,
     pwm_source:pwmSource(), controller_confirmed:$("controller-confirmed").value === "yes",
     controller:pwmSource() === "controller" ? window.BuckCircuit.read() : null,
@@ -324,6 +354,10 @@ function invalidateResult() {
   state.truthDraft={l:"",c:""};state.truthComparison=null;state.truthError="";displayTruthComparison();
   $("result-assessment").hidden = true;
   $("review-reasons").hidden = true; $("review-reason-list").replaceChildren();
+  $("full-stage-results").hidden = true;
+  $("full-stage-results").replaceChildren();
+  $("result-parasitics").hidden = true;
+  $("result-l").closest(".parameter-grid").hidden = false;
   for (const key of ["result-l", "result-c", "result-r"]) ui($(key), "—");
   ui($("result-badge"), "等待计算"); $("result-badge").className = "badge";
   ui($("result-notes"), "拟合完成后显示估计参数和留出误差。没有独立真值时，不报告参数真实误差。");
@@ -517,7 +551,8 @@ function resultReviewReasons(result) {
     if (value>5) reasons.push({code:`${channel}_nrmse`,value,threshold:5});
   }
   if (d.parameter_at_bound) reasons.push({code:"parameter_at_bound"});
-  if (d.CR_condition_number>100) reasons.push({code:"condition_number",value:d.CR_condition_number,threshold:100});
+  const condition=d.identifiability_condition_number ?? d.CR_condition_number;
+  if (condition>100) reasons.push({code:"condition_number",value:condition,threshold:100});
   const pann=(result.method || result.options?.method)==="pann" ? d.pann || {} : {};
   if (pann.stop_reason==="time_budget") reasons.push({code:"pann_time_budget",completed_epochs:pann.completed_epochs,requested_epochs:pann.epochs});
   if ((result.method || result.options?.method)==="pann") reasons.push(...(pann.convergence?.reasons || [{code:"pann_insufficient_history"}]));
@@ -641,7 +676,8 @@ function displayReviewReasons() {
       text=tr("逐轮记录不足，无法完成连续窗口检查；请增加训练轮数或重新辨识。");
     } else if (reason.code==="pann_stability_short") {
       text=`${tr("末段连续稳定次数不足")}: ${reason.value} < ${reason.threshold}`;
-    } else text=tr("此项复核原因尚无法显示，请查看计算条件与诊断。");
+    } else if(reason.code==="weak_circuit_parameters") text=tr("部分器件参数对当前波形不敏感，请查看七参数结果中的标记。");
+    else text=tr("此项复核原因尚无法显示，请查看计算条件与诊断。");
     const li=document.createElement("li");li.textContent=text;list.append(li);
   }
   if (!reasons.length) {const li=document.createElement("li");ui(li,"历史结果未记录可确认的触发原因，请查看计算条件与诊断或重新辨识。");list.append(li);}
@@ -658,6 +694,31 @@ function displayResult({preserveZoom=false}={}) {
   displayTruthComparison();
   const r = state.result, p = r.parameters;
   ui($("result-l"), fmt(p.L_H*1e6,5)); ui($("result-c"), fmt(p.C_F*1e6,5)); ui($("result-r"), fmt(p.R_ohm,5));
+  const full = r.options?.mode==="FULL_STAGE";
+  const list=$("full-stage-results");
+  list.hidden=!full; list.replaceChildren();
+  $("result-l").closest(".parameter-grid").hidden=full;
+  $("truth-comparison").hidden=full && (r.options.inductance_h===0 || r.options.capacitance_f===0);
+  if(full){
+    const weak=r.diagnostics?.weak_parameters||[];
+    for(const [key,field,,label,unit,scale] of BuckCircuit.parts){
+      const input=r.options[field];
+      const unavailable=r.diagnostics?.unobservable_parameters?.includes(key);
+      const status=input===0?"忽略":input>0?"固定":unavailable?"不可辨识":weak.includes(key)?"弱可辨识":"估计";
+      const cell=document.createElement("div"), name=document.createElement("span"), value=document.createElement("strong"), units=document.createElement("small");
+      name.textContent=tr(label)+" · "+tr(status);
+      value.textContent=input===0||unavailable?"—":fmt(p[key]*scale,6);units.textContent=unit;
+      cell.append(name,value,units);list.append(cell);
+    }
+    const load=document.createElement("div"),name=document.createElement("span"),value=document.createElement("strong"),unit=document.createElement("small");
+    name.textContent=tr("负载电阻 R · 固定");value.textContent=fmt(p.R_ohm,5);unit.textContent="Ω";
+    load.append(name,value,unit);list.append(load);
+  }
+  $("result-parasitics").hidden = r.options?.mode !== "LC_RL_RC";
+  for(const [key,id,option,label] of [["rL_ohm","rl","inductor_resistance_ohm","电感绕组电阻 rL"],["rC_ohm","rc","capacitor_esr_ohm","电容 ESR rC"]]) {
+    ui($("result-"+id),fmt(p[key],6));
+    ui($("result-"+id+"-label"),label+" · "+(r.options?.[option]>0 ? "固定" : r.options?.joint_zero_is_fixed && r.options[option]===0 ? "忽略" : "估计"));
+  }
   ui($("r-label"), r.R_estimated ? "负载电阻 R · 估计" : "负载电阻 R · 固定");
   const quality=resultQuality(r);
   ui($("result-badge"), quality); $("result-badge").className = "badge " + (quality==="需复核" ? "warning" : "good");
@@ -665,7 +726,7 @@ function displayResult({preserveZoom=false}={}) {
   displayReviewReasons();
   $("validation").hidden = false; ui($("rmse-i"), fmt(r.metrics.current_rmse_A) + " A"); ui($("rmse-v"), fmt(r.metrics.voltage_rmse_V*1000) + " mV");
   const driveNote = r.diagnostics.pwm_reconstruction?.status === "complete"
-    ? "PWM 重建已完成：仅使用训练段电压与已知控制器生成 0/1 开关信息，再固定 R 识别 L、C。\n" : "";
+    ? "PWM 重建已完成：仅使用训练段电压与已知控制器生成 0/1 开关信息，再固定 R 辨识所选参数。\n" : "";
   ui($("result-notes"), `${driveNote}${r.validation_kind}\n${parameterErrorNote()}`);
   $("diagnostics").hidden = false;
   displayDiagnostics();
@@ -766,7 +827,8 @@ function refreshDiagnosticReference(){
   $("choose-diagnostic-reference").disabled=!state.result;
   $("diagnostic-reference-confirm").disabled=!ref;
   if(!ref)$("diagnostic-reference-confirm").checked=false;
-  $("diagnostic-reference-status").textContent=ref ? tr("已选择参考：")+ref.filename : tr("未选择参考，仍可运行参数与初值交换对照。");
+  $("diagnostic-reference-status").replaceChildren(window.BuckI18n.node(ref ? "已选择参考：" : "未选择参考，仍可运行参数与初值交换对照。"));
+  if(ref)$("diagnostic-reference-status").append(document.createTextNode(ref.filename));
 }
 $("choose-diagnostic-reference").onclick=()=>$("diagnostic-reference-file").click();
 $("diagnostic-reference-file").addEventListener('change',async event=>{
@@ -786,21 +848,22 @@ $("diagnostic-reference-file").addEventListener('change',async event=>{
 function decorateResponse(article, response) {
     if(response.diagnosis?.hypotheses?.length){
       const box=document.createElement('details');box.className='message-tools';
-      const heading=document.createElement('summary');heading.textContent='误差假设与证据';box.append(heading);
+      const heading=document.createElement('summary');ui(heading,'误差假设与证据');box.append(heading);
       const statuses={open:'待检查',supported:'有证据支持',rejected:'已排除',unresolved:'尚不能区分',systematic_floor:'系统性误差下限'};
       for(const hypothesis of response.diagnosis.hypotheses){
-        const p=document.createElement('p');p.textContent=`${hypothesis.cause} · ${statuses[hypothesis.status]||hypothesis.status}：${hypothesis.assessment}`;box.append(p);
+        const p=document.createElement('p');
+        p.append(document.createTextNode(`${hypothesis.cause} · `),window.BuckI18n.node(statuses[hypothesis.status]||hypothesis.status),document.createTextNode(`: ${hypothesis.assessment}`));box.append(p);
       }
       const next=document.createElement('p');next.textContent=response.diagnosis.rationale||response.diagnosis.next_step||'';box.append(next);article.append(box);
     }
     if(response.simulation_evaluations?.length){
       const box=document.createElement('details');box.className='message-tools';
-      const heading=document.createElement('summary');heading.textContent='仿真重新辨识与误差比较';box.append(heading);
+      const heading=document.createElement('summary');ui(heading,'仿真重新辨识与误差比较');box.append(heading);
       const pre=document.createElement('pre');pre.textContent=JSON.stringify(response.simulation_evaluations,null,2);box.append(pre);article.append(box);
     }
     if(response.plecs_experiments?.length){
       const box=document.createElement('details');box.className='message-tools';
-      const title=document.createElement('summary');title.textContent='PLECS 对比实验记录';box.append(title);
+      const title=document.createElement('summary');ui(title,'PLECS 对比实验记录');box.append(title);
       const pre=document.createElement('pre');pre.textContent=JSON.stringify(response.plecs_experiments,null,2);box.append(pre);article.append(box);
     }
     if(response.control_checks){
@@ -829,8 +892,8 @@ function decorateResponse(article, response) {
         add(`${group.method} / ${group.pwm_source} / ${group.mode}: `,"不同 CSV 数",`: ${group.distinct_files}; `,"排除同文件重复运行",`: ${group.same_file_reruns_excluded}`);
         if(group.distinct_files<2)add("至少需要两份不同 CSV 才能计算观察到的离散程度。");
         for(const [key,p] of Object.entries(group.parameters)){
-          const factor=key==='R_ohm'?1:1e6,unit=key==='L_H'?'μH':key==='C_F'?'μF':'Ω';
-          add(`${key[0]}: `,"观察范围",` ${fmt(p.min*factor,6)}–${fmt(p.max*factor,6)} ${unit}; CV = ${fmt(p.cv_pct,4)}%`);
+          const factor=['L_H','C_F'].includes(key)?1e6:1,unit=key==='L_H'?'μH':key==='C_F'?'μF':'Ω';
+          add(`${key.split('_')[0]}: `,"观察范围",` ${fmt(p.min*factor,6)}–${fmt(p.max*factor,6)} ${unit}; CV = ${fmt(p.cv_pct,4)}%`);
         }
       }
       add("需确认同一电路与独立采集；观察范围不是置信区间，也不是新工况预测验证。");
@@ -854,7 +917,14 @@ function decorateResponse(article, response) {
     }
     if (response.tool_calls?.length) {
       const log = document.createElement("div"); log.className = "message-tools";
-      ui(log, response.tool_calls.map(t => `${tools[t.name] || t.name} · ${t.status}${t.query ? ` · ${t.query} (${t.count})` : ""}`).join("\n")); article.append(log);
+      response.tool_calls.forEach((t,index) => {
+        if(index)log.append("\n");
+        const row=document.createElement('div');
+        row.append(window.BuckI18n.node(tools[t.name] || t.name), " · ", window.BuckI18n.node(t.status));
+        if(t.query)row.append(document.createTextNode(` · ${t.query} (${t.count})`));
+        log.append(row);
+      });
+      article.append(log);
     }
 }
 function configurationFingerprint() {
@@ -889,8 +959,8 @@ async function applyIdentificationAction(action, context) {
   if (action.type!=="configure_identification" || typeof action.open_panel!=="boolean" || typeof action.start_after_apply!=="boolean") throw new Error("配置操作格式无效。");
   const changes=action.changes;
   if (!validConfigurationChanges(changes) || !validConfigurationExtras(action)
-      || ("method" in changes && !["pann","weighted_integral"].includes(changes.method))
-      || ("mode" in changes && !["LC","LCR"].includes(changes.mode))
+      || ("method" in changes && !["pann","weighted_integral","circuit_fit"].includes(changes.method))
+      || ("mode" in changes && !["LC","LCR","LC_RL_RC","FULL_STAGE"].includes(changes.mode))
       || ("resistance_ohm" in changes && !(typeof changes.resistance_ohm==="number" && Number.isFinite(changes.resistance_ohm) && changes.resistance_ohm>.01 && changes.resistance_ohm<=100000))) throw new Error("配置操作格式无效。");
   if(action.start_after_apply && currentIdentificationPlan()?.status!=='paused' &&
       (new Set(action.execution_selection?.methods).size>1 || new Set(action.execution_selection?.pwm_sources).size>1))
@@ -918,7 +988,7 @@ async function applyIdentificationAction(action, context) {
   const targetMapping=staged.mapping||state.mapping;
   const targetSource=selectedSource==='auto'?(targetMapping&&!targetMapping.pwm?'controller':'measured'):selectedSource;
   const loadOnly=staged.dataset && !Object.keys(changes).length && !action.start_after_apply;
-  if(!loadOnly && targetSource==='controller'&&(changes.mode||$('fit-mode').value)!=='LC')return tr('重建 PWM 只支持固定 R 的 LC 模式，本次未修改设置。');
+  if(!loadOnly && targetSource==='controller'&&(changes.mode||$('fit-mode').value)==='LCR')return tr('重建 PWM 需要固定负载 R，可选择 LC 或 LC_RL_RC 模式，本次未修改设置。');
   // Mark before applying; replaying stored replies/retrying the same response cannot run twice.
   sessionStorage.setItem(key,"processed");
   pendingConfigurationStart=null;
@@ -1262,7 +1332,7 @@ function reportFilename(result, date = new Date()) {
   const opts = result.options || {};
   const drive = result.diagnostics?.pwm_reconstruction?.status === "complete" || opts.pwm_source === "controller" ? "rebuilt"
     : opts.pwm_source === "measured" || result.diagnostics?.drive_source === "measured PWM" ? "measured" : "pwmNA";
-  const method = {pann:"PANN",weighted_integral:"WIntegral",integral:"Integral"}[result.method || opts.method] || "methodNA";
+  const method = {circuit_fit:"CircuitFit",pann:"PANN",weighted_integral:"WIntegral",integral:"Integral"}[result.method || opts.method] || "methodNA";
   const window = method !== "PANN" ? "NA" : opts.pann_window_cycles === 0 ? "auto"
     : [1,2,3].includes(opts.pann_window_cycles) ? `${opts.pann_window_cycles}cycle` : "windowNA";
   return `${day}_${condition}_${noise}_${seed === undefined ? "seedNA" : "s"+Number(seed)}_${drive}_${method}_${window}.json`;
@@ -1288,11 +1358,15 @@ $("apply-mapping").onclick = async()=>{state.busy=true;controls();try{await appl
 for(const id of ["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"]) $(id).onchange=()=>{state.mapping=null;invalidateResult();ui($("job-status"), "映射已更改，请点击应用并检查数据");controls();};
 for(const id of ["vin","frequency","fit-mode","fixed-r","fit-method","pann-state","pann-cycles","pann-epochs","start-ms","end-ms","train-fraction"]) $(id).oninput=()=>{
   if(["vin","frequency","fixed-r"].includes(id) && pwmSource()==="controller") $("controller-confirmed").value="no";
-  $("fixed-r-label").hidden=$("fit-mode").value!=="LC";ui($("train-label"), $("train-fraction").value+"%");controls();
+  $("fixed-r-label").hidden=$("fit-mode").value==="LCR";ui($("train-label"), $("train-fraction").value+"%");controls();
   if(state.mapping)readyStatus();
   persistConversation();
 };
-for(const id of ["include-parasitics","inductor-resistance","capacitor-esr"]) $(id).addEventListener("input",()=>{
+for(const id of ["include-parasitics",...BuckCircuit.parts.map(p=>p[2])]) $(id).addEventListener("input",()=>{
+  if(id==="include-parasitics") {
+    if($(id).value==="true") $("fit-mode").value="FULL_STAGE";
+    else if(["FULL_STAGE","LC_RL_RC"].includes($("fit-mode").value)) $("fit-mode").value="LC";
+  }
   $("controller-confirmed").value="no";controls();BuckCircuit.render(true);persistConversation();
 });
 $("pwm-source").onchange=()=>{

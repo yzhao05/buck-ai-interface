@@ -4,7 +4,7 @@ from .schemas import ExecutionSelection
 
 SELECTION_PROMPT = """
 启动辨识前必须让用户明确选择 PWM 来源和计算方法；两项都已在当前指令或明确延续的对话中指定时不重复询问。
-PWM 来源可选 CSV 实测、控制器重建，或用户明确要求自动判断；计算方法可选抗噪加权积分、PANN，或明确要求两种都运行。
+PWM 来源可选 CSV 实测、控制器重建，或用户明确要求自动判断；简化模型可选抗噪加权积分、PANN，或明确要求两种都运行。七参数 FULL_STAGE 模式使用 circuit_fit 和 measured PWM。
 仅说“直接开始/数据就绪就启动/确认设置”不代表选择了界面默认的 PWM 来源和方法；不能从文件名、是否有PWM列、默认值或旧实验推断用户选择。
 缺哪项就在主回复中询问哪项，等回复后才允许启动；可先完成已授权的导入和检查，不得把未启动说成已完成实验。
 若使用 configure_identification 先加载数据或修改配置并等待选择，设置 request_selection=true、start_after_apply=false，让前端把选择问题显示在主回复中。
@@ -20,9 +20,9 @@ def require_execution_selection(selection, methods, sources, *, allow_auto=False
     selection = ExecutionSelection.model_validate(selection or {})
     missing=[]
     if not selection.method_evidence.strip() or not set(methods)<=set(selection.methods):
-        missing.append('计算方法：抗噪加权积分、PANN，还是两种都运行？')
+        missing.append('请确认使用开关电路波形拟合。' if 'circuit_fit' in methods else '计算方法：抗噪加权积分、PANN，还是两种都运行？')
     if not selection.pwm_evidence.strip() or not (set(sources)<=set(selection.pwm_sources) or (allow_auto and 'auto' in selection.pwm_sources)):
-        missing.append('PWM 来源：CSV 实测 PWM、控制器重建，还是明确采用自动判断？')
+        missing.append('请确认使用 CSV 实测 PWM。' if 'circuit_fit' in methods else 'PWM 来源：CSV 实测 PWM、控制器重建，还是明确采用自动判断？')
     if missing:
         raise ValueError('开始前请先向用户询问并确认以下选择：\n'+'\n'.join(missing)+'\n尚未启动辨识。')
     return selection.model_dump()

@@ -29,9 +29,14 @@ class Snapshot(BaseModel):
 
 
 class Parameters(Snapshot):
+    Cw_F: Number | None = None
+    ESL_H: Number | None = None
+    Ron_ohm: Number | None = None
     L_H: Number
     C_F: Number
     R_ohm: Number
+    rL_ohm: Number | None = None
+    rC_ohm: Number | None = None
 
 
 class Metrics(Snapshot):
@@ -42,6 +47,13 @@ class Metrics(Snapshot):
 
 
 class ReportOptions(Snapshot):
+    inductance_h: Number | None = None
+    winding_capacitance_f: Number | None = None
+    capacitance_f: Number | None = None
+    capacitor_esl_h: Number | None = None
+    switch_resistance_ohm: Number | None = None
+    mode: Literal["LC", "LCR", "LC_RL_RC", "FULL_STAGE"] | None = None
+    joint_zero_is_fixed: bool = False
     include_parasitics: bool = False
     inductor_resistance_ohm: Number | None = None
     capacitor_esr_ohm: Number | None = None
@@ -91,8 +103,8 @@ class TrainingAssessment(Snapshot):
     end_epoch: int | None = None
     loss_span_pct: Number | None = None
     loss_change_pct: Number | None = None
-    parameter_span_pct: dict[Annotated[str, Field(max_length=16)], Number] = Field(default_factory=dict, max_length=3)
-    selected_parameter_gap_pct: dict[Annotated[str, Field(max_length=16)], Number] = Field(default_factory=dict, max_length=3)
+    parameter_span_pct: dict[Annotated[str, Field(max_length=16)], Number] = Field(default_factory=dict, max_length=5)
+    selected_parameter_gap_pct: dict[Annotated[str, Field(max_length=16)], Number] = Field(default_factory=dict, max_length=5)
     selected_loss_gap_pct: Number | None = None
     previous_start_epoch: int | None = None
     previous_end_epoch: int | None = None
@@ -116,10 +128,16 @@ class ParameterComparison(Snapshot):
     ground_truth: GroundTruth
 
 
+class CircuitDiagnostics(Snapshot):
+    weak_parameters: list[str] = Field(default_factory=list, max_length=7)
+    unobservable_parameters: list[str] = Field(default_factory=list, max_length=7)
+
+
 class ReportResult(Snapshot):
+    diagnostics: CircuitDiagnostics = Field(default_factory=CircuitDiagnostics)
     filename: str = Field(default="dataset.csv", max_length=512)
     file_sha256: str = Field(default="", max_length=64, pattern=r"^[a-fA-F0-9]*$")
-    method: Literal["pann", "weighted_integral", "integral"]
+    method: Literal["pann", "weighted_integral", "integral", "circuit_fit"]
     quality: Literal["需复核", "模型内拟合一致"]
     parameters: Parameters
     R_estimated: bool
@@ -190,7 +208,7 @@ def build_pdf(request: ReportRequest) -> bytes:
 
     story += [p("BUCK LAB / EXPERIMENT REPORT", small), p(t("电路参数辨识实验报告", "Circuit parameter identification"), title),
               p(r.filename), p(t("导出时间：", "Exported: ") + request.exported_at.isoformat(timespec="seconds").replace("T", " "), small)]
-    method = {"pann": "PANN", "weighted_integral": t("加权积分", "Weighted integral"), "integral": t("积分", "Integral")}[r.method]
+    method = {"circuit_fit": t("开关电路波形拟合", "Switched-circuit waveform fit"), "pann": "PANN", "weighted_integral": t("加权积分", "Weighted integral"), "integral": t("积分", "Integral")}[r.method]
     drive = {"controller": t("由已知控制器重建 PWM", "PWM reconstructed from known controller"),
              "measured": t("CSV 实测 PWM", "Measured PWM from CSV")}.get(r.options.pwm_source, t("未记录", "Not recorded"))
     section("01  数据与方法", "01  Data and method")
@@ -199,11 +217,28 @@ def build_pdf(request: ReportRequest) -> bytes:
            (t("训练区间", "Training interval"), f"{n(r.train_start_s, 1000)} - {n(r.train_end_s, 1000)} ms"),
            (t("同记录留出区间", "Same-record holdout"), f"{n(r.train_end_s, 1000)} - {n(r.validation_end_s, 1000)} ms"),
            (t("计算耗时", "Computation time"), n(r.elapsed_s) + " s")])
-    table([(t("功率级模型", "Power-stage model"), t("已知寄生电阻", "Known series resistances") if r.options.include_parasitics else t("理想 L/C", "Ideal L/C"))])
-    if r.options.include_parasitics:
+    table([(t("功率级模型", "Power-stage model"), t("非理想七参数", "Seven-component circuit") if r.options.mode == "FULL_STAGE" else t("寄生电阻联合辨识", "Joint series resistance estimation") if r.options.mode == "LC_RL_RC" else t("已知寄生电阻", "Known series resistances") if r.options.include_parasitics else t("理想 L/C", "Ideal L/C"))])
+    if r.options.mode == "LC_RL_RC":
+        table([(name, n(getattr(r.parameters, key)) + " Ω / " + (t("固定", "Fixed") if getattr(r.options, option) else t("忽略","Omitted") if r.options.joint_zero_is_fixed and getattr(r.options,option)==0 else t("估计", "Estimated"))) for name, key, option in [("rL", "rL_ohm", "inductor_resistance_ohm"), ("rC", "rC_ohm", "capacitor_esr_ohm")]])
+    elif r.options.include_parasitics and r.options.mode != "FULL_STAGE":
         table([("rL (Ω)", n(r.options.inductor_resistance_ohm)), ("rC / ESR (Ω)", n(r.options.capacitor_esr_ohm))])
     section("02  参数辨识结果", "02  Identified parameters")
-    table([(t("预测电感 L", "Predicted inductance L"), n(r.parameters.L_H, 1e6) + " µH"),
+    if r.options.mode == "FULL_STAGE":
+        from .full_stage import PARTS
+        rows = []
+        for key, field, _, _ in PARTS:
+            setting = getattr(r.options,field)
+            status = t("估计","Estimated") if setting is None else t("忽略","Omitted") if setting==0 else t("固定","Fixed")
+            value = n(getattr(r.parameters,key))
+            if key in r.diagnostics.unobservable_parameters:
+                status, value = t("不可辨识","Unobservable"), "—"
+            elif key in r.diagnostics.weak_parameters:
+                status = t("弱可辨识","Weakly identifiable")
+            rows.append((key, ("—" if setting==0 else value)+" / "+status))
+        rows.append((t("负载 R (Ω)", "Load R (Ω)"), n(r.parameters.R_ohm)))
+        table(rows)
+    else:
+        table([(t("预测电感 L", "Predicted inductance L"), n(r.parameters.L_H, 1e6) + " µH"),
            (t("预测电容 C", "Predicted capacitance C"), n(r.parameters.C_F, 1e6) + " µF"),
            (t("负载电阻 R", "Load resistance R"), n(r.parameters.R_ohm) + " Ω / " +
             (t("估计值", "Estimated") if r.R_estimated else t("固定已知值，未参与辨识", "Fixed known value, not fitted")))])
@@ -373,6 +408,9 @@ def reason_text(reason: Reason, zh: bool) -> tuple[str, str]:
         return (t("参数辨识条件数", "Identification condition number") + f": {n(reason.value)} > {n(reason.threshold)}.",
                 t("选择包含充分动态变化的恒定负载区间，检查采样与噪声，并对照不同窗口的结果。",
                   "Select a constant-load interval with sufficient dynamics. Check sampling and noise; compare window settings."))
+    if reason.code == "weak_circuit_parameters":
+        return (t("部分器件参数受当前波形约束较弱。","Some parameters are weakly constrained by the waveforms."),
+                t("核对采样带宽，或固定已知的器件值。","Check sampling bandwidth or fix independently known values."))
     if reason.code == "parameter_at_bound":
         return (t("初始化或参数估计触及上下限。", "Initialization or estimated parameters reached a bound."),
                 t("核对单位、已知 R 和模型适用性，再检查参数约束；不要只为消除提醒而放宽边界。",

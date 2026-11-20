@@ -17,6 +17,15 @@ window.BuckCircuit = (() => {
     ["capacitor-esr","电容 ESR rC","Ω",1,0,0,1000]
   ];
   let draftImage = "", draftImageName = "", uploading = false, renderKey = "", generation = 0;
+  const parts = [
+    ["L_H","inductance_h","stage-l","主电感 L","µH",1000000],
+    ["rL_ohm","inductor_resistance_ohm","inductor-resistance","电感绕组电阻 rL","Ω",1],
+    ["Cw_F","winding_capacitance_f","stage-cw","绕组并联电容 Cw","pF",1000000000000],
+    ["C_F","capacitance_f","stage-c","输出电容 C","µF",1000000],
+    ["rC_ohm","capacitor_esr_ohm","capacitor-esr","电容 ESR rC","Ω",1],
+    ["ESL_H","capacitor_esl_h","stage-esl","电容串联电感 ESL","nH",1000000000],
+    ["Ron_ohm","switch_resistance_ohm","stage-ron","开关导通电阻 Ron","Ω",1]
+  ];
   const number = value => Number.isFinite(Number(value)) ? Number(Number(value).toPrecision(6)).toString() : "—";
   function read() {
     let saved = {};
@@ -47,7 +56,8 @@ window.BuckCircuit = (() => {
     const verticalResistor=(x,y)=>{wire(`M${x} ${y}v12 m-8 0h16v36h-16z m8 36v12`);};
     const capacitor=(x,y)=>wire(`M${x} ${y}h20 m0 -13v26 m10 -26v26 m0 -13h20`);
     const label=(x,y,key,prefix,unit="")=>{
-      const text=prefix+number(values[key])+(unit ? " "+unit : "");
+      const unknown=(["LC_RL_RC","FULL_STAGE"].includes(el("fit-mode").value) && (interactive ? el("circuit-"+key)?.value : el(key)?.value)==="") && ["inductor-resistance","capacitor-esr"].includes(key) && !values[key];
+      const text=prefix+(unknown ? I.translate("待辨识") : number(values[key])+(unit ? " "+unit : ""));
       if (!interactive) { txt(x,y,text,{fill:"#087e73"}); return; }
       const g=node("g",{role:"button",tabindex:0,"data-parameter":key,"aria-label":I.translate("修改参数")+": "+text,class:"circuit-parameter"});
       g.append(node("rect",{x:x-5,y:y-20,width:Math.max(70,text.length*9+10),height:29,rx:5,fill:"#e8f5f1"}));
@@ -101,16 +111,29 @@ window.BuckCircuit = (() => {
     target.replaceChildren();
     if (validImage(image)) {
       const img=document.createElement("img");img.src=image;img.alt=I.translate("用户上传的电路参考图");target.append(img);
-    } else target.append(draw(values,interactive));
+      return;
+    }
+    if (el("include-parasitics").value === "true") {
+      const reference = new Image();
+      reference.src = "./buck-with-parasitics.png?v=symbols";
+      reference.alt = I.translate("PLECS 非理想 Buck 参考电路");
+      target.append(reference);
+      if (!interactive || el("fit-mode").value==="FULL_STAGE") return;
+      const caption = document.createElement("p");
+      I.text(caption,"上图为 PLECS 参考工况。下图显示当前辨识设置，可点击参数编辑。");
+      target.append(caption);
+    }
+    target.append(draw(values,interactive));
   }
   function render(force=false) {
     const values=valuesFromSaved(), image=el("controller-image").value;
-    const key=JSON.stringify([values,image,I.language]);
+    const nonideal=el("include-parasitics").value==="true";
+    const key=JSON.stringify([values,image,I.language,el("fit-mode").value,nonideal]);
     if (!force && key===renderKey) return;
     renderKey=key;
     fillDrawing(el("circuit-preview"),values,image,false);
     el("show-default-circuit").hidden=!image;
-    I.text(el("circuit-caption"),image ? "已上传参考图 · 计算仍使用已填写参数" : "默认接线图 · 点击放大并编辑参数");
+    I.text(el("circuit-caption"),image ? "已上传参考图 · 计算仍使用已填写参数" : el("fit-mode").value==="FULL_STAGE" ? "PLECS 参考工况 · 七参数按基本信息中的输入辨识" : nonideal ? "PLECS 非理想参考工况 · 辨识使用当前设置的绕组电阻与 ESR" : "默认接线图 · 点击放大并编辑参数");
   }
   function renderDraft() { fillDrawing(el("circuit-drawing"),draftValues(),draftImage,true); }
   function open() {
@@ -118,7 +141,14 @@ window.BuckCircuit = (() => {
     specs.forEach(([key])=>el("circuit-"+key).value=values[key]);
     for(const key of ["inductor-resistance","capacitor-esr"]){
       el("circuit-"+key).disabled=el("include-parasitics").value!=="true";
+      el("circuit-"+key).required=!["FULL_STAGE","LC_RL_RC"].includes(el("fit-mode").value);
       if(el("include-parasitics").value==="true")el("circuit-"+key).value=el(key).value;
+    }
+    for(const [, ,id] of parts.filter(p=>p[2].startsWith("stage-"))){
+      const input=el("circuit-"+id);
+      input.parentElement.hidden=el("fit-mode").value!=="FULL_STAGE";
+      input.disabled=input.parentElement.hidden;
+      input.value=el(id).value;
     }
     draftImage=validImage(el("controller-image").value) ? el("controller-image").value : "";
     draftImageName=el("controller-image-name").value;
@@ -130,6 +160,13 @@ window.BuckCircuit = (() => {
     const input=document.createElement("input");Object.assign(input,{type:"number",id:"circuit-"+key,value:String(value),min:String(min),max:String(max),step:"any",required:true});
     input.oninput=renderDraft;wrap.append(input);fields.append(wrap);
   }
+  for(const [, ,id,label,unit] of parts.filter(p=>p[2].startsWith("stage-"))){
+    const wrap=document.createElement("label");
+    const input=el(id).cloneNode();
+    input.id="circuit-"+id;
+    wrap.append(I.node(label),document.createTextNode(" / "+unit),input);
+    fields.append(wrap);
+  }
   el("edit-circuit").onclick=el("circuit-preview").onclick=open;
   el("close-circuit").onclick=()=>el("circuit-dialog").close();
   el("circuit-dialog").addEventListener("close",()=>{generation++;draftImage="";uploading=false;el("save-circuit").disabled=false;el("circuit-file").value="";});
@@ -140,7 +177,7 @@ window.BuckCircuit = (() => {
     rememberImage();
     el("controller-image").value="";el("controller-image-name").value="";render();document.dispatchEvent(new Event("buck-circuit-change"));
   };
-  el("reset-controller").onclick=()=>{specs.forEach(([key,,,,value])=>el("circuit-"+key).value=value);renderDraft();};
+  el("reset-controller").onclick=()=>{specs.forEach(([key,,,,value])=>el("circuit-"+key).value=["FULL_STAGE","LC_RL_RC"].includes(el("fit-mode").value) && ["inductor-resistance","capacitor-esr"].includes(key)?"":value);if(el("fit-mode").value==="FULL_STAGE")for(const [,,id] of parts)el("circuit-"+id).value="";renderDraft();};
   el("circuit-file").onchange=async event=>{
     const file=event.target.files[0];if(!file)return;
     const ticket=++generation;
@@ -174,7 +211,9 @@ window.BuckCircuit = (() => {
     el("controller-image-name").value=draftImageName;
     for(const id of ["frequency","vin","fixed-r"])el(id).value=values[id];
     if(el("include-parasitics").value==="true")
-      for(const id of ["inductor-resistance","capacitor-esr"])el(id).value=values[id];
+      for(const id of ["inductor-resistance","capacitor-esr"])el(id).value=el("circuit-"+id).value;
+    if(el("fit-mode").value==="FULL_STAGE")
+      for(const [,,id] of parts)el(id).value=el("circuit-"+id).value;
     el("circuit-dialog").close();render();document.dispatchEvent(new Event("buck-circuit-change"));
   };
   document.addEventListener("buck-language-change",()=>{render(true);if(el("circuit-dialog").open)renderDraft();});
@@ -182,5 +221,5 @@ window.BuckCircuit = (() => {
     for(const id of ["edit-circuit","circuit-preview","upload-circuit","show-default-circuit"])el(id).disabled=busy;
     if(busy && el("circuit-dialog").open)el("circuit-dialog").close();
   }
-  return {read,render,setBusy,rememberImage,specs:specs.slice(0,14)};
+  return {read,render,setBusy,rememberImage,parts,specs:specs.slice(0,14)};
 })();

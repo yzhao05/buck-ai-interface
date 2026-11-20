@@ -19,6 +19,13 @@ def test_html_assets_and_literal_dom_references_exist():
         assert not wanted-ids,(path.name,wanted-ids)
 
 
+def test_nonideal_reference_image_is_packaged_with_frontend():
+    circuit = (ROOT/'frontend/circuit.js').read_text(encoding='utf-8')
+    references = re.findall(r'reference\.src\s*=\s*"\./([^"?]+)', circuit)
+    assert references == ['buck-with-parasitics.png']
+    assert (ROOT/'frontend'/references[0]).read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+
+
 def test_relative_backend_imports_exist():
     for path in (ROOT/'backend').rglob('*.py'):
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8-sig'))):

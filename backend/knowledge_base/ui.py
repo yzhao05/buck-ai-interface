@@ -59,12 +59,12 @@ entry('vin', '输入电压 Vin', 'vin circuit-vin', '输入电压 vin input volt
       '输入电源电压，单位 V，界面0.1～2000、默认28。用于 Buck 物理模型，应填实际已知输入，不是输出电压或待辨识量。电路编辑器中的同名值保存后同步到左栏；重建模式改动后需重新确认接线参数。')
 entry('frequency', '开关频率', 'frequency circuit-frequency', '开关频率 frequency_hz switching frequency kHz',
       '界面单位 kHz，0.1～2000、默认100；后端使用 Hz。用于开关周期、PWM重建、按周期定义的训练/去噪窗口；“末10周期”视图也使用频率。不是 CSV 采样率。电路编辑器保存后同步到左栏。')
-entry('fit-mode', '辨识目标 LC / LCR 与已知负载', 'fit-mode fixed-r circuit-fixed-r fixed-r-label',
+entry('fit-mode', '辨识目标 LC / LCR / LC_RL_RC / FULL_STAGE 与已知负载', 'fit-mode fixed-r circuit-fixed-r fixed-r-label',
       '辨识目标 LC LCR 固定负载 已知负载电阻 resistance_ohm mode load resistance',
-      'LCR 联合估计电感L、电容C、负载R；LC只估计L/C，R使用填写的已知负载，单位Ω、默认6，必须大于0.01且不超过100000。R不是ESR或电感绕组电阻。控制器重建只支持LC。电路编辑器的已知负载保存后同步左栏。')
-entry('method', '计算方法：PANN / 抗噪加权积分', 'fit-method method-hint pann-settings',
+      'FULL_STAGE 使用固定负载和实测 PWM 拟合七项器件。LCR 联合估计电感L、电容C、负载R；LC只估计L/C，R使用填写的已知负载，单位Ω、默认6，必须大于0.01且不超过100000。R不是ESR或电感绕组电阻。LC_RL_RC固定负载R、联合估计L/C及未指定的电阻；每项rL/rC正数固定，留空估计、0忽略该项。控制器重建支持LC和LC_RL_RC。电路编辑器的已知负载保存后同步左栏。')
+entry('method', '计算方法：开关电路波形拟合 / PANN / 抗噪加权积分', 'fit-method method-hint pann-settings',
       '计算方法 PANN 加权积分 weighted_integral method PyTorch 灰色',
-      '抗噪加权积分直接输出端点零权重积分估计，不做PANN微调，无需PyTorch。PANN以积分估计为初值继续优化参数与状态，需要后端PyTorch可用；不可用时选项禁用。PANN不保证更准确。切换方法会显示/隐藏PANN专属设置。')
+      'FULL_STAGE 使用 circuit_fit 开关电路波形拟合。简化模型的抗噪加权积分直接输出端点零权重积分估计，不做PANN微调，无需PyTorch。PANN以积分估计为初值继续优化参数与状态，需要后端PyTorch可用；不可用时选项禁用。PANN不保证更准确。切换方法会显示/隐藏PANN专属设置。')
 entry('pann-state', 'PANN 窗口初值', 'pann-state', '窗口初值 联合估计 固定测量初值 pann_initial_state initial state',
       '联合估计从含噪训练数据优化窗口初始电流/电压，另有50轮状态预热；固定测量初值把每个训练窗口起点的测量值作为初始条件，是对照选项。只影响PANN。留出验证连续运行，不逐窗口重置状态，也不以干净参考选初值。')
 entry('pann-window', 'PANN 窗口长度', 'pann-cycles', '窗口长度 自动 训练噪声 pann_window_cycles window length',
@@ -80,7 +80,7 @@ entry('identify', '开始参数辨识与任务状态', 'identify job-status iden
       '提交当前CSV、已应用映射和设置进行真实数值辨识并显示任务状态。需后端连接、有效数据/配置、可用方法、控制器必要确认，且不能与进行中的任务冲突；同配置已完成时提示修改参数再运行。按钮灰色有多种原因，需结合当前状态判断，不能仅凭说明猜原因。完成后自动保存本会话实验摘要。')
 entry('circuit', '参考电路预览与放大 / 编辑', 'edit-circuit circuit-preview circuit-dialog circuit-fields circuit-drawing close-circuit',
       '参考电路 放大 编辑 拓扑 circuit editor preview',
-      '点击缩略图或放大/编辑打开电路图与参数窗口。默认图参数可点击聚焦右侧输入框；L、C为待辨识量，不在此输入真值。接线拓扑固定，不能拖线改变模型。关闭 × 丢弃未保存草稿，小屏可横向滑动查看图。', 'frontend/circuit.js')
+      '开启寄生电阻时，缩略图显示 PLECS 非理想 Buck 参考工况。点击放大/编辑可查看原图。七参数模式在参数栏填写七个器件值，简化模式可点击下方接线图参数聚焦输入框。上传图优先显示。默认非理想参考图中的七项器件仅标名称和符号，辨识设置来自表单。关闭 × 丢弃未保存草稿。', 'frontend/circuit.js')
 entry('circuit-image', '上传电路图片 / 交给助手分析 / 恢复默认图', 'upload-circuit circuit-upload-edit circuit-file attach-circuit-image show-default-circuit circuit-default-edit',
       '电路图片 上传 识图 恢复默认图 attach circuit image default',
       '上传PNG/JPG/WebP、最大5MB，压缩后作为参考图随会话保存同步，不自动提取并写入参数。“交给助手分析”将电路图片附加到当前提问，仍需发送消息。“恢复默认图”清除当前参考图片、显示固定接线示意，不重置参数；编辑窗口内操作先改草稿。识图建议须核对。', 'frontend/circuit.js')
@@ -196,6 +196,6 @@ entry('project-links', 'Buck Lab 标志、实验工作台与项目来源链接',
       'Buck Lab标志链接当前站点首页，实验工作台是当前导航标签；左栏页脚的 Inspired by PE-GPT 打开参考项目仓库，连接设置中的本项目源码链接打开工作台源码仓库，不执行分析或保存报告。')
 
 entry('parasitics', '基本信息：电感与电容寄生电阻',
-      'include-parasitics parasitic-settings inductor-resistance capacitor-esr parasitic-error circuit-inductor-resistance circuit-capacitor-esr',
+      'include-parasitics full-stage-inputs full-stage-results stage-l stage-cw stage-c stage-esl stage-ron parasitic-settings inductor-resistance capacitor-esr parasitic-error circuit-inductor-resistance circuit-capacitor-esr',
       '内阻 寄生 电阻 绕组 ESR 理想 非理想 resistance winding capacitor parasitic',
-      '选项位于PWM来源之前，默认不考虑，计算rL=rC=0且电路图显示0。开启后两项数值必须显式填写，单位Ω，范围0～1000；空白、负值或非有限值会阻止辨识，显式0有效。两项为已知量，不参与L/C/R辨识。电路图在电感、电容各串联一个电阻，开启后可点击修改并同步左栏。关闭时保留输入草稿但计算按0；历史会话保存模型选择和数值。CSV电压对应输出端vo，ESR内部vC由模型换算。积分与PANN、实测与重建PWM均使用此选择。')
+      '选择非理想功率级后进入七参数模式。主电感 L（µH）、绕组电阻 rL（Ω）、绕组并联电容 Cw（pF）、输出电容 C（µF）、ESR（Ω）、ESL（nH）和开关 Ron（Ω）分别留空估计、正数固定、0 忽略。使用实测 PWM 和固定 R，波形灵敏度不足时结果标记为弱可辨识。理想模式下，计算rL=rC=0且电路图显示0。单位Ω，范围0～1000。LC/LCR模式开启后两项必须显式填写，0为固定零电阻。LC_RL_RC自动开启，每项正数固定，空白估计、0忽略该项；负数或非有限值拒绝。联合结果展示rL/rC及固定或估计状态。电路图在电感、电容各串联一个电阻，开启后可点击修改并同步左栏。关闭时保留输入草稿但计算按0；历史会话保存模型选择和数值。CSV电压对应输出端vo，ESR内部vC由模型换算。七参数采用开关电路波形拟合，简化模式提供积分与 PANN。')

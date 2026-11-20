@@ -78,8 +78,10 @@ def select_window_cycles(train, frequency_hz, requested):
 
 
 def refine(train, initial, options):
-    from .parasitics import resistances
+    from .parasitics import resistances, estimated_resistances, JOINT_MODE, PARAMETER_KEYS
     rl, rc = resistances(options)
+    joint_parasitics = options.mode == JOINT_MODE
+    learn_resistances = estimated_resistances(options)
     # Reuse the user's existing Python/PyTorch environment without modifying it.
     # The executable is a server-side setting and cannot be chosen by the LLM.
     if importlib.util.find_spec("torch") is None and os.getenv("PANN_PYTHON"):
@@ -112,7 +114,7 @@ def refine(train, initial, options):
     torch.set_num_threads(2)
     cycles, window_rule, noise_ratio = select_window_cycles(train, options.frequency_hz, options.pann_window_cycles)
     gate, measured, observed, starts, dt = training_windows(train, options.frequency_hz, cycles)
-    if (rl or rc) and train.shape[1] == 5:
+    if (joint_parasitics or rl or rc) and train.shape[1] == 5:
         next_grid = starts[:, None]+np.arange(1, gate.shape[1]+1)*dt
         next_sense = np.interp(next_grid, train[:, 0], train[:, 4])
         gate = np.concatenate((gate, next_sense[:, :, None]), axis=-1)
@@ -122,18 +124,27 @@ def refine(train, initial, options):
     scale = target.reshape(-1, 2).std(dim=0).clamp_min(1e-3)
     joint = options.pann_initial_state == "joint"
     normalized_start = nn.Parameter((observed_start / scale).clamp_min(0), requires_grad=joint)
-    cell = EulerCell_Buck(options.vin, dt, *initial).double()
+    cell = EulerCell_Buck(options.vin, dt, *initial[:3]).double()
     with torch.no_grad():
-        for attr, val in zip(("Vin", "L", "Co", "Ro"), (options.vin, *initial)):
+        for attr, val in zip(("Vin", "L", "Co", "Ro"), (options.vin, *initial[:3])):
             getattr(cell, attr).fill_(float(val))
     cell.Vin.requires_grad_(False)
     cell.Ro.requires_grad_(options.mode == "LCR")
+    if joint_parasitics:
+        if len(initial) != 5:
+            raise ValueError("联合辨识的 PANN 初始化必须包含 L、C、R、rL、rC。")
+        for name, seed, fixed, learn in zip(("rL", "rC"), initial[3:5], (rl, rc), learn_resistances):
+            cell.register_parameter(name, nn.Parameter(torch.tensor(max(float(seed), 1e-9) if learn else fixed,
+                                                                  dtype=torch.float64), requires_grad=learn))
+    names = ("L", "Co", "Ro", "rL", "rC") if joint_parasitics else ("L", "Co", "Ro")
+    bounds = np.array([[1e-7, .1], [1e-8, 1.], [.01, 1e5]] + ([[1e-9, 1000.], [1e-9, 1000.]] if joint_parasitics else []))
+    active_indices = [i for i, name in enumerate(names) if getattr(cell, name).requires_grad]
     class Positive(nn.Module):
         def forward(self, x):
             return torch.exp(x)
         def right_inverse(self, x):
             return torch.log(x)
-    for attr in ("L", "Co", "Ro"):
+    for attr in names:
         if getattr(cell, attr).requires_grad:
             nn.utils.parametrize.register_parametrization(cell, attr, Positive())
     class SensingCell(nn.Module):
@@ -145,7 +156,7 @@ def refine(train, initial, options):
             predicted = self.base(inputs[:, :1], states)
             return torch.stack((predicted[:, 0], predicted[:, 1]-dt/self.base.Co*inputs[:, 1]), dim=1)
 
-    if rl or rc:
+    if joint_parasitics or rl or rc:
         from .pann_parasitics import SeriesResistanceCell
         model = PANN(SeriesResistanceCell(cell, rl, rc))
     else:
@@ -178,16 +189,16 @@ def refine(train, initial, options):
         loss = (((prediction - target) / scale) ** 2).mean()
         if not torch.isfinite(loss):
             raise ValueError("PANN 训练发散，请检查数据或先使用积分辨识。")
-        values = np.array([getattr(cell, name).item() for name in ("L", "Co", "Ro")])
+        values = np.array([getattr(cell, name).item() for name in names])
         if step >= warmup:
-            epoch_history.append({"epoch": epoch, "loss": loss.item(), "L_H": values[0], "C_F": values[1], "R_ohm": values[2]})
+            epoch_history.append({"epoch": epoch, "loss": loss.item(), **dict(zip(PARAMETER_KEYS, values))})
         if loss.item() < best_loss:
             best_loss, best, best_epoch = loss.item(), values.copy(), epoch
             best_step = step
             best_states = x0.detach().numpy().copy()
         if step % 10 == 0 or step == warmup + options.epochs:
             history.append({"step": step, "phase": "state_warmup" if step < warmup else "joint" if joint else "measured",
-                            "epoch": epoch, "loss": loss.item(), "L_H": values[0], "C_F": values[1], "R_ohm": values[2]})
+                            "epoch": epoch, "loss": loss.item(), **dict(zip(PARAMETER_KEYS, values))})
         if step < warmup + options.epochs:
             loss.backward()
             trained = [normalized_start] if step < warmup else parameters + ([normalized_start] if joint else [])
@@ -198,15 +209,15 @@ def refine(train, initial, options):
             with torch.no_grad():
                 if joint:
                     normalized_start.clamp_(min=0)
-                for name, bounds in (("L", (1e-7, .1)), ("Co", (1e-8, 1.)), ("Ro", (.01, 1e5))):
+                for name, limits in zip(names, bounds):
                     if nn.utils.parametrize.is_parametrized(cell, name):
-                        getattr(cell.parametrizations, name).original.clamp_(np.log(bounds[0]), np.log(bounds[1]))
-    bounds = np.array([[1e-7, .1], [1e-8, 1.], [.01, 1e5]])
-    active = best if options.mode == "LCR" else best[:2]
-    at_bound = bool(np.any(np.isclose(active, bounds[:len(active), 0], rtol=1e-5, atol=0)) or
-                    np.any(np.isclose(active, bounds[:len(active), 1], rtol=1e-5, atol=0)))
+                        getattr(cell.parametrizations, name).original.clamp_(np.log(limits[0]), np.log(limits[1]))
+    active = best[active_indices]
+    at_bound = bool(np.any(np.isclose(active, bounds[active_indices, 0], rtol=1e-5, atol=0)) or
+                    np.any(np.isclose(active, bounds[active_indices, 1], rtol=1e-5, atol=0)))
     from .convergence import assess_training
-    convergence = assess_training(epoch_history, best, best_loss, options.mode)
+    convergence = assess_training(epoch_history, best, best_loss, options.mode,
+                                  parameter_keys=tuple(PARAMETER_KEYS[i] for i in active_indices))
     return best, {"epochs": options.epochs, "completed_epochs": epoch, "best_epoch": best_epoch,
                   "epoch_history": epoch_history, "convergence": convergence,
                   "state_warmup_epochs": min(step, warmup), "best_step": best_step,

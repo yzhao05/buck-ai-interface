@@ -47,7 +47,7 @@ function chatExperiments() {
     id:run.id,dataset:{filename:run.dataset.filename,sha256:run.dataset.sha256},
     method:run.result.method || run.result.options?.method || null,
     pwm_source:run.result.options?.pwm_source || null,
-    parameters:{L_H:run.result.parameters.L_H,C_F:run.result.parameters.C_F,R_ohm:run.result.parameters.R_ohm},
+    parameters:{...run.result.parameters},
     ground_truth:run.ground_truth || null,
     comparison_context:run.result.options && run.result.mapping && Number.isFinite(run.result.train_start_s) && Number.isFinite(run.result.validation_end_s)
       ? {options:run.result.options,mapping:run.result.mapping,start_s:run.result.train_start_s,end_s:run.result.validation_end_s} : null
@@ -93,7 +93,7 @@ function renderExperiments() {
   for (const [index,run] of runs.entries()) {
     const row=document.createElement("li"), p=run.result.parameters, opts=run.result.options || {};
     const name=document.createElement("strong");name.textContent=`${index+1}. ${run.dataset.filename}`;
-    const method={pann:"PANN",weighted_integral:tr("抗噪加权积分"),integral:tr("积分辨识")}[opts.method || run.result.method] || "—";
+    const method={circuit_fit:tr("开关电路波形拟合"),pann:"PANN",weighted_integral:tr("抗噪加权积分"),integral:tr("积分辨识")}[opts.method || run.result.method] || "—";
     const pwm={measured:tr("实测 PWM"),controller:tr("重建 PWM")}[opts.pwm_source] || "—";
     const detail=document.createElement("div");detail.textContent=`${method} · ${pwm} · L ${Number(p.L_H*1e6).toPrecision(6)} μH · C ${Number(p.C_F*1e6).toPrecision(6)} μF`;
     row.append(name,detail);list.append(row);

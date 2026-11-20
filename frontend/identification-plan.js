@@ -87,9 +87,9 @@ async function acceptIdentificationPlan(action,context){
   if(selectionQuestion)return selectionQuestion;
   if(action.assets?.result_id||Object.keys(action.analysis||{}).length)throw new Error('请在辨识完成后单独设置真值、诊断参考或选择历史结果。');
   if(('pwm_source' in c && !["auto","measured","controller"].includes(c.pwm_source))
-      || (c.mode && !["LC","LCR"].includes(c.mode)) || (c.pwm_source==='controller' && c.mode!=='LC')
+      || (c.mode && !["LC","LCR","LC_RL_RC"].includes(c.mode)) || (c.pwm_source==='controller' && !['LC','LC_RL_RC'].includes(c.mode))
       || ('resistance_ohm' in c && !(typeof c.resistance_ohm==='number' && Number.isFinite(c.resistance_ohm) && c.resistance_ohm>.01 && c.resistance_ohm<=100000)))throw new Error("配置操作格式无效。");
-  if(action.version===3 && (c.mode!=='LC' || 'pwm_source' in c))throw new Error("配置操作格式无效。");
+  if(action.version===3 && (!['LC','LC_RL_RC'].includes(c.mode) || 'pwm_source' in c))throw new Error("配置操作格式无效。");
   const key=`buck-ui-action:${sessionId}:${action.id}`;
   if(sessionStorage.getItem(key))return tr("此操作已处理，未重复应用或启动。");
   const previous=currentIdentificationPlan();
@@ -129,6 +129,7 @@ async function continueIdentificationPlan(){
     // confirmation or validating a different configuration.
     if((plan.inputs || plan.done.length || plan.jobId) && plan.inputs!==planInputs())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
     const c=plan.changes;
+    if((c.mode || $('fit-mode').value)==='FULL_STAGE')throw new Error(tr('七参数模式仅支持单次开关电路波形拟合。运行两种方法前请明确选择简化模型。'));
     if(!plan.done.length && !plan.jobId && !plan.settingsApplied){
       if(!validConfigurationChanges(c)||plan.assets?.result_id||Object.keys(plan.analysis||{}).length)throw new Error('配置操作格式无效。');
       const context={fingerprint:configurationFingerprint()};

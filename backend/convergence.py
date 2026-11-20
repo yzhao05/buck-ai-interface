@@ -8,7 +8,7 @@ not calibrated: mean loss can conceal oscillations within a window.
 import numpy as np
 
 
-def assess_training(history, selected, best_loss, mode):
+def assess_training(history, selected, best_loss, mode, *, parameter_keys=None):
     thresholds = {"window_epochs": 20, "required_stable_checks": 3,
                   "minimum_epochs": 42, "loss_mean_change_pct": .1,
                   "parameter_span_pct": .1, "loss_scale_floor": 1e-12,
@@ -18,11 +18,12 @@ def assess_training(history, selected, best_loss, mode):
               "reasons": [{"code": "pann_insufficient_history"}]}
     if len(history) < 41:
         return result
-    keys = ("L_H", "C_F", "R_ohm") if mode == "LCR" else ("L_H", "C_F")
+    keys = parameter_keys or (("L_H", "C_F", "R_ohm") if mode == "LCR" else ("L_H", "C_F"))
     epochs = np.array([h["epoch"] for h in history])
     losses = np.array([h["loss"] for h in history], dtype=float)
     values = np.array([[h[k] for k in keys] for h in history], dtype=float)
-    chosen = np.asarray(selected, dtype=float)[:len(keys)]
+    all_keys = ("L_H", "C_F", "R_ohm", "rL_ohm", "rC_ohm")
+    chosen = np.asarray(selected, dtype=float)[[all_keys.index(k) for k in keys]]
     if (epochs[0] != 0 or not np.all(np.diff(epochs) == 1)
             or not np.isfinite(losses).all() or np.any(losses < 0)
             or not np.isfinite(values).all() or np.any(values <= 0)

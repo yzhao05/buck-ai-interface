@@ -26,7 +26,7 @@ function findHistoricalAnalyses(record) {
       const meta=explicit ? marker : paired.response?.analysis_request;
       seen.add(paired.id);
       found.push({id:message.id,request_id:paired.id,content:message.content,
-        method:["pann","weighted_integral","integral"].includes(meta?.method) ? meta.method : null,
+        method:["pann","weighted_integral","integral","circuit_fit"].includes(meta?.method) ? meta.method : null,
         pwm_source:["measured","controller"].includes(meta?.pwm_source) ? meta.pwm_source : null,
         result_id:typeof meta?.result_id==="string" ? meta.result_id : null});
     }

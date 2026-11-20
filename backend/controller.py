@@ -48,8 +48,8 @@ def quantities(q, vo, profile=None):
 
 
 def validate_profile(a, options):
-    if options.mode != "LC":
-        raise ValueError("控制器重建仅支持固定已知负载 R 的 L/C 辨识。")
+    if options.mode not in ("LC", "LC_RL_RC"):
+        raise ValueError("控制器重建需要固定已知负载 R，可辨识 L/C 或 L/C/rL/rC。")
     if not options.controller_confirmed:
         raise ValueError("请先确认控制电路接线与默认图一致，且参数与当前设置一致；不能将此重建方式用于任意三列 CSV。")
     if options.method == "integral":

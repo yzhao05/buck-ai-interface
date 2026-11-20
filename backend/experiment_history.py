@@ -77,6 +77,9 @@ def summarize_experiments(experiments):
         record = {"id": run.id, "dataset": run.dataset.model_dump(),
                   "method": run.method, "pwm_source": run.pwm_source,
                   "parameters": run.parameters.model_dump(), "parameter_comparison": None}
+        if run.comparison_context and run.comparison_context.options.mode == "FULL_STAGE":
+            from .full_stage import unobservable_keys
+            record["parameters"].update(dict.fromkeys(unobservable_keys(run.comparison_context.options.model_dump())))
         if run.ground_truth:
             truth = {"L_H": run.ground_truth.L_H, "C_F": run.ground_truth.C_F}
             errors = {key: abs(record["parameters"][unit]/truth[unit]-1)*100
@@ -102,7 +105,10 @@ def repeatability_summary(experiments, current_id=None):
         ctx = run.comparison_context
         if (not ctx or not re.fullmatch(r"[a-fA-F0-9]{64}", run.dataset.sha256)
                 or run.method != ctx.options.method or run.pwm_source != ctx.options.pwm_source
-                or (ctx.options.mode == "LC" and not math.isclose(run.parameters.R_ohm, ctx.options.resistance_ohm, rel_tol=1e-9))):
+                or (ctx.options.mode != "LCR" and not math.isclose(run.parameters.R_ohm, ctx.options.resistance_ohm, rel_tol=1e-9))):
+            missing += 1
+            continue
+        if ctx.options.mode == "LC_RL_RC" and (run.parameters.rL_ohm is None or run.parameters.rC_ohm is None):
             missing += 1
             continue
         key = json.dumps(ctx.model_dump(), sort_keys=True)
@@ -119,11 +125,21 @@ def repeatability_summary(experiments, current_id=None):
         rows, parameters = list(unique.values()), {}
         if len(rows) >= 2:
             keys = ("L_H", "C_F", "R_ohm") if runs[0].comparison_context.options.mode == "LCR" else ("L_H", "C_F")
+            if runs[0].comparison_context.options.mode == "LC_RL_RC":
+                from .parasitics import estimated_resistances
+                keys += tuple(k for k, estimated in zip(("rL_ohm", "rC_ohm"), estimated_resistances(runs[0].comparison_context.options)) if estimated)
+            if runs[0].comparison_context.options.mode == "FULL_STAGE":
+                from .full_stage import PARTS, unobservable_keys
+                settings = runs[0].comparison_context.options.model_dump()
+                inactive = unobservable_keys(settings)
+                keys = tuple(k for k, field, _, _ in PARTS if settings[field] is None and k not in inactive)
             for name in keys:
                 values = [getattr(r.parameters, name) for r in rows]
+                if any(value is None for value in values):
+                    continue
                 mean, sd = statistics.mean(values), statistics.stdev(values)
                 parameters[name] = {"mean": mean, "sample_std": sd, "min": min(values), "max": max(values),
-                                    "cv_pct": 100*sd/mean, "span_pct": 100*(max(values)-min(values))/mean}
+                                    "cv_pct": 100*sd/mean if mean else None, "span_pct": 100*(max(values)-min(values))/mean if mean else None}
         output.append({"group_id": hashlib.sha256(key.encode()).hexdigest()[:12],
                        "method": runs[0].method, "pwm_source": runs[0].pwm_source,
                        "mode": runs[0].comparison_context.options.mode,

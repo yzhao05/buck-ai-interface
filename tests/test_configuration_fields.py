@@ -9,6 +9,26 @@ from backend.configuration_fields import validate_structure
 from test_configuration import provider, request
 
 
+def test_seven_parameter_method_matches_ui_and_rejects_conflicting_requests():
+    from backend.schemas import FitOptions
+    req = request('切换七参数模式')
+    for execute in (False, True):
+        def merge(**fields):
+            action = ConfigureIdentification(open_panel=True, start_after_apply=execute, changes=fields)
+            return validate_structure(req, action, fields)[0]
+        selected = merge(mode='FULL_STAGE')
+        assert (selected.method, selected.pwm_source) == ('circuit_fit', 'measured')
+        for incompatible in ({'method':'pann'}, {'pwm_source':'controller'}):
+            with pytest.raises(ValueError, match='七参数'):
+                merge(mode='FULL_STAGE', **incompatible)
+    with pytest.raises(ValueError, match='circuit_fit'):
+        FitOptions(mode='FULL_STAGE', method='weighted_integral')
+    req.ui_context.options = selected
+    with pytest.raises(ValueError, match='七参数'):
+        configuration.batch_action(req, IdentificationPlanProposal(execute=True, clarification='', filename=None,
+            pwm_source='unchanged', pwm_evidence='', mode=None, resistance_ohm=None))
+
+
 def test_incomplete_parasitics_are_editable_but_never_executable():
     from backend.schemas import ChatRequest, FitRequest
     from pydantic import ValidationError
