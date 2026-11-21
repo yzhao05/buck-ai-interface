@@ -5,22 +5,48 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact_id }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check Pages entry
+        run: test -s deploy/pages/index.html
+      - id: upload
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: deploy/pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: deploy/pages
+      - name: Wait for the uploaded Pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+        run: |
+          test -n "$ARTIFACT_ID"
+          endpoint="repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=github-pages"
+          for delay in 0 2 4 8 16 30; do
+            sleep "$delay"
+            if visible_id=$(gh api "$endpoint" --jq '.artifacts[] | select(.expired == false) | .id') && [[ "$visible_id" == "$ARTIFACT_ID" ]]; then
+              exit 0
+            fi
+          done
+          echo "::error::Pages artifact $ARTIFACT_ID is not visible for run $GITHUB_RUN_ID."
+          exit 1
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
