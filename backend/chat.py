@@ -329,12 +329,12 @@ async def _answer(request, invoke, *, local_files=False):
             elif name in {'search_conversation','read_conversation_message'}:
                 output = conversation.invoke(name, arguments)
             elif name == 'list_knowledge':
-                if set(arguments) - {'category', 'offset', 'limit'}:
+                if set(arguments) - {'category', 'offset', 'limit', 'manual_id'}:
                     raise ValueError('Unknown knowledge catalogue arguments')
                 output = list_knowledge(**arguments)
             elif name == 'read_knowledge':
-                if 'ids' not in arguments or set(arguments) - {'ids', 'dc_current_A'}:
-                    raise ValueError('Knowledge read requires ids and accepts an optional dc_current_A')
+                if 'ids' not in arguments or set(arguments) - {'ids', 'dc_current_A', 'x_value'}:
+                    raise ValueError('Knowledge read requires ids and accepts an optional curve lookup argument')
                 output = read_knowledge(**arguments)
                 seen = {d['id'] for d in docs}
                 docs.extend(d for d in output['documents'] if d['id'] not in seen)

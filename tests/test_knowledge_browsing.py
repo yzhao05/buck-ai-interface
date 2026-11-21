@@ -27,8 +27,10 @@ def test_catalogue_pages_cover_every_document_once_without_full_text():
         offset = page['next_offset']
     assert ids == [d['id'] for d in DOCUMENTS]
     categories = [list_knowledge(category=category, limit=100) for category in ('method', 'formula', 'ui')]
-    assert [p['total'] for p in categories] == [10, 27, 62]
-    assert set(ids) == {d['id'] for page in categories for d in page['entries']}
+    assert [p['total'] for p in categories] == [9, 27, 62]
+    manual_ids = {d['id'] for d in DOCUMENTS if d.get('kind') == 'manual'}
+    assert list_knowledge(category='manual')['total'] == len(manual_ids)
+    assert set(ids) == manual_ids | {d['id'] for page in categories for d in page['entries']}
     assert list_knowledge(offset=10000)['entries'] == []
 
 
@@ -39,6 +41,57 @@ def test_direct_read_is_complete_ordered_and_reports_missing_ids():
     assert result['documents'][1] == next(d for d in DOCUMENTS if d['id'] == 'buck-map')
     result['documents'][1]['references'].clear()
     assert read_knowledge(['buck-map'])['documents'][0]['references']
+
+
+def test_manual_catalogue_and_curve_lookup_through_agent(monkeypatch):
+    overview = list_knowledge('manual', limit=12)
+    assert [d['id'] for d in overview['entries']] == [f'manual-{i:02d}' for i in range(1, 13)]
+    found = retrieve('Murata MLCC DC bias example capacitance', 4)
+    curve = next(d for d in found if d.get('locator') == 'image1' and '-curve-' in d['id'])
+    key = curve['id']
+    assert any(d['id'] == key for d in list_knowledge('manual', manual_id='06', limit=100)['entries'])
+    replies = [call('read_knowledge', ids=[key], x_value=3),
+               {'role': 'assistant', 'content': f'图示读数约为 −19%。[kb:{key}]'}]
+    requests = fake_provider(monkeypatch, replies)
+    result = run()
+    point = json.loads(requests[1]['messages'][-1]['content'])['curve_lookup']
+    assert point['status'] == 'sample' and -21 < point['y'] < -18 and point['y_unit'] == '%'
+    assert result['sources'][0]['id'] == key
+    assert read_knowledge([key], x_value=3.25)['curve_lookup']['status'] == 'between_samples'
+    outside = read_knowledge([key], x_value=7)['curve_lookup']
+    assert outside['status'] == 'outside_sampled_range' and outside['y'] is None
+
+
+def test_tdk_catalogue_and_legacy_lookup_agree():
+    key = 'tdk-slf12565t-470m2r4-pf-dc-bias'
+    for category in ('all', 'manual'):
+        offset, ids = 0, []
+        while offset is not None:
+            page = list_knowledge(category, offset=offset, limit=7, manual_id='08')
+            ids.extend(entry['id'] for entry in page['entries'])
+            offset = page['next_offset']
+        assert ids.count(key) == 1
+    for current, expected in [(3, 42.8), (3.75, 38.1), (5, None)]:
+        value = read_knowledge([key], x_value=current)['curve_lookup']
+        assert value == read_knowledge([key], dc_current_A=current)['curve_lookup']
+        assert value['inductance_uH'] == expected
+
+
+@pytest.mark.parametrize('query', ['744373460082', '查744373460082的额定电流', 'Part 744373460082.'])
+def test_numeric_part_number_selects_its_source(query):
+    hit, = retrieve(query, 1)
+    assert hit['manual_id'] == '09'
+    assert '744373460082' in hit['title'] + hit['content']
+
+
+def test_distributed_manual_data_contains_only_project_reference_entries():
+    import csv
+    from backend.knowledge_base.manuals import PUBLIC_CSV
+    with PUBLIC_CSV.open(encoding='utf-8-sig', newline='') as stream:
+        rows = list(csv.DictReader(stream))
+    assert {r['manual_id'] for r in rows if r['kind'] == 'overview'} == {f'{i:02d}' for i in range(1, 13)}
+    assert {r['kind'] for r in rows} == {'overview', 'curve', 'specification'}
+    assert all(len(json.loads(r['points_json'])) == 3 for r in rows if r['kind'] == 'curve')
 
 
 def test_catalogue_ids_sources_and_ui_summaries_are_connected():
@@ -123,7 +176,7 @@ def test_new_tools_available_in_bound_result_analysis(monkeypatch):
 
     async def harness(messages, tools, execute, budget):
         assert {'list_knowledge', 'read_knowledge'} <= {t['function']['name'] for t in tools}
-        assert (await execute('list_knowledge', {'category': 'method'}))['count'] == 10
+        assert (await execute('list_knowledge', {'category': 'method'}))['count'] == 9
         assert (await execute('read_knowledge', {'ids': ['identification-limits']}))['count'] == 1
         return '验证范围说明。[kb:identification-limits]'
 

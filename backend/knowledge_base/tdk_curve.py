@@ -11,6 +11,7 @@ with Path(__file__).with_name(f'TDK_{PART_NUMBER}_p3.csv').open(encoding='utf-8'
 CURRENTS = [point[0] for point in POINTS]
 
 DOCUMENT = {
+    'kind': 'manual', 'manual_id': '08', 'source_file': '08_TDK_SLF12565.pdf', 'locator': '3',
     'id': CURVE_ID, 'title': f'TDK {PART_NUMBER} 电感量与直流偏置电流（470M）',
     'tags': f'TDK SLF12565 {PART_NUMBER} 470M 直流偏置 电感 电流 查表 DC bias inductance current',
     'url': 'https://product.tdk.com/system/files/dam/doc/product/inductor/inductor/smd/catalog/inductor_commercial_power_slf12565_en.pdf',

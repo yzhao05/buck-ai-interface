@@ -1,5 +1,9 @@
 # 来源与改编说明
 
+## 厂家工程资料
+
+`backend/knowledge_base/manual_references.csv` 收录项目编写的应用说明、资料定位和少量规格及读图示例。每条记录保留厂家、资料来源和页码或网页位置。TDK SLF12565 的 470M 采样文件沿用原有独立引用。原始手册及完整的逐页、逐表归档在本地单独管理。
+
 ## Markdown 显示
 
 `frontend/vendor/markdown-it-15.0.3.min.js` 为 npm 发布包 `markdown-it@15.0.3` 中的浏览器 UMD 构建，源代码项目：https://github.com/markdown-it/markdown-it 。MIT 许可证保存在同目录 `markdown-it-LICENSE.txt`，随包依赖的许可证见 `markdown-it-DEPENDENCY-LICENSES.txt`。本地随 GitHub Pages 发布，不在运行时请求第三方 CDN；本项目适配代码位于 `frontend/markdown.js`。

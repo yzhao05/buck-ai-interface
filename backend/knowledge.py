@@ -6,7 +6,7 @@ from collections import Counter
 
 from .knowledge_base.buck import FORMULA_DOCUMENTS
 from .knowledge_base.ui import UI_DOCUMENTS
-from .knowledge_base import tdk_curve
+from .knowledge_base import manuals, tdk_curve
 
 DOCUMENTS = [
     {"id": "offline-pwm-denoising", "title": "离线抗噪 PWM 重建与质量检查（本项目）", "url": None,
@@ -55,6 +55,7 @@ DOCUMENTS = [
 
 DOCUMENTS.extend(FORMULA_DOCUMENTS)
 DOCUMENTS.extend(UI_DOCUMENTS)
+DOCUMENTS.extend(manuals.DOCUMENTS)
 DOCUMENTS.append(tdk_curve.DOCUMENT)
 
 # Browsing and direct reads deliberately bypass relevance ranking.
@@ -64,16 +65,22 @@ if len(_BY_ID) != len(DOCUMENTS):
 
 
 def _category(doc):
+    if doc.get('kind') == 'manual':
+        return 'manual'
     return 'formula' if doc.get('kind') == 'formula' else 'ui' if doc['id'].startswith('ui-') else 'method'
 
 
-def list_knowledge(category='all', offset=0, limit=30):
+def list_knowledge(category='all', offset=0, limit=30, manual_id=None):
     """Return a stable, paginated catalogue, not citable full-text evidence."""
-    if category not in ('all', 'method', 'formula', 'ui'):
+    if category not in ('all', 'method', 'formula', 'ui', 'manual'):
         raise ValueError('Unknown knowledge category')
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError('offset must be nonnegative and limit must be 1–100')
     selected = [doc for doc in DOCUMENTS if category == 'all' or _category(doc) == category]
+    if manual_id is not None:
+        if not isinstance(manual_id, str) or not re.fullmatch(r'0[1-9]|1[0-2]', manual_id) or category not in ('all', 'manual'):
+            raise ValueError('manual_id must select a manufacturer manual 01–12 with category all or manual')
+        selected = [doc for doc in selected if doc.get('manual_id') == manual_id]
     entries = []
     for doc in selected[offset:offset + limit]:
         summary = doc.get('summary') or doc.get('scope') or re.split(r'[。\n]', doc['content'])[0]
@@ -85,13 +92,18 @@ def list_knowledge(category='all', offset=0, limit=30):
             'note': '目录仅用于选读；引用前请用 read_knowledge 读取全文。'}
 
 
-def read_knowledge(ids, dc_current_A=None):
+def read_knowledge(ids, dc_current_A=None, x_value=None):
     """Read exact IDs in requested order, without BM25 or hidden substitution."""
     if not isinstance(ids, list) or not 1 <= len(ids) <= 8 or any(not isinstance(key, str) or not key for key in ids):
         raise ValueError('ids must contain 1–8 nonempty knowledge IDs')
     unique = list(dict.fromkeys(ids))
     docs = [deepcopy(_BY_ID[key]) for key in unique if key in _BY_ID]
     result = {'count': len(docs), 'documents': docs, 'missing_ids': [key for key in unique if key not in _BY_ID]}
+    if x_value is not None:
+        if len(unique) != 1 or dc_current_A is not None:
+            raise ValueError('Use one curve ID and one lookup argument at a time')
+        result['curve_lookup'] = (tdk_curve.lookup(x_value) if unique[0] == tdk_curve.CURVE_ID
+                                  else manuals.lookup(unique[0], x_value))
     if dc_current_A is not None:
         if unique != [tdk_curve.CURVE_ID]:
             raise ValueError('Select one supported DC bias curve ID for a current lookup')
@@ -102,9 +114,10 @@ def read_knowledge(ids, dc_current_A=None):
 BROWSE_TOOLS = [
     {'type': 'function', 'function': {
         'name': 'list_knowledge',
-        'description': '浏览完整知识目录的标题、摘要和标签，不经过关键词排名。可按项目方法 method、公式 formula、界面 ui 分类并分页；用 read_knowledge 按 ID 选读全文。目录不是全文引用依据。',
+        'description': '浏览知识目录。分类包括项目方法 method、公式 formula、界面 ui、厂家手册 manual。可分页，按 manual_id 选手册，再用 read_knowledge 凭 ID 读取全文。',
         'parameters': {'type': 'object', 'properties': {
-            'category': {'type': 'string', 'enum': ['all', 'method', 'formula', 'ui'], 'default': 'all'},
+            'category': {'type': 'string', 'enum': ['all', 'method', 'formula', 'ui', 'manual'], 'default': 'all'},
+            'manual_id': {'type': 'string', 'pattern': '^(0[1-9]|1[0-2])$', 'description': '可选，按厂家手册编号 01–12 筛选；manual 分类的前 12 项为手册总览。'},
             'offset': {'type': 'integer', 'minimum': 0, 'default': 0},
             'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100, 'default': 30}},
             'additionalProperties': False}}},
@@ -113,13 +126,24 @@ BROWSE_TOOLS = [
         'description': '按精确条目 ID 读取知识全文、适用条件和来源，不经过搜索排名。ID 可来自目录或已读资料；可多次读取以继续查阅，未知 ID 明确返回 missing_ids。',
         'parameters': {'type': 'object', 'properties': {
             'ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1}, 'minItems': 1, 'maxItems': 8},
-            'dc_current_A': {'type': 'number', 'description': '可选，仅用于单个支持查值的电感曲线条目。输入直流电流（A），返回电感量（µH）和读图或插值状态。'}},
+            'dc_current_A': {'type': 'number', 'description': 'TDK 470M 原有直流偏置查值，输入单位 A。'},
+            'x_value': {'type': 'number', 'description': '单个厂家曲线的横轴数值，单位见条目。返回采样值、相邻点或越界状态。'}},
             'required': ['ids'], 'additionalProperties': False}}},
 ]
 
+_STOP_WORDS = frozenset('an and are as at be by do does for from how in is it of on or that the these this to what which with'.split())
+
+
 def _tokens(text):
     text = text.lower()
-    result = re.findall(r"[a-z][a-z0-9_-]*", text)
+    result = [word for word in re.findall(r"[a-z][a-z0-9_-]*", text) if word not in _STOP_WORDS]
+    # Manufacturer part numbers can consist entirely of digits.
+    result.extend(re.findall(r'(?<![a-z0-9])[0-9]{6,}(?![a-z0-9])', text))
+    compound_parts = [part for word in result if '-' in word or '_' in word
+                      for part in re.split('[-_]+', word) if part.isalpha() and part not in _STOP_WORDS]
+    result.extend(compound_parts)
+    for number in re.findall(r'(?:equation|公式)[\s(（-]*(\d+)\b', text):
+        result.append('equation' + number)
     for run in re.findall(r"[\u4e00-\u9fff]+", text):
         result.extend(run[i:i + 2] for i in range(len(run) - 1))
     return result
@@ -132,9 +156,10 @@ _DF = Counter(token for counts in _COUNTS for token in counts)
 
 
 def retrieve(query, count=4):
-    """BM25 over bilingual tokens; no query rewriting or hand-set topic boosts."""
+    """Rank exact controls and numeric identifiers ahead of general BM25 matches."""
     q = query.lower()[:1000]
     terms = set(_tokens(q))
+    numeric_ids = {term for term in terms if term.isdecimal()}
     ranked = []
     for doc, counts, length in zip(DOCUMENTS, _COUNTS, _LENGTHS):
         score = 0.0
@@ -144,5 +169,8 @@ def retrieve(query, count=4):
                 idf = math.log(1 + (len(DOCUMENTS) - _DF[token] + .5) / (_DF[token] + .5))
                 score += idf * tf * 2.2 / (tf + 1.2 * (.25 + .75 * length / _AVERAGE_LENGTH))
         if score > 0:
-            ranked.append((score, doc))
-    return [deepcopy(doc) for _, doc in sorted(ranked, key=lambda item: item[0], reverse=True)[:max(0, min(count, 8))]]
+            exact_control = q.strip() in doc.get('controls', ())
+            rank = (exact_control, not numeric_ids.isdisjoint(counts), score)
+            ranked.append((rank, doc))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [deepcopy(doc) for _, doc in ranked[:max(0, min(count, 8))]]

@@ -179,15 +179,19 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 
 借鉴 [PE-GPT](https://github.com/XinzeLee/PE-GPT) 的文档分块、检索、工具问答结构，知识获取由 Agent 自主规划，提供三个独立入口，无需向量数据库或额外 embedding API：
 
-- `list_knowledge(category, offset, limit)`：按固定目录顺序浏览标题、摘要和标签；分类为 `all`、`method`（项目方法）、`formula`（公式）、`ui`（界面），默认每页 30 条、最多 100 条，按 `next_offset` 继续浏览，不经过相关性排名。
-- `read_knowledge(ids)`：按精确 ID 读取完整条目、适用条件和已有来源，每次 1～8 个，可继续分批读取；未知 ID 返回 `missing_ids`，不作模糊替换。
+- `list_knowledge(category, offset, limit, manual_id)` 按目录浏览。分类包括 `all`、`method`（项目方法）、`formula`（公式）、`ui`（界面）和 `manual`（厂家手册）。在 `all` 或 `manual` 下可用两位手册编号筛选。默认每页 30 条，最多 100 条，按 `next_offset` 翻页。
+- `read_knowledge(ids)` 每次读取 1～8 个条目。查单条曲线时可传 `x_value`，单位见条目的横轴说明。工具返回采样值、相邻采样点或越界状态。TDK 第 3 页的直流偏置电感曲线支持区间内线性插值，470M 的原 ID 和 `dc_current_A` 参数继续可用。
 - `search_knowledge(query, top_k)`：可选的中英文 BM25 关键词辅助搜索，默认返回 4 条、最多 8 条全文。搜索排名不会限制通过目录直接读取其他条目。
 
 选读内容、工具顺序和后续补查均由 Agent 决定，没有固定必经流程。目录摘要只供选读，不能作为全文引用依据；引用校验仅接受本会话实际搜索或读取的全文，包括恢复前保存的工具证据。未配置 Key 时不生成聊天回答，已有 CSV 不会使本地代码改变问答意图。仅询问公式或原理不会启动辨识；明确要求“先辨识参数，再解释公式”时，会在已进入辨识模式且数据配置有效后执行。
 
 可直接提问：“推导 R1、R2、R3、R4、C2、C3 控制电路的节点方程”“模拟补偿器传递函数和零极点是什么？”“Buck 的 CCM/DCM 临界条件是什么？”“LCR 积分辨识公式及适用条件是什么？”
 
-维护时修改 `backend/knowledge_base/buck.py`，再运行：
+厂家手册随包数据在 `backend/knowledge_base/manual_references.csv`，包括 12 份资料的项目说明、厂家链接及选取的查值示例。可用 `744373460082` 搜索 Würth 器件，或用 `list_knowledge(category="manual", manual_id="08")` 浏览 TDK SLF12565。示例数据的采样范围会随所加载的数据集改变。
+
+使用完整本地归档时，在项目根目录的 `.env` 中设置 `BUCK_MANUAL_ARCHIVE="D:/开学作业/ST4001/厂家手册CSV/manual_documents.csv"`，然后重启后端。启动时加载所选文件，配置路径有误会报告错误。新克隆和魔搭默认使用随包资料；受控部署可将获准使用的归档挂载在仓库外，并通过同一环境变量指定绝对路径。
+
+维护 Buck 公式时修改 `backend/knowledge_base/buck.py`，再运行：
 
 ```powershell
 .\.venv\Scripts\python.exe tests/build_formula_reference.py

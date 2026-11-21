@@ -11,4 +11,5 @@ runtime/
 *.log
 *.zip
 node_modules/
+manual_documents.csv
 test-results/
