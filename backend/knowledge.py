@@ -6,6 +6,7 @@ from collections import Counter
 
 from .knowledge_base.buck import FORMULA_DOCUMENTS
 from .knowledge_base.ui import UI_DOCUMENTS
+from .knowledge_base import tdk_curve
 
 DOCUMENTS = [
     {"id": "offline-pwm-denoising", "title": "离线抗噪 PWM 重建与质量检查（本项目）", "url": None,
@@ -54,6 +55,7 @@ DOCUMENTS = [
 
 DOCUMENTS.extend(FORMULA_DOCUMENTS)
 DOCUMENTS.extend(UI_DOCUMENTS)
+DOCUMENTS.append(tdk_curve.DOCUMENT)
 
 # Browsing and direct reads deliberately bypass relevance ranking.
 _BY_ID = {doc['id']: doc for doc in DOCUMENTS}
@@ -83,13 +85,18 @@ def list_knowledge(category='all', offset=0, limit=30):
             'note': '目录仅用于选读；引用前请用 read_knowledge 读取全文。'}
 
 
-def read_knowledge(ids):
+def read_knowledge(ids, dc_current_A=None):
     """Read exact IDs in requested order, without BM25 or hidden substitution."""
     if not isinstance(ids, list) or not 1 <= len(ids) <= 8 or any(not isinstance(key, str) or not key for key in ids):
         raise ValueError('ids must contain 1–8 nonempty knowledge IDs')
     unique = list(dict.fromkeys(ids))
     docs = [deepcopy(_BY_ID[key]) for key in unique if key in _BY_ID]
-    return {'count': len(docs), 'documents': docs, 'missing_ids': [key for key in unique if key not in _BY_ID]}
+    result = {'count': len(docs), 'documents': docs, 'missing_ids': [key for key in unique if key not in _BY_ID]}
+    if dc_current_A is not None:
+        if unique != [tdk_curve.CURVE_ID]:
+            raise ValueError('Select one supported DC bias curve ID for a current lookup')
+        result['curve_lookup'] = tdk_curve.lookup(dc_current_A)
+    return result
 
 
 BROWSE_TOOLS = [
@@ -105,7 +112,8 @@ BROWSE_TOOLS = [
         'name': 'read_knowledge',
         'description': '按精确条目 ID 读取知识全文、适用条件和来源，不经过搜索排名。ID 可来自目录或已读资料；可多次读取以继续查阅，未知 ID 明确返回 missing_ids。',
         'parameters': {'type': 'object', 'properties': {
-            'ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1}, 'minItems': 1, 'maxItems': 8}},
+            'ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1}, 'minItems': 1, 'maxItems': 8},
+            'dc_current_A': {'type': 'number', 'description': '可选，仅用于单个支持查值的电感曲线条目。输入直流电流（A），返回电感量（µH）和读图或插值状态。'}},
             'required': ['ids'], 'additionalProperties': False}}},
 ]
 

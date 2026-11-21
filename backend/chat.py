@@ -333,9 +333,9 @@ async def _answer(request, invoke, *, local_files=False):
                     raise ValueError('Unknown knowledge catalogue arguments')
                 output = list_knowledge(**arguments)
             elif name == 'read_knowledge':
-                if set(arguments) != {'ids'}:
-                    raise ValueError('Knowledge read requires ids only')
-                output = read_knowledge(arguments['ids'])
+                if 'ids' not in arguments or set(arguments) - {'ids', 'dc_current_A'}:
+                    raise ValueError('Knowledge read requires ids and accepts an optional dc_current_A')
+                output = read_knowledge(**arguments)
                 seen = {d['id'] for d in docs}
                 docs.extend(d for d in output['documents'] if d['id'] not in seen)
             elif name == 'search_knowledge':
