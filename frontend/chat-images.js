@@ -131,16 +131,16 @@ async function importManual(file){
   if(file.size>8*1024*1024){notice("请选择不超过 8 MB 的 PDF。");return;}
   const option=$("chat-attachment-choice").querySelector('option[value="manual"]');
   if(option.disabled)return;
-  const owner=activeConversation.id, service=base;
-  const current=()=>activeConversation?.id===owner && base===service;
+  const owner=activeConversation.id, vault=conversationPrefix, service=base;
+  const current=()=>base===service && conversationPrefix===vault;
   option.disabled=true;
   try {
     notice("OpenAI 正在整理手册…",true);
     const form=new FormData();form.append("file",file);
-    const job=await api("/api/manuals/import",{method:"POST",body:form});
+    const job=await api("/api/manuals/import",{method:"POST",body:form,owner});
     let lastPage=null;
     while(current()){
-      const record=await api("/api/manuals/import/"+job.job_id);
+      const record=await api("/api/manuals/import/"+job.job_id,{owner});
       if(!current())return;
       if(record.status==="failed")throw Error(record.error);
       if(record.status==="completed"){

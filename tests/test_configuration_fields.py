@@ -18,9 +18,9 @@ def test_seven_parameter_method_matches_ui_and_rejects_conflicting_requests():
             return validate_structure(req, action, fields)[0]
         selected = merge(mode='FULL_STAGE')
         assert (selected.method, selected.pwm_source) == ('circuit_fit', 'measured')
-        for incompatible in ({'method':'pann'}, {'pwm_source':'controller'}):
-            with pytest.raises(ValueError, match='七参数'):
-                merge(mode='FULL_STAGE', **incompatible)
+        assert merge(mode='FULL_STAGE', pwm_source='controller').pwm_source == 'controller'
+        with pytest.raises(ValueError, match='七参数'):
+            merge(mode='FULL_STAGE', method='pann')
     with pytest.raises(ValueError, match='circuit_fit'):
         FitOptions(mode='FULL_STAGE', method='weighted_integral')
     req.ui_context.options = selected

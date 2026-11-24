@@ -139,6 +139,8 @@ def test_automatic_import_and_shared_lookup(monkeypatch):
         )
         repeat = outcome(client, upload(client, raw, other), other)
         assert repeat["result"]["already_saved"] is True
+    with closing(manual_import.connect()) as db:
+        assert db.execute("SELECT digest,source FROM manual_files").fetchall() == [(doc[4:], raw)]
     assert calls == ["extract", "locate", "verify", "verify"]
     assert len(knowledge.list_knowledge("manual", manual_id=doc)["entries"]) == 4
     assert "4 A" in knowledge.read_knowledge([doc + "-1"])["documents"][0]["content"]

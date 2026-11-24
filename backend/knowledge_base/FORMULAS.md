@@ -2,7 +2,7 @@
 
 模型依据包括 PLECS 原模型、非理想模型 buck_with_parasitics、Case16A/B 与独立 Case17。非理想模型的接线、支路方程和辨识规则见 buck-nonideal 条目。
 简化功率级支持实测 PWM 两状态模型与已确认配置的控制器重建模式：后者计入反馈取样支路，固定已知 R 辨识 L/C，并以完整四状态自主闭环验证；控制器参数保持已知，不参与辨识。两种模式均为同一记录后段留出，不是独立工况验证。标称值不是未知 CSV 的真值。
-七参数模型采用实测 PWM 的开关电路波形拟合。简化模型提供抗噪加权积分与 PANN：前者直接输出端点零权重积分估计，后者以此初始化再微调；旧 integral API 仅保留作实测 PWM 模式的基础积分复现。
+七参数开关电路拟合使用模型上电初态、固定步长及反馈取电，支持自主闭环与实测 PWM 回放。简化模型提供抗噪加权积分与 PANN：前者直接输出端点零权重积分估计，后者以此初始化再微调；旧 integral API 仅保留作实测 PWM 模式的基础积分复现。
 已知寄生模式使用用户填写的电感串联rL、电容串联ESR rC；默认理想模式令两者为0。新增公式由KCL/KVL推导，不表示原始PLECS样例已包含寄生。CSV电压统一为输出端vo。
 本文由 `tests/build_formula_reference.py` 从 `buck.py` 生成；修改 `buck.py` 后重新生成。
 
@@ -244,7 +244,7 @@ EL=L iL^2/2；EC=C vC^2/2。
 
 ## 非理想 Buck 接线、绕组寄生电容与输出 ESL / Nonideal power stage
 
-**适用条件：** buck_with_parasitics.plecs 的七参数模式 FULL_STAGE 用 CSV 实测 PWM、绕组电流和端电压拟合 L、rL、Cw、C、rC、ESL、Ron，负载固定。逐项留空则估计，正数为已知，0 忽略。L=0 对应短接理想绕组，C=0 对应断开输出电容支路。低带宽数据可能无法分离小寄生量。
+**适用条件：** buck_with_parasitics.plecs 的七参数模式 FULL_STAGE 从模型上电初态按固定内部步长运行，使用 CSV 的绕组电流与输出端电压拟合 L、rL、Cw、C、rC、ESL、Ron，负载固定。逐项留空则估计，正数为已知，0 忽略。L=0 对应短接理想绕组，C=0 对应断开输出电容支路。低带宽数据可能无法分离小寄生量。
 
 ```text
 SW 到 vo 有两条并联支路：L1（主电感 L）与 R6（绕组电阻 rL）串联；C4（绕组电容 Cw）跨接在整条串联支路两端。
@@ -253,14 +253,14 @@ vo 经 L2（电容串联电感 ESL）、R7（电容串联电阻 rC）和 C1（�
 输出电解支路电流 iC 从 vo 流向地，则 iC=iL+iCw−vo/Rload−isense，vo=vC+rC·iC+ESL·diC/dt，C1·dvC/dt=iC。
 忽略 Cw 与 ESL 后的简化方程：vo=vC+rC iC，C dvC/dt=iC，iC=iL-vo/Rload-isense。
 若 isense=0：vo=(vC+rC iL)/(1+rC/Rload)。
-导通：L diL/dt=Vin-vo-(rL+Ron)iL。
+完整模型导通时，通道电流与体二极管电流之和满足开关节点 KCL；体二极管截止时，vSW=Vin−Ron·(iL+iCw)。忽略 Cw 时，L diL/dt=Vin-vo-(rL+Ron)iL。
 续流：L diL/dt=-vo-Vf-(rL+rD)iL。
 CCM 小纹波稳态：Vo≈d Vin-(1-d)Vf-Io[rL+d Ron+(1-d)rD]。
 理想与非理想参数不可混同：Rload≠rL≠rC。
 ```
 
-T1 是 MOS 开关，Ron 表示其导通电阻，D2 模拟体二极管，D1 提供续流路径。开关 S1 受阶跃信号控制，将附加负载 varR 并入输出端。输出取样经 RC 补偿、调制增益与限幅后参与 PWM 控制。
-引用具体器件值时，应说明该值来自用户在当前实验的输入还是本次波形辨识。尚未辨识的空白项标为待辨识；负载切换时刻以当前实验记录为准。
+T1 是 MOS 开关，Ron 表示其导通电阻，D2 模拟体二极管，D1 提供续流路径。开关 S1 受阶跃信号控制，将附加负载 varR 并入输出端。输出取样电流参与端口 KCL。取样节点经并联 RC 接入反相端，运放输出经串联 RC 反馈到反相端，同相端接基准。运放输出经增益、限幅后与锯齿载波比较。自动模式以预测端电压闭环驱动，也可选择从上电时刻回放实测门极。
+绕组与 ESL 电流、绕组跨端电压、输出及补偿电容电压均取模型中各自的上电状态。绕组电容的参考方向为 SW 到输出端。内部固定时钟独立于 CSV 采样间隔，截取中段时先传播上电历史，留出段连续运行。尚未辨识的空白项标为待辨识；负载切换时刻以当前实验记录为准。
 简化模式的积分与 PANN 方程见 buck-parasitics-integral 和 buck-parasitics-pann。有反馈取电时需联立输出端 KCL。Vf、rD 用于考虑二极管压降的解析扩展，七参数拟合采用理想二极管钳位。
 
 参考与核对依据：

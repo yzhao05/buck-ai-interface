@@ -1,4 +1,4 @@
-/* Conversation metadata in localStorage; original CSV blobs in IndexedDB. */
+/* Hosted history is recovered from the private server archive. */
 "use strict";
 let activeConversation = null;
 let conversationPrefix = "";
@@ -30,7 +30,7 @@ async function archiveCurrentCsv(file = null) {
     await window.BuckAttachments.save(scope, dataset.sha256, dataset.filename, file, activeConversation.file_epoch || 0);
     csvWarning();
   } catch {
-    csvWarning("CSV 未能保存到浏览器，请检查存储空间与权限。后端备份请查看同步状态；确认有有效副本前，请保留原文件。");
+    csvWarning(serverArchiveOnly() ? "CSV 尚未归档。请保持页面打开并重试同步。" : "CSV 未能保存到浏览器，请检查存储空间与权限。后端备份请查看同步状态；确认有有效副本前，请保留原文件。");
   }
 }
 async function ensureDatasetAvailable() {
@@ -110,6 +110,7 @@ function persistConversation() {
   const latest={...candidates.reduce((a,b)=>(b.meta_updated || 0)>=(a.meta_updated || 0)?b:a)};
   const draft=$("chat-input").value;
   const fields=Object.fromEntries(experimentFields.map(id=>[id,$(id).value]));
+  if (serverArchiveOnly()) fields["identification-plan-state"]=$("identification-plan-state").value;
   const changedFields=Object.fromEntries(Object.entries(fields).filter(([id,value])=>value!==activeConversation.fields?.[id]));
   const attachment = state.dataset ? {dataset:state.dataset, mapping:state.mapping,
     mappingDraft:mappingFromForm(), resultId:state.resultId, jobId:state.job, csvEpoch:activeConversation.file_epoch || 0,
@@ -128,7 +129,7 @@ function persistConversation() {
   // Chat writes are independent of experiments and metadata: one quota failure
   // must not silently skip every subsequent message in the conversation.
   activeConversation.messages=mergeMessages(activeConversation.id,latest.messages || [],activeConversation.messages);
-  for (const item of activeConversation.messages) {
+  if (!serverArchiveOnly()) for (const item of activeConversation.messages) {
     write(()=>{
       const key=conversationPrefix+activeConversation.id+":message:"+item.id;
       if (!localStorage.getItem(key)) localStorage.setItem(key,JSON.stringify(item));
@@ -148,10 +149,13 @@ function persistConversation() {
     activeConversation.updated=activeConversation.messages.reduce((latest,m)=>Math.max(latest,m.created),activeConversation.updated);
     saved.messages=mergeMessages(saved.id,saved.messages,activeConversation.messages);
     saved.updated=Math.max(saved.updated,activeConversation.updated);
-    localStorage.setItem(conversationPrefix + activeConversation.id, JSON.stringify({...saved,messages:[],messageStoreVersion:1}));
-    localStorage.setItem(conversationPrefix + "active", activeConversation.id);
+    if (!serverArchiveOnly()) localStorage.setItem(conversationPrefix + activeConversation.id, JSON.stringify({...saved,messages:[],messageStoreVersion:1}));
+    if (!(archiveBootstrap && archivePreferredId)) localStorage.setItem(conversationPrefix + "active", activeConversation.id);
   });
   historyWarning(savedCompletely ? "" : "历史保存失败：浏览器存储不可用或已满。当前对话仍可使用，请勿关闭页面。");
+  if(serverArchiveOnly()) archiveUncommitted.add(saved.id);
+  if (archiveRunning) editedDuringArchive.add(saved.id);
+  archiveBatchTail?.add(saved.id);
   scheduleArchiveSync();
   renderExperiments();
   renderAnalysisHistory();
@@ -271,6 +275,8 @@ async function deleteConversation() {
     // observe the tombstone and cannot recreate metadata; they also clear any
     // files an in-flight upload may have saved while this tab was deleting.
     localStorage.setItem(conversationPrefix+"deleted:"+id,"1");
+    archiveBatchTail?.add(id);
+    if (archiveRunning) editedDuringArchive.add(id);
     const keys=[];
     for (let i=0;i<localStorage.length;i++) {
       const key=localStorage.key(i);
@@ -300,6 +306,8 @@ async function openConversation(id, saveCurrent = true) {
   notice(); resetExperiment(); clearChat();
   pendingAttachment=record.attachment;
   for (const field of experimentFields) $(field).value=record.fields?.[field] ?? experimentDefaults[field] ?? "";
+  $("identification-plan-state").value=record.fields?.["identification-plan-state"] || "";
+  if (serverArchiveOnly()) identificationPlans.delete(identificationPlanKey());
   // Saved Auto conversations used the Thinking settings.
   if (!$("reasoning-mode").value) $("reasoning-mode").value=experimentDefaults["reasoning-mode"];
   renderChatImages();
@@ -320,7 +328,7 @@ async function openConversation(id, saveCurrent = true) {
   $("chat-messages").querySelector(".welcome").hidden=!empty;
   $("chat-messages").querySelector(".suggestions").hidden=!empty;
   state.history=record.messages.filter(m=>m.mode!=="请求未完成").map(m=>({role:m.role,content:m.content.slice(0,8000)})).slice(-10);
-  try { localStorage.setItem(conversationPrefix+"active",id); } catch { /* persist reports storage errors */ }
+  try { if (!(archiveBootstrap && archivePreferredId)) localStorage.setItem(conversationPrefix+"active",id); } catch { /* persist reports storage errors */ }
   renderHistory();
   await restoreAttachment(record.attachment);
   await recoverExperiments();
@@ -355,7 +363,7 @@ async function analyzeInNewConversation() {
       if(error.status!==404)throw error;
       copied={session_id:crypto.randomUUID(),job_id:crypto.randomUUID(),dataset:null};
     }
-    const now=Date.now(),opts=result.options,fields={...source.fields,"chat-images":"","chat-pdf":"","selected-result":copied.dataset ? "" : copied.job_id,
+    const now=Date.now(),opts=result.options,fields={...source.fields,"identification-plan-state":"","chat-images":"","chat-pdf":"","selected-result":copied.dataset ? "" : copied.job_id,
       ...Object.fromEntries(BuckCircuit.parts.map(([,field,id,,,scale])=>[id,convertedField(opts[field]??null,scale)])),
       "include-parasitics":String(opts.include_parasitics ?? false),"inductor-resistance":String(opts.inductor_resistance_ohm ?? ""),"capacitor-esr":String(opts.capacitor_esr_ohm ?? ""),
       vin:String(opts.vin),frequency:String(opts.frequency_hz/1000),"fit-mode":opts.mode,"fixed-r":String(opts.resistance_ohm),
@@ -372,7 +380,7 @@ async function analyzeInNewConversation() {
         result:experimentSnapshot(result),ground_truth:comparison?{result_id:copied.job_id,...comparison.ground_truth}:null}]};
     // Save the destination before leaving the source. A storage error keeps the source open.
     saveExperimentKeys(record);
-    localStorage.setItem(conversationPrefix+record.id,JSON.stringify(record));
+    if (!serverArchiveOnly()) localStorage.setItem(conversationPrefix+record.id,JSON.stringify(record));
     conversationCache.set(record.id,record);
   } catch(error) {notice(error.message);return;}
   finally {state.busy=false;controls();}
@@ -384,11 +392,14 @@ async function analyzeInNewConversation() {
 async function initializeHistory() {
   clearTimeout(archiveTimer);
   conversationPrefix=await archivePrefix(`buck-history:v1:${new URL(".",location.href).pathname}:${base.replace(/\/$/,"")}:`);
-  activeConversation=null; conversationCache.clear();
+  activeConversation=null; conversationCache.clear();archiveUncommitted.clear();archiveBatchTail=null;
   const id=savedValue(conversationPrefix+"active");
-  archiveBootstrap=!id;
-  if (id && readConversation(id)) await openConversation(id,false);
+  archivePreferredId=serverArchiveOnly() ? id : null;
+  const initial=id && readConversation(id);
+  archiveBootstrap=!initial;
+  if (initial) await openConversation(id,false);
   else await newConversation();
+  archiveBootstrapSnapshot=archiveBootstrap ? archiveCanonical(wireRecord(readConversation(activeConversation.id))) : "";
   for (const [button,content,label] of [["toggle-experiment","experiment-content","实验配置"],["toggle-history","history-content","历史会话"]]) {
     toggleSection(button,content,label,savedValue(`buck-panel:${new URL(".",location.href).pathname}:${button}`)!=="closed");
   }

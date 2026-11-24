@@ -31,14 +31,14 @@ def validate_structure(request, proposal, changes):
     current = request.ui_context.options.model_dump()
     if 'controller' in patch:
         patch['controller'] = ControllerParameters.model_validate({**(current['controller'] or ControllerParameters().model_dump()), **patch['controller']}).model_dump()
+    mode = patch.get('mode', current['mode'])
     if patch.get('pwm_source', request.ui_context.pwm_source_setting) == 'auto':
         mapping = {**(request.ui_context.mapping.model_dump() if request.ui_context.mapping else {}), **extras['mapping']}
-        patch['pwm_source'] = 'controller' if mapping and not mapping.get('pwm') else 'measured'
-    mode = patch.get('mode', current['mode'])
+        patch['pwm_source'] = 'controller' if mode == 'FULL_STAGE' or (mapping and not mapping.get('pwm')) else 'measured'
     if mode == 'FULL_STAGE':
-        if changes.get('method', 'circuit_fit') != 'circuit_fit' or changes.get('pwm_source', 'measured') != 'measured':
-            raise ValueError('七参数模式仅支持开关电路波形拟合和实测 PWM。')
-        patch.update(method='circuit_fit', pwm_source='measured')
+        if changes.get('method', 'circuit_fit') != 'circuit_fit':
+            raise ValueError('七参数模式仅支持开关电路波形拟合。')
+        patch['method'] = 'circuit_fit'
     elif current['mode'] == 'FULL_STAGE' and 'method' not in patch:
         patch['method'] = 'weighted_integral'  # Matches the form when leaving the seven-parameter mode.
     if mode != 'FULL_STAGE' and patch.get('method') == 'circuit_fit':
@@ -59,7 +59,7 @@ def validate_structure(request, proposal, changes):
 FIELD_PROMPT = """
 此工具用于实验与分析表单。连接设置中的 PLECS 输出通道由 configure_plecs_ports 单独修改。口令与回答模式只能手动设置。
 changes 可设置 vin(V)、frequency_hz(Hz)、train_fraction(0.50–0.85，每档0.05)、pwm_source(auto/measured/controller)、
-FULL_STAGE 为七参数开关电路拟合，使用实测 PWM，固定负载 R。inductance_h、winding_capacitance_f、capacitance_f、capacitor_esl_h、switch_resistance_ohm、inductor_resistance_ohm、capacitor_esr_ohm 使用 SI 单位，null 表示估计、正数固定、零忽略。
+FULL_STAGE 为七参数开关电路拟合，支持模型闭环或实测 PWM 回放，固定负载 R。inductance_h、winding_capacitance_f、capacitance_f、capacitor_esl_h、switch_resistance_ohm、inductor_resistance_ohm、capacitor_esr_ohm 使用 SI 单位，null 表示估计、正数固定、零忽略。
 include_parasitics(bool)、inductor_resistance_ohm(Ω)、capacitor_esr_ohm(Ω)。LC/LCR开启寄生电阻必须由用户提供两项非负数值，可显式为0；不得猜测。LC_RL_RC自动计入寄生电阻，固定负载R，每项正数固定，前端 null 估计，0 忽略；不能从真值或历史结果自动填入未知电阻。
 pann_initial_state(joint/measured)、pann_window_cycles(0自动/1/2/3)、controller_confirmed。
 controller 是局部补丁，仅写指定元件：R1_ohm/R2_ohm/R3_ohm/R4_ohm(Ω)、C2_F/C3_F(F)、opamp_gain、reference_V、pwm_gain、

@@ -247,7 +247,13 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     stage("checking")
     a, notes = extract(dataset, mapping)
     reconstructed = options.pwm_source == "controller"
-    if reconstructed:
+    closed_stage = full and reconstructed
+    reconstructed = reconstructed and not full
+    history = (a[:, 0], a[:, 3]) if full and not closed_stage and a.shape[1] == 4 else None
+    if closed_stage:
+        a = a[:, :3]
+        notes = [n for n in notes if not n.startswith("未选择 PWM 列")]
+    elif reconstructed:
         from .controller import profile_for, validate_profile, reconstruct_training, closed_loop_rollout
         validate_profile(a, options)
         controller_profile = profile_for(options)
@@ -288,8 +294,9 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
     if options.method == "pann" and np.any(train[:, 1] < 0):
         notes.append("保留训练测量中的负向噪声；窗口初值联合估计时约束非负，训练目标不截断。局部噪声估计不能证明信号方向正确。")
     if full:
-        from .full_stage import PARTS, fit, simulate
-        parts, diagnostics = fit(train, options)
+        from .full_stage import PARTS, fit, predict
+        train_history = None if history is None else tuple(v[history[0] <= train[-1, 0]] for v in history)
+        parts, diagnostics = fit(train, options, train_history)
         parameters = dict(zip((part[0] for part in PARTS), map(float, parts)))
         parameters.update(dict.fromkeys(diagnostics["unobservable_parameters"]))
         parameters["R_ohm"] = options.resistance_ohm
@@ -345,22 +352,24 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
             "uses_heldout_measurements": False,
         }
     elif full:
-        predicted = simulate(a[:,0], a[:,3], a[0,1:3], options.vin, options.resistance_ohm, parts)
+        predicted = predict(a[:,0], history, options, parts)
+        diagnostics["rollout_initial_state_source"] = "PLECS power-up state propagated to window start"
+        diagnostics["rollout_initial_state_A_V"] = predicted[0].tolist()
     else:
         predicted = rollout(a, params[:3], options.vin, initial_state, **({"series_resistances": (rl, rc)} if rl or rc else {}))
         diagnostics["drive_source"] = "measured PWM"
     metrics = metric(valid[:, 0], valid[:, 1:3], predicted[split:])
     from .measurement_diagnostics import assess_measurements
     training_gate = (train[np.clip(np.searchsorted(train[:, 0], raw_train[:, 0], side="right")-1, 0, len(train)-1), 3]
-                     if reconstructed else raw_train[:, 3])
+                     if reconstructed else None if closed_stage else raw_train[:, 3])
     measurement_diagnostics = assess_measurements(raw_train, valid, predicted[split:], options.frequency_hz,
-        training_gate=training_gate, validation_gate=None if reconstructed else valid[:, 3])
+        training_gate=training_gate, validation_gate=None if reconstructed or closed_stage else valid[:, 3])
     train_metrics = metric(a[:split+1, 0], a[:split+1, 1:3], predicted[:split+1])
     if diagnostics["parameter_at_bound"]:
         notes.append("辨识或初始化触及参数边界：模型或数据可能不匹配，不应直接采用参数。")
     if diagnostics.get("identifiability_condition_number", diagnostics.get("CR_condition_number", 0)) > 100:
         notes.append("联合参数相关性较高，参数可能对噪声敏感；建议增加动态激励并更换初值复测。" if full or options.mode == JOINT_MODE else "C/R 相关性较高，参数可能对噪声敏感；建议增加动态激励并更换初值复测。")
-    rises = np.flatnonzero(np.diff(a[:, 3]) > 0.5) + 1 if not reconstructed else []
+    rises = np.flatnonzero(np.diff(a[:, 3]) > 0.5) + 1 if not (reconstructed or closed_stage) else []
     if len(rises) > 1:
         observed_fs = 1 / np.median(np.diff(a[rises, 0]))
         if abs(observed_fs / options.frequency_hz - 1) > 0.15:
@@ -377,7 +386,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
         notes.append("PWM 由已确认的控制电路和训练段电压重建；含噪电压、控制器初态或载波相位不匹配会影响结果。")
         notes.append("已计入反馈取样支路电流；忽略 ESR、绕组电阻、死区和器件压降。R 为用户提供的恒定负载电阻，未参与估计。")
     elif full:
-        notes.append("CSV 电流对应绕组电流，电压对应输出端。固定负载，采用理想钳位二极管与实测 PWM。内部初态按首个电流、电压及准稳态支路电流近似，边沿带宽和采样步长会影响小寄生参数。")
+        notes.append("CSV 电流对应绕组电流，电压对应输出端。采用模型上电初态和固定内部步长，反馈取样电流参与输出端电流平衡。边沿带宽会影响小寄生参数的辨识。")
     else:
         notes.append("本模型忽略反馈取样支路、ESR、绕组电阻、死区和器件压降；R 为选定区间的恒定等效负载电阻。")
     if not full:
@@ -398,7 +407,7 @@ def identify(dataset: Dataset, mapping: Mapping, options: FitOptions, *, progres
             "measurement_diagnostics": measurement_diagnostics,
             "options": options.model_dump(), "mapping": mapping.model_dump(),
             "train_start_s": float(a[0, 0]), "train_end_s": float(a[split, 0]), "validation_end_s": float(a[-1, 0]),
-            "validation_kind": "同一记录后段留出；已知控制器自主闭环预测，不使用留出电压或实测 PWM 驱动，不是独立工况验证。" if reconstructed else "同一记录后段留出；从区间起点连续仿真，后段无测量状态重置，输入使用实测 PWM。不是自主闭环或独立工况验证。",
+            "validation_kind": "同一记录后段留出；已知控制器自主闭环预测，不使用留出电压或实测 PWM 驱动，不是独立工况验证。" if reconstructed or closed_stage else "同一记录后段留出；从区间起点连续仿真，后段无测量状态重置，输入使用实测 PWM。不是自主闭环或独立工况验证。",
             "parameter_error": None, "parameter_error_note": "未提供真值，不能计算参数真实误差；波形误差不等于参数误差。",
             "warnings": list(dict.fromkeys(notes)), "chart": chart_data(a, predicted),
             "file_sha256": dataset.sha256, "filename": dataset.name,

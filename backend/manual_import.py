@@ -22,6 +22,7 @@ import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
+from . import openai_relay
 from .knowledge_base import manuals
 from .curve_digitization import Calibration, candidate, geometry, overlay, render_page
 
@@ -50,8 +51,8 @@ class Extraction(BaseModel):
 
 async def request_json(prompt, content):
     key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not key:
-        raise HTTPException(503, "请在后端设置 OPENAI_API_KEY 并重启服务。")
+    if not key and not openai_relay.configured():
+        raise HTTPException(503, "请在后端配置 OPENAI_RELAY_TOKEN 并启动本机连接器，或配置 OPENAI_API_KEY 使用直连。")
     model = os.getenv("OPENAI_MANUAL_MODEL") or "gpt-6.1-terra"
     payload = {
         "model": model,
@@ -61,21 +62,28 @@ async def request_json(prompt, content):
         "text": {"format": {"type": "json_object"}},
     }
     try:
-        async with httpx.AsyncClient(timeout=240) as client:
-            response = await client.post(
-                "https://api.openai.com/v1/responses",
-                json=payload,
-                headers={"Authorization": f"Bearer {key}"},
-            )
-            response.raise_for_status()
+        if openai_relay.configured():
+            result = await asyncio.to_thread(openai_relay.request_json, payload)
+        else:
+            async with httpx.AsyncClient(timeout=240) as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/responses",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                response.raise_for_status()
+                result = response.json()
+    except openai_relay.RelayUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, "手册处理响应不完整，请重新上传 PDF 重试。") from exc
     except httpx.HTTPStatusError as exc:
         raise HTTPException(
-            502, f"OpenAI HTTP {exc.response.status_code}：请检查后端密钥、模型权限、额度及 PDF 大小。"
+            502, f"OpenAI HTTP {exc.response.status_code}：请检查调用端的 OpenAI 密钥、模型权限、额度及 PDF 大小。"
         ) from exc
     except httpx.RequestError as exc:
         raise HTTPException(502, "无法连接 OpenAI 或请求超时。") from exc
     try:
-        result = response.json()
         if result["status"] != "completed":
             raise ValueError("Incomplete response")
         output = "".join(
@@ -119,6 +127,7 @@ def connect():
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=15)
     db.execute("CREATE TABLE IF NOT EXISTS imports (digest TEXT UNIQUE, rows TEXT)")
+    db.execute("CREATE TABLE IF NOT EXISTS manual_files (digest TEXT PRIMARY KEY, source BLOB NOT NULL)")
     return db
 
 
@@ -278,7 +287,7 @@ anchors 取 5–15 个从左至右实际落在指定线上的图像位置，覆�
             )
 
 
-def persist(digest, rows, original):
+def persist(digest, rows, original, raw):
     with manuals.PUBLIC_CSV.open(encoding="utf-8-sig", newline="") as src:
         fields = [*next(csv.reader(src)), "calibration_json", "auto_review"]
     stream = io.StringIO()
@@ -287,6 +296,7 @@ def persist(digest, rows, original):
     writer.writerows(rows)
     with closing(connect()) as db, db:
         db.execute("BEGIN IMMEDIATE")
+        db.execute("INSERT OR IGNORE INTO manual_files VALUES (?,?)", (digest, raw))
         current = db.execute("SELECT rows FROM imports WHERE digest=?", (digest,)).fetchone()
         if current and current[0] != original:
             return list(imported_rows(current[0]))
@@ -351,6 +361,11 @@ async def process(raw, filename, progress):
         rows = new_rows(digest, filename, extracted)
     pending = [r for r in rows if r["kind"] == "curve_pending" and not r.get("auto_review")]
     if original and not pending:
+        # Backfill originals from imports created before source PDFs were archived.
+        def save_source():
+            with closing(connect()) as db, db:
+                db.execute("INSERT OR IGNORE INTO manual_files VALUES (?,?)", (digest, raw))
+        await asyncio.to_thread(save_source)
         return {**summary(rows), "already_saved": True}
     pages = {}
     for row in pending:
@@ -365,7 +380,7 @@ async def process(raw, filename, progress):
         if row["kind"] == "curve_pending":
             row["content"] = row["title"] + "。原图未取得通过自动复核的采样点。"
             row["value_source"] = "仅保存出处"
-    rows = await asyncio.to_thread(persist, digest, rows, original)
+    rows = await asyncio.to_thread(persist, digest, rows, original, raw)
     return {**summary(rows), "already_saved": False}
 
 

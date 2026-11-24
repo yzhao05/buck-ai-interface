@@ -45,10 +45,10 @@ entry('identification-panel', '进入参数辨识 / 退出辨识', 'enter-identi
       '进入参数辨识打开左侧参数表单和右侧分析区域；退出辨识收起辨识界面。这些按钮切换界面，不等于开始计算或取消已提交的任务。真正计算使用“开始参数辨识”。')
 entry('pwm-source', 'PWM 来源', 'pwm-source controller-settings',
       'PWM来源 自动 实测 重建 pwm source measured controller auto',
-      '自动：映射中有 PWM 列就用 CSV 实测状态，否则使用已知控制器重建；CSV 实际开关状态：必须有实际 0/1 PWM 列；三列 CSV·已知控制器重建：使用训练电压和已确认 RC 控制电路生成 PWM。重建仅适用于固定接线的非同步 Buck，固定已知 R 识别 L/C，CSV 从 t=0 开始、负载恒定、结束小于1 ms。重建不是测量；留出段用预测电压自主闭环。')
+      '七参数模式的自动选项用预测输出电压驱动 RC 反馈与 PWM。显式选择实测 PWM 可回放门极，两种方式都计入取样电流，使用电路编辑器保存的反馈参数。简化模型的自动选项在映射中有 PWM 列时使用实测状态，否则使用已知控制器重建；CSV 实际开关状态：必须有实际 0/1 PWM 列；三列 CSV·已知控制器重建：使用训练电压和已确认 RC 控制电路生成 PWM。重建仅适用于固定接线的非同步 Buck，固定已知 R 识别 L/C，CSV 从 t=0 开始、负载恒定、结束小于1 ms。重建不是测量；留出段用预测电压自主闭环。')
 entry('controller-confirm', '确认电路配置', 'controller-confirmed',
       '确认 接线 参数 controller confirmed topology',
-      '只有实际电路接线与默认图一致、参数与当前设置一致，才选已确认。选择尚未确认会阻止依赖控制器重建的计算。修改电路设置、输入电压、频率、负载后通常需重新确认。上传参考图不能自动确认，也不能改变计算模型的固定拓扑。')
+      '只有实际电路接线与默认图一致、参数与当前设置一致，才选已确认。简化模型依赖训练电压重建 PWM 时需要确认。七参数自主闭环使用模型上电状态。修改电路设置、输入电压、频率、负载后通常需重新确认。上传参考图不能自动确认，也不能改变计算模型的固定拓扑。')
 entry('pwm-denoise', '重建电压去噪与去噪窗口', 'pwm-denoise pwm-filter-cycles',
       '去噪 SG 平滑 Modified-sinc FIR 滤波 窗口 pwm_denoise pwm_filter_cycles denoise filter',
       'SG 平滑是基线，Modified-sinc FIR 是候选，不去噪用于对照。去噪窗口以开关周期计，界面范围0.1～8，默认6。只处理训练段用于 PWM 重建的电压，原始电流/电压仍用于辨识；不修改真实控制器，不增加锁存。仅控制器重建模式生效，不保证窗口更大更准确。')
@@ -61,7 +61,7 @@ entry('frequency', '开关频率', 'frequency circuit-frequency', '开关频率 
       '界面单位 kHz，0.1～2000、默认100；后端使用 Hz。用于开关周期、PWM重建、按周期定义的训练/去噪窗口；“末10周期”视图也使用频率。不是 CSV 采样率。电路编辑器保存后同步到左栏。')
 entry('fit-mode', '辨识目标 LC / LCR / LC_RL_RC / FULL_STAGE 与已知负载', 'fit-mode fixed-r circuit-fixed-r fixed-r-label',
       '辨识目标 LC LCR 固定负载 已知负载电阻 resistance_ohm mode load resistance',
-      'FULL_STAGE 使用固定负载和实测 PWM 拟合七项器件。LCR 联合估计电感L、电容C、负载R；LC只估计L/C，R使用填写的已知负载，单位Ω、默认6，必须大于0.01且不超过100000。R不是ESR或电感绕组电阻。LC_RL_RC固定负载R、联合估计L/C及未指定的电阻；每项rL/rC正数固定，留空估计、0忽略该项。控制器重建支持LC和LC_RL_RC。电路编辑器的已知负载保存后同步左栏。')
+      'FULL_STAGE 按模型上电初态与固定内部步长拟合七项器件，支持模型闭环或实测 PWM 回放。LCR 联合估计电感L、电容C、负载R；LC只估计L/C，R使用填写的已知负载，单位Ω、默认6，必须大于0.01且不超过100000。R不是ESR或电感绕组电阻。LC_RL_RC固定负载R、联合估计L/C及未指定的电阻；每项rL/rC正数固定，留空估计、0忽略该项。控制器重建支持LC和LC_RL_RC。电路编辑器的已知负载保存后同步左栏。')
 entry('method', '计算方法：开关电路波形拟合 / PANN / 抗噪加权积分', 'fit-method method-hint pann-settings',
       '计算方法 PANN 加权积分 weighted_integral method PyTorch 灰色',
       'FULL_STAGE 使用 circuit_fit 开关电路波形拟合。简化模型的抗噪加权积分直接输出端点零权重积分估计，不做PANN微调，无需PyTorch。PANN以积分估计为初值继续优化参数与状态，需要后端PyTorch可用；不可用时选项禁用。PANN不保证更准确。切换方法会显示/隐藏PANN专属设置。')
@@ -106,7 +106,7 @@ entry('delete-chat', '删除当前会话', 'delete-chat', '删除 会话 不可�
       '经确认后删除当前会话、实验记录及浏览器/后端保存的CSV；离线删除将在重连后同步，不能撤销。与新建会话、清除当前数据不同。纯询问该按钮用途不授权执行删除。', 'frontend/history.js')
 entry('sync', '立即同步与备份状态', 'sync-now sync-verify sync-status history-status csv-storage-status',
       '同步 备份 恢复 存储 sync backup archive',
-      '立即同步按版本补齐浏览器和后端的会话、实验记录与CSV备份，优先处理当前会话，其余分批后台继续；未变化的会话跳过全文传输。状态显示会话处理及CSV上传、下载进度，后台处理不会替换正在编辑的界面。CSV上传与下载仍校验SHA256，平时复用已校验文件版本；距上次校验超过一天时再次核验，校验备份完整性可手动逐个核验全部CSV，耗时较长。以同步状态判断是否完成；仅本地存在不代表已备份。后端存储若非持久卷，跨部署仍可能丢失。同步不是开始辨识，也不是下载报告。', 'frontend/sync.js')
+      '魔搭工作台在服务器归档会话、实验记录和CSV，浏览器在内存中暂存新内容，网络中断时请保持页面打开。旧浏览器副本经持久存储核对后清理。纯本机开发模式仍使用双端备份。立即同步按版本合并档案，优先处理当前会话，其余分批后台继续；未变化的会话跳过全文传输。状态显示会话处理及CSV上传、下载进度，后台处理不会替换正在编辑的界面。CSV上传与下载仍校验SHA256，平时复用已校验文件版本；距上次校验超过一天时再次核验，校验备份完整性可手动逐个核验全部CSV，耗时较长。以同步状态判断是否完成；仅本地存在不代表已备份。后端存储若非持久卷，跨部署仍可能丢失。同步不是开始辨识，也不是下载报告。', 'frontend/sync.js')
 entry('experiment-history', '已保存实验', 'experiment-history experiment-runs',
       '已保存实验 次数 摘要 experiment history saved runs',
       '每次完成辨识后保存实验摘要，切换方法或PWM不覆盖旧记录。记录展示文件、方法、PWM和参数，可让助手比较同会话多次实验。摘要不等于完整原始CSV、全波形或逐轮训练数据；不能把同一文件多次计算当作独立实验。', 'frontend/experiments.js')
@@ -198,4 +198,4 @@ entry('project-links', 'Buck Lab 标志、实验工作台与项目来源链接',
 entry('parasitics', '基本信息：电感与电容寄生电阻',
       'include-parasitics full-stage-inputs full-stage-results stage-l stage-cw stage-c stage-esl stage-ron parasitic-settings inductor-resistance capacitor-esr parasitic-error circuit-inductor-resistance circuit-capacitor-esr',
       '内阻 寄生 电阻 绕组 ESR 理想 非理想 resistance winding capacitor parasitic',
-      '选择非理想功率级后进入七参数模式。主电感 L（µH）、绕组电阻 rL（Ω）、绕组并联电容 Cw（pF）、输出电容 C（µF）、ESR（Ω）、ESL（nH）和开关 Ron（Ω）分别留空估计、正数固定、0 忽略。使用实测 PWM 和固定 R，波形灵敏度不足时结果标记为弱可辨识。理想模式下，计算rL=rC=0且电路图显示0。单位Ω，范围0～1000。LC/LCR模式开启后两项必须显式填写，0为固定零电阻。LC_RL_RC自动开启，每项正数固定，空白估计、0忽略该项；负数或非有限值拒绝。联合结果展示rL/rC及固定或估计状态。电路图在电感、电容各串联一个电阻，开启后可点击修改并同步左栏。关闭时保留输入草稿但计算按0；历史会话保存模型选择和数值。CSV电压对应输出端vo，ESR内部vC由模型换算。七参数采用开关电路波形拟合，简化模式提供积分与 PANN。')
+      '选择非理想功率级后进入七参数模式。主电感 L（µH）、绕组电阻 rL（Ω）、绕组并联电容 Cw（pF）、输出电容 C（µF）、ESR（Ω）、ESL（nH）和开关 Ron（Ω）分别留空估计、正数固定、0 忽略。使用模型闭环或实测 PWM 回放，波形灵敏度不足时结果标记为弱可辨识。理想模式下，计算rL=rC=0且电路图显示0。单位Ω，范围0～1000。LC/LCR模式开启后两项必须显式填写，0为固定零电阻。LC_RL_RC自动开启，每项正数固定，空白估计、0忽略该项；负数或非有限值拒绝。联合结果展示rL/rC及固定或估计状态。电路图在电感、电容各串联一个电阻，开启后可点击修改并同步左栏。关闭时保留输入草稿但计算按0；历史会话保存模型选择和数值。CSV电压对应输出端vo，ESR内部vC由模型换算。七参数采用开关电路波形拟合，简化模式提供积分与 PANN。')

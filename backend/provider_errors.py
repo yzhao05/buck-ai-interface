@@ -4,6 +4,7 @@ import logging
 import socket
 import ssl
 import httpx
+from .openai_relay import RelayUnavailable
 
 
 class HarnessTurnError(RuntimeError):
@@ -48,7 +49,13 @@ def network_reason(exc):
 def provider_failure(exc=None, *, missing=False, key_name="DEEPSEEK_API_KEY", **metadata):
     if missing:
         code = "missing_api_key"
-        message = f"AI service is not configured. Please set {key_name} on the backend and try again."
+        message = ("Configure OPENAI_RELAY_TOKEN on the Studio and start the local connector, "
+                   "or set OPENAI_API_KEY on the backend for a direct connection."
+                   if key_name == "OPENAI_API_KEY" else
+                   f"AI service is not configured. Please set {key_name} on the backend and try again.")
+    elif isinstance(exc, RelayUnavailable):
+        code = "openai_connector_unavailable"
+        message = str(exc) + ". Check the local OpenAI connector and retry."
     elif isinstance(exc, AgentMemoryError):
         code = 'agent_memory_pressure'
         message = 'The backend has too little memory available for this analysis. The task can be resumed when memory is available.'
@@ -74,7 +81,7 @@ def provider_failure(exc=None, *, missing=False, key_name="DEEPSEEK_API_KEY", **
     elif isinstance(exc, httpx.HTTPStatusError):
         code = "provider_failed"
         status = exc.response.status_code
-        detail = ('Check the backend API key and model access.' if status in (401,403) else
+        detail = ('Check the configured API key and model access.' if status in (401,403) else
                   'The provider rate limit was reached. Retry later.' if status == 429 else 'Check the provider status and backend logs.')
         message = f"AI request failed (HTTP {status}). {detail}"
     elif isinstance(exc, httpx.TransportError):

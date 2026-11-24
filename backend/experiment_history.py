@@ -111,7 +111,7 @@ def repeatability_summary(experiments, current_id=None):
         if ctx.options.mode == "LC_RL_RC" and (run.parameters.rL_ohm is None or run.parameters.rC_ohm is None):
             missing += 1
             continue
-        key = json.dumps(ctx.model_dump(), sort_keys=True)
+        key = json.dumps(ctx.model_dump(exclude={"fixed_step_s"} if ctx.fixed_step_s is None else set()), sort_keys=True)
         if run.id == current_id:
             selected_key = key
         groups.setdefault(key, []).append(run)

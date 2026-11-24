@@ -90,7 +90,7 @@ def refine(train, initial, options):
             raise ValueError("PANN_PYTHON 指向的解释器不存在，请检查后端配置。")
         payload = {"train": train.tolist(), "initial": initial.tolist(),
                    "options": {k: getattr(options, k) for k in ("vin", "frequency_hz", "mode", "epochs", "pann_initial_state", "pann_window_cycles", "include_parasitics", "inductor_resistance_ohm", "capacitor_esr_ohm")}}
-        environment = {k: v for k, v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "APP_ACCESS_TOKEN")}
+        environment = {k: v for k, v in os.environ.items() if k not in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OPENAI_RELAY_TOKEN", "APP_ACCESS_TOKEN")}
         environment["PYTHONIOENCODING"] = "utf-8"
         # Wait for the selected epoch count, however long the worker needs.
         response = subprocess.run([str(executable), "-m", "backend.pann_worker"],

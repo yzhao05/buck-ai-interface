@@ -16,7 +16,7 @@ function executionSelectionQuestion(selection,methods,sources,{allowAuto=false}=
   if(!selection?.method_evidence?.trim() || !Array.isArray(selection.methods) || !methods.every(value=>selection.methods.includes(value)))
     missing.push(tr(methods.includes('circuit_fit')?'请确认使用开关电路波形拟合。':'计算方法：抗噪加权积分、PANN，还是两种都运行？'));
   if(!selection?.pwm_evidence?.trim() || !Array.isArray(selection.pwm_sources) || !(sources.every(value=>selection.pwm_sources.includes(value)) || (allowAuto&&selection.pwm_sources.includes('auto'))))
-    missing.push(tr(methods.includes('circuit_fit')?'请确认使用 CSV 实测 PWM。':'PWM 来源：CSV 实测 PWM、控制器重建，还是明确采用自动判断？'));
+    missing.push(tr('PWM 来源：CSV 实测 PWM、控制器重建，还是明确采用自动判断？'));
   return missing.length?tr('开始前请先选择：')+'\n\n'+missing.map(item=>'- '+item).join('\n')+'\n\n'+tr('尚未启动辨识；请回复具体选项后继续。'):'';
 }
 function identificationReviewFeedback(){
@@ -31,7 +31,7 @@ function identificationReviewFeedback(){
     ].join('；')+'。'+tr('如需更改，请修改后重新点击“应用并检查数据”；无误则无需重复应用。');
   const settings=[`${tr('辨识目标')} = ${selected('fit-mode')}`,`${tr('计算方法')} = ${selected('fit-method')}`,
     `Vin = ${$('vin').value} V`,`${tr('开关频率 (kHz)')} = ${$('frequency').value}`,
-    `${tr('训练区间占比')} = ${$('train-fraction').value}%`,`${tr('PWM 来源')} = ${tr(pwmSource()==='controller'?'控制器重建':'实测 PWM')}`,
+    `${tr('训练区间占比')} = ${$('train-fraction').value}%`,`${tr('PWM 来源')} = ${tr(pwmSource()==='measured'?'实测 PWM':$('fit-mode').value==='FULL_STAGE'?'模型闭环 · RC 补偿与 PWM':'控制器重建')}`,
     `${tr('开始时间 (ms)')} = ${$('start-ms').value||tr('自动')}`,`${tr('结束时间 (ms)')} = ${$('end-ms').value||tr('自动')}`];
   settings.push(`${tr('电感与电容寄生电阻')} = ${selected('include-parasitics')}`);
   if($('fit-mode').value==='FULL_STAGE') {
@@ -44,7 +44,7 @@ function identificationReviewFeedback(){
   if($('fit-mode').value!=='LCR')settings.push(`${tr('负载电阻')} = ${$('fixed-r').value} Ω`);
   if($('fit-method').value==='pann')settings.push(`${tr('训练轮数')} = ${$('pann-epochs').value}`);
   let requirement=tr('请核对这些设置是否与本次数据及实验工况一致。');
-  if(pwmSource()==='controller' && $('controller-confirmed').value!=='yes')requirement+=' '+tr('控制器接线与参数尚未确认，请核对后在基本信息中确认电路配置。');
+  if($('fit-mode').value!=='FULL_STAGE' && pwmSource()==='controller' && $('controller-confirmed').value!=='yes')requirement+=' '+tr('控制器接线与参数尚未确认，请核对后在基本信息中确认电路配置。');
   if(state.dataset&&m&&pwmSource()==='measured'&&!m.pwm)requirement+=' '+tr('当前未映射实际 PWM 列，请补齐，或选择并确认控制器重建。');
   return '\n\n'+tr('开始前请核对以下两项：')+'\n\n1. **'+tr('列与单位映射')+'**：'+mapping+
     '\n\n2. **'+tr('实验设置')+'**：'+settings.join('；')+'。'+requirement+

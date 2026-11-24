@@ -209,7 +209,8 @@ def build_pdf(request: ReportRequest) -> bytes:
     story += [p("BUCK LAB / EXPERIMENT REPORT", small), p(t("电路参数辨识实验报告", "Circuit parameter identification"), title),
               p(r.filename), p(t("导出时间：", "Exported: ") + request.exported_at.isoformat(timespec="seconds").replace("T", " "), small)]
     method = {"circuit_fit": t("开关电路波形拟合", "Switched-circuit waveform fit"), "pann": "PANN", "weighted_integral": t("加权积分", "Weighted integral"), "integral": t("积分", "Integral")}[r.method]
-    drive = {"controller": t("由已知控制器重建 PWM", "PWM reconstructed from known controller"),
+    closed_stage = r.options.mode == "FULL_STAGE" and r.options.pwm_source == "controller"
+    drive = {"controller": t("RC 自主闭环", "Autonomous RC loop") if closed_stage else t("由已知控制器重建 PWM", "PWM reconstructed from known controller"),
              "measured": t("CSV 实测 PWM", "Measured PWM from CSV")}.get(r.options.pwm_source, t("未记录", "Not recorded"))
     section("01  数据与方法", "01  Data and method")
     table([(t("辨识方法", "Method"), method), (t("开关信息来源", "Switching information"), drive),
@@ -294,7 +295,10 @@ def build_pdf(request: ReportRequest) -> bytes:
     story.append(p(t("图形采用结果中保存的显示采样点；RMSE 来自完整计算数据，不从图上重新计算。",
                      "Plots use saved display samples. RMSE comes from the full computation data, not these plotted samples."), small))
     story.append(p(t("这是同一记录后段的留出验证，不是独立工况验证。", "This is a holdout from the same recording, not an independent operating-condition test.")))
-    if r.options.pwm_source == "controller":
+    if closed_stage:
+        story.append(p(t("从模型上电状态连续积分，以预测输出电压驱动 RC 反馈与 PWM。",
+                         "The RC loop and PWM use predicted output voltage from model power-up throughout the record.")))
+    elif r.options.pwm_source == "controller":
         table([(t("重建电压去噪", "Reconstruction voltage smoothing"),
                 r.options.pwm_denoise or t("未记录（旧结果）", "Not recorded (legacy result)")),
                (t("去噪窗口 / 开关周期", "Smoothing window / switching cycles"),
@@ -360,8 +364,8 @@ def build_pdf(request: ReportRequest) -> bytes:
                (t("返回参数与末段最大差异 / 阈值", "Returned-parameter gap / threshold"), "; ".join(f"{k}: {n(v)}%" for k,v in training.selected_parameter_gap_pct.items()) + f" / {n(th.get('selected_parameter_gap_pct'))}%"),
                (t("末段平均损失与最佳损失差异 / 阈值", "Tail-to-best loss gap / threshold"), f"{n(training.selected_loss_gap_pct)}% / {n(th.get('selected_loss_gap_pct'))}%"),
                (t("损失归一化分母下限", "Loss denominator floor"), n(th.get('loss_scale_floor')))])
-    if r.options.pwm_source == "controller" and r.options.controller:
-        section("重建控制器参数", "Reconstruction controller parameters")
+    if r.options.controller and (r.options.mode == "FULL_STAGE" or r.options.pwm_source == "controller"):
+        section("反馈控制器参数", "Feedback controller parameters")
         story.append(p("; ".join(f"{key} = {n(value)}" for key, value in r.options.controller.items()), small))
     if request.notes:
         section("补充计算说明", "Additional computation notes")

@@ -35,7 +35,7 @@ function currentIdentificationPlan(){
   const key=identificationPlanKey();if(!key)return null;
   if(!identificationPlans.has(key)){
     let plan=null;
-    try{plan=JSON.parse(sessionStorage.getItem(key));}catch{}
+    try{plan=JSON.parse((serverArchiveOnly() && $("identification-plan-state").value) || sessionStorage.getItem(key));}catch{}
     if(!validStoredIdentificationPlan(plan))plan=null;
     if(plan && !["complete","cancelled"].includes(plan.status)){
       if(!currentPlanParser(plan)){
@@ -49,6 +49,12 @@ function currentIdentificationPlan(){
 function saveIdentificationPlan(plan){
   const key=identificationPlanKey();
   // Persist before starting a job, so refreshing cannot silently start it twice.
+  if (serverArchiveOnly()){
+    identificationPlans.set(key,plan);
+    $("identification-plan-state").value=JSON.stringify(plan);
+    persistConversation();
+    return;
+  }
   try{sessionStorage.setItem(key,JSON.stringify(plan));}
   catch{throw new Error("无法保存计划进度。请检查浏览器存储；已提交的任务请在实验历史中核对后再继续。");}
   identificationPlans.set(key,plan);

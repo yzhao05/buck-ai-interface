@@ -128,11 +128,11 @@ function errorText(body) {
   if (Array.isArray(body.detail)) return body.detail.map(e => `${e.loc?.slice(1).join(".")}: ${e.msg}`).join("\n");
   return "请求失败，请检查后端服务。";
 }
-async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = "", archiveProtocol = ""} = {}) {
+async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = "", archiveProtocol = "", owner = sessionId} = {}) {
   if (!base) throw new Error("请在连接设置中填写魔搭创空间的应用地址，或启动本地后端。");
   const controller = timeout === null ? null : new AbortController();
   const timer = controller && setTimeout(() => controller.abort(), timeout);
-  const headers = {"X-Session-ID": sessionId};
+  const headers = {"X-Session-ID": owner};
   if (accessToken && path !== "/api/health") headers[appTokenHeader()] = `Bearer ${accessToken}`;
   if (archiveCode) headers["X-Archive-Key"] = archiveCode;
   if (archiveProtocol) headers["X-Archive-Protocol"] = archiveProtocol;
@@ -162,12 +162,12 @@ async function api(path, {method = "GET", body, timeout = 90000, asBlob = false,
   } finally { clearTimeout(timer); }
 }
 function pwmSource() {
-  if ($("fit-mode").value==="FULL_STAGE") return "measured";
+  if ($("fit-mode").value==="FULL_STAGE" && $("pwm-source").value==="auto") return "controller";
   const selected = $("pwm-source").value;
   return selected === "auto" ? (state.mapping && !state.mapping.pwm ? "controller" : "measured") : selected;
 }
 function prepareControllerDefaults() {
-  if (pwmSource() !== "controller") return;
+  if ($("fit-mode").value === "FULL_STAGE" || pwmSource() !== "controller") return;
   if (!$("start-ms").value) $("start-ms").value = "0";
   if (!$("end-ms").value) {
     const end = state.summary?.end_s;
@@ -176,6 +176,8 @@ function prepareControllerDefaults() {
 }
 function controls() {
   const full = $("fit-mode").value === "FULL_STAGE";
+  ui($("pwm-source").querySelector('[value="auto"]'), full ? "自动：使用 PLECS 模型闭环" : "自动：有 PWM 列则使用，否则重建");
+  ui($("pwm-source").querySelector('[value="controller"]'), full ? "模型闭环 · RC 补偿与 PWM" : "三列 CSV · 已知控制器重建");
   const jointParasitics = full || $("fit-mode").value === "LC_RL_RC";
   $("full-stage-inputs").hidden=!full;
   const method=$("fit-method");
@@ -220,11 +222,11 @@ function controls() {
   $("leave-identification").disabled = waiting;
   $("pann-settings").hidden = $("fit-method").value !== "pann";
   const reconstructed = pwmSource() === "controller";
-  $("controller-settings").hidden = !reconstructed;
+  $("controller-settings").hidden = !reconstructed || full;
   $("fit-mode").querySelector('[value="LCR"]').disabled = reconstructed;
   if (reconstructed && $("fit-mode").value === "LCR") $("fit-mode").value = "LC";
   ui($("parasitic-hint"), jointParasitics ? "联合模式：负载 R 固定；每项电阻留空辨识，正数固定，0 忽略。CSV 电压必须是输出端 vo。" : "两项均为已知值，不参与辨识。开启后请填写两项，可显式填写 0；CSV 电压必须是输出端 vo。");
-  if(full) ui($("parasitic-hint"),"七项分别设置：留空辨识，正数固定，0 忽略。使用实测 PWM、绕组电流和输出端电压，负载 R 固定。");
+  if(full) ui($("parasitic-hint"),"七项分别设置：留空辨识，正数固定，0 忽略。使用绕组电流与输出端电压，自动模式按模型闭环运行。选择实测 PWM 可回放门极信号。");
   const parasiticEnabled = $("include-parasitics").value === "true";
   $("parasitic-settings").hidden = !parasiticEnabled;
   const parameterIds=full ? BuckCircuit.parts.map(p=>p[2]) : ["inductor-resistance","capacitor-esr"];
@@ -243,9 +245,7 @@ function controls() {
   for(const [, , id] of BuckCircuit.parts) $(id).disabled=waiting;
   if(full) {
     $("fit-method").disabled=true;
-    $("pwm-source").value="measured";
-    $("pwm-source").disabled=true;
-    if(!state.mapping?.pwm) $("identify").disabled=true;
+    if(pwmSource()==="measured" && !state.mapping?.pwm) $("identify").disabled=true;
   }
   renderIdentificationPlan();
 }
@@ -308,7 +308,7 @@ function mappingFromForm() {
     pwm:$("map-pwm").value || null, time_unit:$("time-unit").value, current_unit:$("current-unit").value, voltage_unit:$("voltage-unit").value};
 }
 function readyStatus() {
-  ui($("job-status"), pwmSource() === "controller"
+  ui($("job-status"), $("fit-mode").value==="FULL_STAGE" && pwmSource()==="controller" ? "数据就绪 · 可开始辨识" : pwmSource() === "controller"
     ? ($("controller-confirmed").value === "yes" ? "三列数据就绪 · 固定 R 辨识 L/C" : "请确认已知控制电路配置后开始辨识")
     : state.mapping?.pwm ? "数据就绪 · 可开始辨识" : "无 PWM 列：请在基本信息选择已知控制器重建并确认配置，或补充实际 PWM。");
 }
@@ -336,9 +336,9 @@ function options({allowIncompleteParasitics=false}={}) {
     ...(full ? Object.fromEntries(BuckCircuit.parts.map(([,field,id,,,scale])=>[field,missingDraft(id)?null:Number((numeric(id)/scale).toPrecision(15))])) : {}),
     vin:numeric("vin"), frequency_hz:numeric("frequency")*1000,
     pwm_source:pwmSource(), controller_confirmed:$("controller-confirmed").value === "yes",
-    controller:pwmSource() === "controller" ? window.BuckCircuit.read() : null,
-    pwm_denoise:pwmSource()==='controller' ? $("pwm-denoise").value : 'sg',
-    pwm_filter_cycles:pwmSource()==='controller' ? ($("pwm-denoise").value==='none' ? 1 : numeric('pwm-filter-cycles')) : 6,
+    controller:(full ? $("controller-parameters").value : pwmSource() === "controller") ? window.BuckCircuit.read() : null,
+    pwm_denoise:!full && pwmSource()==='controller' ? $("pwm-denoise").value : 'sg',
+    pwm_filter_cycles:!full && pwmSource()==='controller' ? ($("pwm-denoise").value==='none' ? 1 : numeric('pwm-filter-cycles')) : 6,
     start_s:$("start-ms").value === "" && !$("start-ms").validity.badInput ? null : numeric("start-ms")/1000,
     end_s:$("end-ms").value === "" && !$("end-ms").validity.badInput ? null : numeric("end-ms")/1000,
     train_fraction:Number($("train-fraction").value)/100, mode:$("fit-mode").value,
@@ -354,6 +354,7 @@ function resultMatchesData(result) {
 function resultMatchesCurrent(result) {
   // Drafts may be temporarily blank/invalid while typing. They never invalidate a completed run.
   if (!resultMatchesData(result)) return false;
+  if (result.options?.mode === "FULL_STAGE" && !result.diagnostics?.fixed_step_s) return false;
   try {
     return Object.entries(options()).every(([key,value]) => value && typeof value === "object"
       ? Object.entries(value).every(([field,number])=>result.options?.[key]?.[field] === number)
@@ -908,7 +909,8 @@ function decorateResponse(article, response) {
         add(`${group.method} / ${group.pwm_source} / ${group.mode}: `,"不同 CSV 数",`: ${group.distinct_files}; `,"排除同文件重复运行",`: ${group.same_file_reruns_excluded}`);
         if(group.distinct_files<2)add("至少需要两份不同 CSV 才能计算观察到的离散程度。");
         for(const [key,p] of Object.entries(group.parameters)){
-          const factor=['L_H','C_F'].includes(key)?1e6:1,unit=key==='L_H'?'μH':key==='C_F'?'μF':'Ω';
+          const part = BuckCircuit.parts.find(([parameter]) => parameter === key);
+          const factor = part?.[5] ?? 1, unit = part?.[4] ?? 'Ω';
           add(`${key.split('_')[0]}: `,"观察范围",` ${fmt(p.min*factor,6)}–${fmt(p.max*factor,6)} ${unit}; CV = ${fmt(p.cv_pct,4)}%`);
         }
       }
@@ -1002,7 +1004,7 @@ async function applyIdentificationAction(action, context) {
   const staged=await prepareConfigurationExtras(action,context);
   const selectedSource=changes.pwm_source||$('pwm-source').value;
   const targetMapping=staged.mapping||state.mapping;
-  const targetSource=selectedSource==='auto'?(targetMapping&&!targetMapping.pwm?'controller':'measured'):selectedSource;
+  const targetSource=selectedSource==='auto'?((changes.mode||$('fit-mode').value)==='FULL_STAGE'||(targetMapping&&!targetMapping.pwm)?'controller':'measured'):selectedSource;
   const loadOnly=staged.dataset && !Object.keys(changes).length && !action.start_after_apply;
   if(!loadOnly && targetSource==='controller'&&(changes.mode||$('fit-mode').value)==='LCR')return tr('重建 PWM 需要固定负载 R，可选择 LC 或 LC_RL_RC 模式，本次未修改设置。');
   // Mark before applying; replaying stored replies/retrying the same response cannot run twice.
@@ -1031,7 +1033,7 @@ async function applyIdentificationAction(action, context) {
   }
   if (!state.dataset) {toggleSection("toggle-import","import-content","导入波形",true);return prefix+" "+tr("请先上传 CSV；本次未启动实验。");}
   if (!state.mapping) {$("mapping-details").open=true;return prefix+" "+tr("请补齐并应用时间、电流、电压列映射；本次未启动实验。");}
-  if (pwmSource()==="controller" && $("controller-confirmed").value!=="yes") {
+  if ($("fit-mode").value!=="FULL_STAGE" && pwmSource()==="controller" && $("controller-confirmed").value!=="yes") {
     pendingConfigurationStart={fingerprint:configurationFingerprint()};
     $("controller-settings").hidden=false;return prefix+' '+tr('请核对并确认：当前电路接线与控制图一致，参数也与当前设置一致吗？回复“确认”后继续本次辨识；确认前未启动实验。');
   }
@@ -1349,7 +1351,8 @@ function reportFilename(result, date = new Date()) {
     : /(?:^|[_ -])clean(?=[_ -]|$)/i.test(stem) ? "clean" : "noiseNA";
   const seed = stem.match(/(?:^|[_ -])(?:seed|s)(\+?\d+)(?=[_ -]|$)/i)?.[1];
   const opts = result.options || {};
-  const drive = result.diagnostics?.pwm_reconstruction?.status === "complete" || opts.pwm_source === "controller" ? "rebuilt"
+  const drive = opts.mode==="FULL_STAGE" && opts.pwm_source==="controller" ? "closedloop"
+    : result.diagnostics?.pwm_reconstruction?.status === "complete" || opts.pwm_source === "controller" ? "rebuilt"
     : opts.pwm_source === "measured" || result.diagnostics?.drive_source === "measured PWM" ? "measured" : "pwmNA";
   const method = {circuit_fit:"CircuitFit",pann:"PANN",weighted_integral:"WIntegral",integral:"Integral"}[result.method || opts.method] || "methodNA";
   const window = method !== "PANN" ? "NA" : opts.pann_window_cycles === 0 ? "auto"
@@ -1523,6 +1526,10 @@ $("settings-form").onsubmit=async event=>{
     const nextCode=$("sync-code").value.trim().toLowerCase();
     if (nextCode && !/^[a-f0-9]{64}$/.test(nextCode)) throw new Error("同步恢复码应为 64 位十六进制字符。");
     const codeChanged=!backendChanged && nextCode && nextCode!==archiveKey;
+    if ((backendChanged || codeChanged) && serverArchiveOnly() && [...archiveUncommitted].some(id=>{
+      const r=readConversation(id);
+      return r && archiveCanonical(wireRecord(r))!==archiveBootstrapSnapshot;
+    })) throw new Error("请先同步当前档案，再切换服务器或恢复码。");
     submission=++settingsSubmission;
     if(backendChanged || codeChanged)persistConversation();
     base=next;accessToken=$("access-token").value.trim();

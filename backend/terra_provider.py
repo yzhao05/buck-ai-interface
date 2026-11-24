@@ -6,6 +6,7 @@ import os
 
 import httpx
 
+from . import openai_relay
 from .provider_errors import HarnessTurnError
 
 
@@ -181,9 +182,13 @@ def messages_stream(response, reasoning):
 
 
 @contextmanager
-def stream(client, body, reasoning):
-    headers = {"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"].strip()}
-    with client.stream("POST", ENDPOINT, headers=headers, json=body) as upstream:
+def stream(client, body, reasoning, *, cancelled=None):
+    if openai_relay.configured():
+        upstream_context = openai_relay.response(body, cancelled)
+    else:
+        headers = {"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"].strip()}
+        upstream_context = client.stream("POST", ENDPOINT, headers=headers, json=body)
+    with upstream_context as upstream:
         upstream.raise_for_status()
         adapted = httpx.Response(
             200,

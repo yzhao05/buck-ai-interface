@@ -1,5 +1,5 @@
 {
-  "reviewed_on": "2026-11-20",
+  "reviewed_on": "2026-11-25",
   "purpose": "Reference model definitions only; never identification ground truth for an unknown CSV.",
   "models": {
     "original": {
@@ -187,7 +187,7 @@
     },
     "nonideal": {
       "source_relative_to_ST4001": "仿真/buck_converter_with_parameter_sweep/buck_with_parasitics.plecs",
-      "sha256": "a6ef68b0f92a18165353ac57727798bfd19ebcd57fd56062d471688ecb13ba2b",
+      "sha256": "730ba063e9ab5086634dc87c993590f823a2da79fecec3665a0465031e214b96",
       "components": {
         "V_dc": {
           "type": "DCVoltageSource"

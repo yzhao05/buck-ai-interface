@@ -1,6 +1,7 @@
 """Switched Buck waveform fit. The CSV current is the winding current, vo is terminal voltage."""
 import numpy as np
-from scipy.linalg import solve_banded
+from .full_stage_circuit import STEP, simulate
+from .controller import PROFILE, profile_for
 from scipy.optimize import least_squares
 
 # Result key, option (SI), numerical starting scale, upper search limit.
@@ -15,116 +16,11 @@ PARTS = (
 )
 
 
-def _advance(h, on, start, vin, load, parts):
-    """Backward Euler MNA on the original time grid, PWM held over [t[k], t[k+1]).
-    States in each block: winding current, winding voltage, capacitor branch current,
-    internal capacitor voltage, output voltage. Zero storage uses its algebraic limit.
-    """
-    inductance, rl, cw, c, rc, esl, ron = parts
-    mass = np.array([inductance, cw, esl, c, 0.])
-    # The four element laws and the fifth (switch-node) constraint form a
-    # block-bidiagonal system. LAPACK solves all variable-step samples in O(N).
-    law = np.array([[rl,-1,0,0,0], [1,0,-1,0,-1/load],
-                    [0,0,rc,1,-1], [0,0,-1,0,0], [0,1,0,0,1]], dtype=float)
-    idx = np.arange(len(h))*5
-    band = np.zeros((10, 5*len(h)))
-    for i,j in zip(*np.nonzero(law)):
-        band[4+i-j,idx+j] = law[i,j]
-    for i in range(4):
-        band[4,idx+i] += mass[i]/h
-        band[9,idx[:-1]+i] = -mass[i]/h[1:]
-    rhs = np.zeros(5*len(h))
-    rhs[:4] = mass[:4]*start[:4]/h[0]
-    # The high-side channel is a resistor when on. The ideal diodes clamp SW
-    # to 0 or Vin; while both block and PWM is off, total terminal current is zero.
-    channel, low, floating, high = 0, 1, 2, 3
-    mode = np.where(on,channel,low)
-    tol = 1e-9
-    for _ in range(12):
-        active = mode==channel
-        open_node = mode==floating
-        band[7,idx+1] = ~open_node
-        band[6,idx+2] = np.where(open_node,1.,ron*active)
-        band[4,idx+4] = np.where(open_node,1/load,1+ron*active/load)
-        rhs[idx+4] = vin*(active | (mode==high))
-        try:
-            states = solve_banded((5,4),band,rhs,check_finite=False).reshape(-1,5)
-        except np.linalg.LinAlgError:
-            break
-        iw, vw, ic, vc, vo = states.T
-        total = ic+vo/load
-        sw = vo+vw
-        next_mode = mode.copy()
-        # At a clamp the switch channel can also conduct; test diode current.
-        release_low = (mode==low) & (total < (vin/max(ron,1e-30))*on-tol)
-        next_mode[release_low] = np.where(on[release_low],channel,floating)
-        release_high = (mode==high) & (total>tol)
-        next_mode[release_high] = np.where(on[release_high],channel,floating)
-        next_mode[(open_node | active) & (sw < -tol)] = low
-        next_mode[(open_node | active) & (sw > vin+tol)] = high
-        if np.array_equal(mode,next_mode):
-            return states
-        mode = next_mode
-    # In DCM a long blocking interval may advance one sample per active-set pass.
-    # Solve it causally instead of imposing a limit on the length of that interval.
-    output = np.empty((len(h),5))
-    state = start
-    for k,dt in enumerate(h):
-        a = law + np.diag(mass/dt)
-        b = mass/dt*state
-        for candidate in ((channel,low,high) if on[k] else (low,floating,high)):
-            rr = ron if candidate==channel else 0.
-            a[4] = [0,1,rr,0,1+rr/load] if candidate!=floating else [0,0,1,0,1/load]
-            b[4] = vin if candidate in (channel,high) else 0.
-            try:
-                z = np.linalg.solve(a,b)
-            except np.linalg.LinAlgError:
-                continue
-            sw,j = z[1]+z[4],z[2]+z[4]/load
-            if candidate in (channel,floating) and not -tol<=sw<=vin+tol:
-                continue
-            if ((candidate==low and j < vin*on[k]/max(ron,1e-30)-tol)
-                    or (candidate==high and j>tol)):
-                continue
-            state=z
-            output[k] = z
-            break
-        else:
-            raise ValueError("开关节点约束无解，请核对接线、单位和输入参数。")
-    return output
-
-
-def simulate(t, gate, initial, vin, load, parts):
-    """Carry all internal states between chunks; keep post-event PWM samples."""
-    _, _, _, c, rc, _, ron = parts
-    iw, vo = initial
-    ic = iw-vo/load if c else 0.
-    state = np.array([iw, vin*gate[0]-ron*gate[0]*iw-vo, ic, vo-rc*ic, vo])
-    out = np.empty((len(t),2))
-    out[0] = initial
-    for left in range(0,len(t)-1,4096):
-        right = min(left+4096,len(t)-1)
-        dt = np.diff(t[left:right+1])
-        q = gate[left:right+1]>.5
-        edge = q[:-1]!=q[1:]
-        # Two implicit substeps per interval plus a short right-limit step for
-        # an edge. Output voltage may jump even with continuous stored energy.
-        ends = np.cumsum(2+edge.astype(int))-1
-        starts = np.r_[0,ends[:-1]+1]
-        h = np.empty(ends[-1]+1)
-        on = np.empty(len(h),bool)
-        h[starts] = h[starts+1] = dt/2
-        on[starts] = on[starts+1] = q[:-1]
-        event_dt = dt[edge]*1e-6
-        h[ends[edge]-1] -= event_dt
-        h[ends[edge]] = event_dt
-        on[ends[edge]] = q[1:][edge]
-        states = _advance(h,on,state,vin,load,parts)
-        out[left+1:right+1] = states[ends][:,[0,4]]
-        state = states[-1]
-    if not np.isfinite(out).all():
-        raise ValueError("七参数模型的端电压或电流超出数值范围。")
-    return out
+def predict(t, history, options, parts):
+    times, gate = history if history is not None else (None, None)
+    profile = PROFILE if options.controller is None else profile_for(options.model_copy(update={"include_parasitics": False}))
+    return simulate(t, gate, options.vin, options.resistance_ohm, parts,
+                    options.frequency_hz, profile=profile, gate_times=times)
 
 
 def unobservable_keys(settings):
@@ -137,7 +33,7 @@ def unobservable_keys(settings):
     return [key for key, field, _, _ in PARTS if key in inactive and settings.get(field) is None]
 
 
-def fit(train, options):
+def fit(train, options, history):
     given = [getattr(options, field) for _,field,_,_ in PARTS]
     unavailable = unobservable_keys(options.model_dump())
     disconnected = {i for i, part in enumerate(PARTS) if part[0] in unavailable}
@@ -146,7 +42,8 @@ def fit(train, options):
     status = {key: ("estimate" if v is None else "ignored" if v==0 else "fixed")
               for v,(key,*_) in zip(given,PARTS)}
     diagnostics = {"power_stage_model":"full_nonideal_buck", "parameter_status":status,
-                   "method":"Switched-circuit waveform least squares", "drive_source":"measured PWM",
+                   "method":"Switched-circuit waveform least squares", "drive_source": "measured PWM" if history is not None else "PLECS RC closed loop",
+                   "fixed_step_s": STEP, "sampling_branch_included": True,
                    "identifiability_condition_number":1., "parameter_at_bound":False}
     for i in disconnected:
         parts[i] = 0.  # Numerical placeholder used only by the simulator.
@@ -162,11 +59,37 @@ def fit(train, options):
     def residual(log_values):
         p = parts.copy()
         p[free] = np.exp(log_values)
-        predicted = simulate(train[:,0],train[:,3],data[0],options.vin,options.resistance_ohm,p)
+        predicted = predict(train[:,0],history,options,p)
         return (((predicted-data)/scale)*weight[:,None]).ravel()
-    result = least_squares(residual,np.log(parts[free]),bounds=(np.log([1e-16]*len(free)),
-                           np.log([PARTS[i][3] for i in free])),diff_step=1e-5,max_nfev=120)
-    if not result.success:
+    bounds = (np.log([1e-16]*len(free)), np.log([PARTS[i][3] for i in free]))
+    def optimize(seed):
+        return least_squares(residual, np.log(seed[free]), bounds=bounds, diff_step=1e-5, max_nfev=120)
+
+    varying_resonance = 2 in free or 5 in free
+    try:
+        result = optimize(parts)
+    except (ValueError, np.linalg.LinAlgError, FloatingPointError):
+        if not varying_resonance:
+            raise
+        result = None
+    # If the initial resonance is outside the measurement bandwidth, try a
+    # second basin whose capacitive/inductive reactance equals the load at
+    # the sampling Nyquist frequency. Fixed and omitted values stay intact.
+    if varying_resonance and (result is None or not result.success or np.sqrt(np.mean(result.fun**2)) > 1e-5):
+        seed = parts.copy()
+        omega = np.pi / np.median(dt)
+        for i, value in ((2, 1/(omega*options.resistance_ohm)), (5, options.resistance_ohm/omega)):
+            if i in free:
+                seed[i] = np.clip(value, 1e-16, PARTS[i][3])
+        try:
+            alternate = optimize(seed)
+        except (ValueError, np.linalg.LinAlgError, FloatingPointError):
+            if result is None or not result.success:
+                raise
+        else:
+            if alternate.success and (result is None or not result.success or alternate.cost < result.cost):
+                result = alternate
+    if result is None or not result.success:
         raise ValueError("七参数拟合未收敛，请检查单位、PWM 对齐和初始状态，或固定已知器件值。")
     parts[free] = np.exp(result.x)
     # Log sensitivities compare proportional changes across H, F and ohms.

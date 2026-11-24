@@ -136,19 +136,19 @@ EL=L iL^2/2；EC=C vC^2/2。""",
       ["ti-sizing", "infineon-loss"]),
 entry("buck-nonideal", "非理想 Buck 接线、绕组寄生电容与输出 ESL / Nonideal power stage",
       "esr esl dcr 寄生 绕组 电容 电感 内阻 压降 非理想模型 体二极管 自谐振 cw ron vf parasitic nonideal winding buck_with_parasitics",
-      "buck_with_parasitics.plecs 的七参数模式 FULL_STAGE 用 CSV 实测 PWM、绕组电流和端电压拟合 L、rL、Cw、C、rC、ESL、Ron，负载固定。逐项留空则估计，正数为已知，0 忽略。L=0 对应短接理想绕组，C=0 对应断开输出电容支路。低带宽数据可能无法分离小寄生量。",
+      "buck_with_parasitics.plecs 的七参数模式 FULL_STAGE 从模型上电初态按固定内部步长运行，使用 CSV 的绕组电流与输出端电压拟合 L、rL、Cw、C、rC、ESL、Ron，负载固定。逐项留空则估计，正数为已知，0 忽略。L=0 对应短接理想绕组，C=0 对应断开输出电容支路。低带宽数据可能无法分离小寄生量。",
       """SW 到 vo 有两条并联支路：L1（主电感 L）与 R6（绕组电阻 rL）串联；C4（绕组电容 Cw）跨接在整条串联支路两端。
 vo 经 L2（电容串联电感 ESL）、R7（电容串联电阻 rC）和 C1（输出电容 C）串联回地。D2 的阳极接 SW、阴极接 Vin，D1 的阳极接地、阴极接 SW。
 取 vW=vSW−vo，绕组支路电流 iL 从 SW 流向 vo，则 vW=L1·diL/dt+rL·iL，iCw=Cw·dvW/dt。
 输出电解支路电流 iC 从 vo 流向地，则 iC=iL+iCw−vo/Rload−isense，vo=vC+rC·iC+ESL·diC/dt，C1·dvC/dt=iC。
 忽略 Cw 与 ESL 后的简化方程：vo=vC+rC iC，C dvC/dt=iC，iC=iL-vo/Rload-isense。
 若 isense=0：vo=(vC+rC iL)/(1+rC/Rload)。
-导通：L diL/dt=Vin-vo-(rL+Ron)iL。
+完整模型导通时，通道电流与体二极管电流之和满足开关节点 KCL；体二极管截止时，vSW=Vin−Ron·(iL+iCw)。忽略 Cw 时，L diL/dt=Vin-vo-(rL+Ron)iL。
 续流：L diL/dt=-vo-Vf-(rL+rD)iL。
 CCM 小纹波稳态：Vo≈d Vin-(1-d)Vf-Io[rL+d Ron+(1-d)rD]。
 理想与非理想参数不可混同：Rload≠rL≠rC。""",
-      """T1 是 MOS 开关，Ron 表示其导通电阻，D2 模拟体二极管，D1 提供续流路径。开关 S1 受阶跃信号控制，将附加负载 varR 并入输出端。输出取样经 RC 补偿、调制增益与限幅后参与 PWM 控制。
-引用具体器件值时，应说明该值来自用户在当前实验的输入还是本次波形辨识。尚未辨识的空白项标为待辨识；负载切换时刻以当前实验记录为准。
+      """T1 是 MOS 开关，Ron 表示其导通电阻，D2 模拟体二极管，D1 提供续流路径。开关 S1 受阶跃信号控制，将附加负载 varR 并入输出端。输出取样电流参与端口 KCL。取样节点经并联 RC 接入反相端，运放输出经串联 RC 反馈到反相端，同相端接基准。运放输出经增益、限幅后与锯齿载波比较。自动模式以预测端电压闭环驱动，也可选择从上电时刻回放实测门极。
+绕组与 ESL 电流、绕组跨端电压、输出及补偿电容电压均取模型中各自的上电状态。绕组电容的参考方向为 SW 到输出端。内部固定时钟独立于 CSV 采样间隔，截取中段时先传播上电历史，留出段连续运行。尚未辨识的空白项标为待辨识；负载切换时刻以当前实验记录为准。
 简化模式的积分与 PANN 方程见 buck-parasitics-integral 和 buck-parasitics-pann。有反馈取电时需联立输出端 KCL。Vf、rD 用于考虑二极管压降的解析扩展，七参数拟合采用理想二极管钳位。""",
       ["full-stage-fit", "local-plecs", "ti-buck"]),
 entry("buck-loss-thermal", "损耗、温升与寿命边界 / Loss and thermal estimates",

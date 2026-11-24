@@ -53,7 +53,7 @@ from .schemas import AnalysisRequest, ChatRequest, FitRequest
 from .report import ReportRequest, build_pdf
 
 from . import manual_import
-from . import archive
+from . import archive, openai_relay
 from . import local_csv
 from .deployment import archive_on_volume, hosted
 from .memory_usage import log_memory
@@ -65,6 +65,7 @@ if APP_TOKEN_HEADER not in {"Authorization", "X-Buck-Authorization"}:
 if hosted() and len(TOKEN) < 20:
     raise RuntimeError("Production requires APP_ACCESS_TOKEN of at least 20 characters.")
 app = FastAPI(title="Buck Lab API", version="0.1.0")
+app.include_router(openai_relay.router)
 origins = [s.strip().rstrip("/") for s in os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5500,http://127.0.0.1:5500").split(",") if s.strip()]
 lock = threading.RLock()
 datasets = OrderedDict()
@@ -83,12 +84,12 @@ async def size_limit(request: Request, call_next):
         return JSONResponse(status_code=413, content={"detail": "请求过大，CSV 上限为 32 MB。"})
     # Reject missing/incorrect credentials before parsing an upload body.
     bridge_worker = request.url.path in {'/api/bridge/claim', '/api/bridge/heartbeat'} or request.url.path.startswith('/api/bridge/complete/')
-    if TOKEN and request.url.path.startswith("/api/") and request.url.path != "/api/health" and not bridge_worker and request.method != "OPTIONS":
+    if TOKEN and request.url.path.startswith("/api/") and request.url.path != "/api/health" and not bridge_worker and not request.url.path.startswith("/api/openai-relay/") and request.method != "OPTIONS":
         if not hmac.compare_digest(request.headers.get(APP_TOKEN_HEADER, "").encode(), ("Bearer " + TOKEN).encode()):
             return JSONResponse(status_code=401, content={"detail": "访问口令不正确，请在连接设置中输入后端 APP_ACCESS_TOKEN。"})
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    if request.url.path.startswith(("/api/archive", "/api/jobs", "/api/agent", "/api/bridge")):
+    if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     elif request.url.path == "/" or request.url.path.endswith((".js",".html",".css")):
         response.headers["Cache-Control"] = "no-cache"
@@ -184,10 +185,12 @@ def compact(data):
 
 @app.get("/api/health")
 def health():
-    available = [name for name, key in (("deepseek", "DEEPSEEK_API_KEY"), ("gpt-6.1-terra", "OPENAI_API_KEY"))
-                 if os.getenv(key, "").strip()]
+    connector = openai_relay.status()
+    available = ["deepseek"] if os.getenv("DEEPSEEK_API_KEY", "").strip() else []
+    if connector in ("online", "offline") or (connector == "direct" and os.getenv("OPENAI_API_KEY", "").strip()):
+        available.append("gpt-6.1-terra")
     return {"status": "ok", "version": "0.1.0", "chat_mode": available[0] if available else "unavailable",
-            "chat_models": available,
+            "chat_models": available, "openai_connector": connector,
             "model": "gpt-6.1-terra" if available == ["gpt-6.1-terra"] else os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "requires_token": bool(TOKEN), "app_auth_header": APP_TOKEN_HEADER,
             "pann_available": pann_available(),
             "source_url": os.getenv("SOURCE_URL", ""), "archive_enabled": True,

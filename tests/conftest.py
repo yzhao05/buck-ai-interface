@@ -15,6 +15,7 @@ REAL_RUN = harness_runtime.run
 
 @pytest.fixture(autouse=True)
 def scripted_harness(monkeypatch, tmp_path):
+    monkeypatch.delenv("OPENAI_RELAY_TOKEN", raising=False)
     monkeypatch.setattr(harness_runtime,'ROOT',tmp_path/'harness')
     monkeypatch.setattr(manual_import, 'database', lambda: tmp_path / 'manuals.sqlite3')
     async def run(messages,tools,invoke,budget):

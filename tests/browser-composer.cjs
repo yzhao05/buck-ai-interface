@@ -27,9 +27,9 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await model.selectOption('gpt-6.1-terra');
   const attachments=page.locator('#chat-attachment-choice');
   assert.deepEqual(await attachments.locator('option').allTextContents(),['添加附件','添加图片','添加电路图','添加 PDF','用 OpenAI 整理手册并存入共享知识库']);
-  let uploaded=0,polled=0;
-  await page.route('**/api/manuals/import',route=>{uploaded++;return route.fulfill({json:{job_id:'job-id'}});});
-  await page.route('**/api/manuals/import/job-id',route=>{polled++;return route.fulfill({json:
+  let uploaded=0,polled=0,importOwner;
+  await page.route('**/api/manuals/import',route=>{uploaded++;importOwner=route.request().headers()["x-session-id"];return route.fulfill({json:{job_id:'job-id'}});});
+  await page.route('**/api/manuals/import/job-id',route=>{polled++;assert.equal(route.request().headers()["x-session-id"],importOwner);return route.fulfill({json:
     polled<=2?{status:'processing',page:3}:{status:'completed',result:{already_saved:false,entries:3,verified:1,unreadable:[{page:4,title:'Faint graph'}]}}});});
   const importChooser=page.waitForEvent('filechooser');
   await attachments.selectOption('manual');
@@ -37,6 +37,8 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   await page.getByText(/正在自动取点并复核叠图/).first().waitFor();
   assert.equal(await page.locator('#new-chat').isEnabled(),true);
   assert.equal(await attachments.locator('option[value="manual"]').isDisabled(),true);
+  await page.locator('#new-chat').click();
+  await page.waitForFunction(prior=>sessionId!==prior,importOwner);
   await page.getByText(/Faint graph/).first().waitFor();
   assert.equal(await attachments.locator('option[value="manual"]').isEnabled(),true);
   assert.equal(uploaded,1);assert(polled>=2);

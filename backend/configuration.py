@@ -117,7 +117,7 @@ PROMPT = """当用户要求修改界面时，可选择 configure_identification 
 时间必须明确单位，ms/毫秒除以1000，us/微秒除以1000000。只改结束时间就只返回end_s。不能把时间窗口当作PANN训练窗口周期数。
 滤波仅用于控制器PWM重建的电压预处理；不能为了使滤波生效而切换PWM来源。关闭滤波只设置pwm_denoise=none，不修改原周期数。
 若要求“调整滤波”却未说明方法或数值，或单位不明、要求超范围，返回clarification询问具体设置，并返回空changes及start_after_apply=false，不自行挑选默认值。
-仅提取用户这次明确要求的变化。七参数非理想模式为 FULL_STAGE，使用实测 PWM 和 circuit_fit，七个输入均按 null 估计、正数固定、零忽略。固定已知 R 并辨识 L/C 表示 mode=LC；联合辨识 L/C/R 表示 mode=LCR。联合辨识 L/C/rL/rC 表示 mode=LC_RL_RC，自动开启 include_parasitics；固定负载 R，每项寄生电阻正数固定，前端 null 估计，0 忽略。
+仅提取用户这次明确要求的变化。七参数非理想模式为 FULL_STAGE，使用模型闭环或实测 PWM 回放和 circuit_fit，七个输入均按 null 估计、正数固定、零忽略。固定已知 R 并辨识 L/C 表示 mode=LC；联合辨识 L/C/R 表示 mode=LCR。联合辨识 L/C/rL/rC 表示 mode=LC_RL_RC，自动开启 include_parasitics；固定负载 R，每项寄生电阻正数固定，前端 null 估计，0 忽略。
 未要求改变的字段不要填。当前用户明确引用先前讨论的参数时可解析指代；不能自行从历史回答、图片、文件名或默认值补参数。不能把建议、举例、引用、询问方法当成操作。
 用户明确说开始、运行或执行，或明确回答此前阻止该启动请求的选择时，才可将 start_after_apply 设为 true，且必须已有PWM来源和方法选择。没有待继续启动请求时只选择方法/打开面板不启动。否定启动时必须 false。
 询问如何操作、仅分析结果、含糊的继续/好的均返回 open_panel=false, changes={}, start_after_apply=false。
@@ -212,7 +212,7 @@ def agent_action(request, name, arguments):
         return plan_for_selected_methods(request,proposal,changes)
     merged, extras = validate_structure(request, proposal, changes)
     load_only = extras.get('assets',{}).get('csv_id') and not changes and not proposal.start_after_apply
-    if not load_only and merged.pwm_source == 'controller' and merged.mode not in ('LC', 'LC_RL_RC'):
+    if not load_only and merged.pwm_source == 'controller' and merged.mode not in ('LC', 'LC_RL_RC', 'FULL_STAGE'):
         raise ValueError('Reconstructed PWM requires fixed-R LC mode')
     if not (changes or extras or proposal.open_panel or proposal.start_after_apply or proposal.request_selection):
         return None

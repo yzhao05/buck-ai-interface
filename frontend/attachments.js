@@ -1,5 +1,4 @@
-/* Original CSV blobs live in IndexedDB, isolated by project/backend/conversation.
-   Keep large files out of localStorage; never store credentials here. */
+/* Hosted CSVs are staged in memory and archived on the server. */
 "use strict";
 window.BuckAttachments = (() => {
   function database() {
@@ -31,7 +30,7 @@ window.BuckAttachments = (() => {
       });
     } finally { db.close(); }
   }
-  return {
+  const legacy = {
     save(conversation, sha256, filename, blob, epoch = 0) {
       return transaction("readwrite", (store, done) => {
         const key=conversation+":"+sha256, request=store.get(key);
@@ -64,6 +63,53 @@ window.BuckAttachments = (() => {
           if (cursor) { if (keepEpoch === null || (cursor.value.epoch || 0) < keepEpoch) cursor.delete(); cursor.continue(); }
         };
       });
+    }
+  };
+  // In Studio, IndexedDB is read solely to migrate old files. New blobs
+  // are staged in RAM until the archive acknowledges their SHA-256.
+  const staged = new Map();
+  async function hasLegacyFiles() {
+    if (!serverArchiveOnly()) return true;
+    if (!window.indexedDB) return false;
+    if (typeof indexedDB.databases!=="function") return true;
+    return (await indexedDB.databases()).some(db=>db.name==="buck-csv-v1");
+  }
+  return {
+    async save(conversation, sha256, filename, blob, epoch=0) {
+      if (!serverArchiveOnly()) return legacy.save(conversation,sha256,filename,blob,epoch);
+      const key=conversation+":"+sha256;
+      if ((staged.get(key)?.epoch ?? -1)>epoch) return;
+      const file={key,conversation,sha256,filename,blob,epoch,version:crypto.randomUUID()};
+      staged.set(key,file);
+      return file;
+    },
+    async load(conversation,sha256,epoch=0) {
+      const item=staged.get(conversation+":"+sha256);
+      return item?.epoch===epoch ? item : await hasLegacyFiles() ? legacy.load(conversation,sha256,epoch) : null;
+    },
+    async list(conversation) {
+      const old=await hasLegacyFiles() ? await legacy.list(conversation) : [];
+      if (!serverArchiveOnly()) return old;
+      const files=new Map(old.map(f=>[f.key,f]));
+      for (const file of staged.values()) if (file.conversation===conversation) files.set(file.key,file);
+      return [...files.values()];
+    },
+    async acknowledged(file) {
+      if (staged.get(file.key)===file) staged.delete(file.key);
+      if (!await hasLegacyFiles()) return;
+      await transaction("readwrite",store=>{
+        const read=store.get(file.key);
+        read.onsuccess=()=>{
+          const old=read.result;
+          if (old && (old.epoch || 0)===(file.epoch || 0) && old.sha256===file.sha256)
+            store.delete(file.key);
+        };
+      });
+    },
+    async remove(conversation,keepEpoch=null) {
+      if (await hasLegacyFiles()) await legacy.remove(conversation,keepEpoch);
+      for(const [key,file] of staged)
+        if(file.conversation===conversation && (keepEpoch===null || file.epoch<keepEpoch)) staged.delete(key);
     }
   };
 })();

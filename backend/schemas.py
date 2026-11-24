@@ -84,8 +84,8 @@ class FitOptions(StrictModel):
     @model_validator(mode="after")
     def require_parasitics(self):
         if self.mode == "FULL_STAGE":
-            if self.pwm_source != "measured":
-                raise ValueError("七参数波形拟合需要 CSV 中的实测 PWM 列。")
+            if "pwm_source" not in self.model_fields_set:
+                self.pwm_source = "controller"
             if "method" in self.model_fields_set and self.method != "circuit_fit":
                 raise ValueError("七参数模式仅支持开关电路波形拟合（circuit_fit）。")
             self.method = "circuit_fit"
@@ -324,6 +324,7 @@ class ExperimentParameters(StrictModel):
 
 
 class ExperimentComparisonContext(StrictModel):
+    fixed_step_s: float | None = Field(default=None, gt=0)
     options: FitOptions
     mapping: Mapping
     start_s: float

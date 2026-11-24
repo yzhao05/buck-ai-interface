@@ -3,6 +3,7 @@ import csv
 import codecs
 import hashlib
 import io
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -54,9 +55,14 @@ def suggest_mapping(dataset: Dataset) -> dict:
     cols = list(dataset.frame.columns)
     def find(words):
         return next((c for c in cols if any(w in c.lower() for w in words)), None)
+    # The nonideal output terminal and the internal capacitor voltage can both
+    # appear in one Scope export. Prefer the terminal even when it is listed last.
+    output_voltage = find(["load voltage", "output voltage", "负载电压", "输出端电压", "输出电压"])
+    if output_voltage is None:
+        output_voltage = next((c for c in cols if re.search(r"(?<![a-z0-9])v_?(out|o)(?![a-z0-9])", c, re.I)), None)
     return {"time": find(["time", "时间"]) or cols[0],
             "current": find(["inductor current", "il", "i_l", "电感电流"]) or cols[1],
-            "voltage": find(["capacitor voltage", "vout", "vo", "v_o", "电压"]) or cols[2],
+            "voltage": output_voltage or find(["capacitor voltage", "vout", "vo", "v_o", "电压"]) or cols[2],
             "pwm": find(["pwm", "gate", "relational", "开关"]),
             "time_unit": "s", "current_unit": "A", "voltage_unit": "V"}
 

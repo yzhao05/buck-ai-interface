@@ -50,7 +50,9 @@ function chatExperiments() {
     parameters:{...run.result.parameters},
     ground_truth:run.ground_truth || null,
     comparison_context:run.result.options && run.result.mapping && Number.isFinite(run.result.train_start_s) && Number.isFinite(run.result.validation_end_s)
-      ? {options:run.result.options,mapping:run.result.mapping,start_s:run.result.train_start_s,end_s:run.result.validation_end_s} : null
+      ? {options:run.result.options,mapping:run.result.mapping,
+         ...(run.result.options.mode==="FULL_STAGE" && run.result.diagnostics?.fixed_step_s ? {fixed_step_s:run.result.diagnostics.fixed_step_s} : {}),
+         start_s:run.result.train_start_s,end_s:run.result.validation_end_s} : null
   }));
 }
 function captureExperiment({updateTruth=false}={}) {
@@ -69,7 +71,7 @@ function captureExperiment({updateTruth=false}={}) {
 }
 function saveExperimentKeys(record) {
   record.experiments=mergeExperiments(record.experiments,storedExperiments(record.id));
-  for (const run of record.experiments) localStorage.setItem(conversationPrefix+record.id+":experiment:"+run.id,JSON.stringify(run));
+  if (!serverArchiveOnly()) for (const run of record.experiments) localStorage.setItem(conversationPrefix+record.id+":experiment:"+run.id,JSON.stringify(run));
 }
 async function recoverExperiments() {
   if (!state.connected || !activeConversation) return;
@@ -94,7 +96,7 @@ function renderExperiments() {
     const row=document.createElement("li"), p=run.result.parameters, opts=run.result.options || {};
     const name=document.createElement("strong");name.textContent=`${index+1}. ${run.dataset.filename}`;
     const method={circuit_fit:tr("开关电路波形拟合"),pann:"PANN",weighted_integral:tr("抗噪加权积分"),integral:tr("积分辨识")}[opts.method || run.result.method] || "—";
-    const pwm={measured:tr("实测 PWM"),controller:tr("重建 PWM")}[opts.pwm_source] || "—";
+    const pwm={measured:tr("实测 PWM"),controller:tr(opts.mode==="FULL_STAGE" ? "模型闭环 · RC 补偿与 PWM" : "重建 PWM")}[opts.pwm_source] || "—";
     const detail=document.createElement("div");detail.textContent=`${method} · ${pwm} · L ${Number(p.L_H*1e6).toPrecision(6)} μH · C ${Number(p.C_F*1e6).toPrecision(6)} μF`;
     row.append(name,detail);list.append(row);
   }

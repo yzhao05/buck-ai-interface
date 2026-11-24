@@ -76,7 +76,7 @@ def main():
                         "connections": snapshot["connections"]}
         models[name] = {"source_relative_to_ST4001": "仿真/buck_converter_with_parameter_sweep/" + relative,
                         **snapshot}
-    result = {"reviewed_on": "2026-11-20", "purpose": "Reference model definitions only; never identification ground truth for an unknown CSV.",
+    result = {"reviewed_on": "2026-11-25", "purpose": "Reference model definitions only; never identification ground truth for an unknown CSV.",
               "models": models, "derivation_crosscheck": "PANN-main/closed_loop_buck.py (read only; original equations checked against KCL)",
               "upstream_rag": "reference/PE-GPT-main/core/llm/llm.py: rag_load uses SimpleDirectoryReader, chunking and VectorStoreIndex; this app uses local lexical retrieval without embeddings."}
     destination = ROOT / "backend/knowledge_base/model_evidence.json"

@@ -64,7 +64,14 @@ require('node:child_process').execFileSync('.venv/Scripts/python.exe',['-c',
   await page.locator('#enter-identification').click();
   await page.locator('#fit-mode').selectOption('FULL_STAGE');
   assert.equal(await page.locator('#fit-method').inputValue(),'circuit_fit');
-  assert.equal(await page.locator('#pwm-source').inputValue(),'measured');
+  await page.locator('#pwm-source').selectOption('auto');
+  assert.equal(await page.evaluate(()=>pwmSource()),'controller');
+  await page.locator('#edit-circuit').click();
+  await page.locator('#circuit-reference_V').fill('4.9');
+  await page.locator('#save-circuit').click();
+  await page.locator('#pwm-source').selectOption('measured');
+  assert.equal(await page.evaluate(()=>options().controller.reference_V),4.9);
+  await page.locator('#pwm-source').selectOption('auto');
   const reference=page.locator('#circuit-preview img');
   await reference.evaluate(img=>img.decode());
   assert((await reference.getAttribute('src')).includes('buck-with-parasitics.png'));
@@ -75,6 +82,13 @@ require('node:child_process').execFileSync('.venv/Scripts/python.exe',['-c',
   await page.waitForFunction(()=>state.result?.method==='circuit_fit' && !historyLocked(),null,{timeout:60000});
   assert.equal(await page.locator('#full-stage-results > div').count(),8);
   assert.equal(await page.evaluate(()=>state.result.parameters.L_H),250e-6);
+  assert.equal(await page.evaluate(()=>state.result.options.controller.reference_V),4.9);
+  assert(await page.evaluate(()=>resultMatchesCurrent(state.result)));
+  assert.equal(await page.evaluate(()=>{
+    const previous=structuredClone(state.result);
+    delete previous.diagnostics.fixed_step_s;
+    return resultMatchesCurrent(previous);
+  }),false);
   await page.locator('#map-current').dispatchEvent('change');
   assert(await page.locator('#full-stage-results').isHidden());
   assert.equal(await page.locator('#full-stage-results').textContent(),'');

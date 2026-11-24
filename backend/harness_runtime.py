@@ -6,6 +6,7 @@ including retries and compaction. Shell/file tools are disabled by profile patch
 """
 import asyncio
 import contextvars
+from contextlib import nullcontext
 import hashlib
 import hmac
 import json
@@ -20,7 +21,7 @@ import threading
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
-from . import terra_provider
+from . import terra_provider, openai_relay
 from .provider_errors import HarnessTurnError, AgentCapacityError, AgentMemoryError, SessionRestoreError
 from .memory_usage import log_memory, low_headroom, memory_readings
 
@@ -55,6 +56,7 @@ class Gateway:
         self.image_marker = None
         self.image_blocks = []
         self.terra_reasoning = {}
+        self.closed = threading.Event()
         self.require_image_marker = False
         self.lock = threading.Lock()
         gateway = self
@@ -118,8 +120,11 @@ class Gateway:
                             upstream_body = terra_provider.payload(body, gateway.terra_reasoning, gateway.budget.reasoning_effort)
                         call_id = gateway.budget.start_call()
                     # Terra uses the deployment's HTTPS proxy and CA settings, as PDF import does.
-                    with httpx.Client(timeout=None, trust_env=is_terra) as client:
-                        if is_terra:
+                    use_relay = is_terra and openai_relay.configured()
+                    with (nullcontext() if use_relay else httpx.Client(timeout=None, trust_env=is_terra)) as client:
+                        if use_relay:
+                            stream = terra_provider.stream(client, upstream_body, gateway.terra_reasoning, cancelled=gateway.closed)
+                        elif is_terra:
                             stream = terra_provider.stream(client, upstream_body, gateway.terra_reasoning)
                         else:
                             root = os.getenv('HARNESS_BASE_URL') or os.getenv('DEEPSEEK_BASE_URL','https://api.deepseek.com').rstrip('/').removesuffix('/v1')+'/anthropic'
@@ -280,6 +285,7 @@ class Gateway:
         return self
 
     def __exit__(self, *_):
+        self.closed.set()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
