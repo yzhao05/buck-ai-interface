@@ -129,49 +129,39 @@ async function attachCircuitImage(){
 async function importManual(file){
   if(!file || historyLocked() || !activeConversation)return;
   if(file.size>8*1024*1024){notice("请选择不超过 8 MB 的 PDF。");return;}
-  const owner=activeConversation.id;
-  const dialog=$("manual-preview");
-  state.busy=true;controls();
+  const option=$("chat-attachment-choice").querySelector('option[value="manual"]');
+  if(option.disabled)return;
+  const owner=activeConversation.id, service=base;
+  const current=()=>activeConversation?.id===owner && base===service;
+  option.disabled=true;
   try {
     notice("OpenAI 正在整理手册…",true);
     const form=new FormData();form.append("file",file);
-    const preview=await api("/api/manuals/preview",{method:"POST",body:form,timeout:270000});
-    if(activeConversation?.id!==owner)return;
-    if(preview.already_saved){notice("这份手册已在项目知识库中。",true);return;}
-    const list=$("manual-entries");list.replaceChildren();
-    for(const entry of preview.entries){
-      const title=document.createElement("h3");
-      title.textContent="PDF p. "+entry.page+" · "+entry.title;
-      const body=document.createElement("p");
-      body.textContent=[entry.content,entry.conditions].filter(Boolean).join(" · ");
-      list.append(title,body);
-      if(entry.points.length){
-        const points=document.createElement("p");
-        const [x,xu,y,yu]=entry.axes;
-        points.textContent=x+" ["+xu+"] → "+y+" ["+yu+"]: "+entry.points.map(p=>"("+p.join(", ")+")").join(" ");
-        list.append(points);
+    const job=await api("/api/manuals/import",{method:"POST",body:form});
+    let lastPage=null;
+    while(current()){
+      const record=await api("/api/manuals/import/"+job.job_id);
+      if(!current())return;
+      if(record.status==="failed")throw Error(record.error);
+      if(record.status==="completed"){
+        const result=record.result;
+        const details=result.unreadable.map(row=>"p. "+row.page+" · "+row.title).join("\n");
+        const label=tr(result.already_saved?"这份手册已在项目知识库中。":"手册已入库，可在新对话中查询。");
+        notice([label,tr("已收录条目")+" "+result.entries,tr("可查值曲线")+" "+result.verified,
+                details?tr("以下曲线仅保存说明和页码：")+"\n"+details:""].filter(Boolean).join("\n"),true);
+        return;
       }
+      if(record.status!=="processing")throw Error(tr("无法读取手册导入状态，请重新选择 PDF。"));
+      if(record.page && record.page!==lastPage){
+        lastPage=record.page;
+        notice(tr("正在自动取点并复核叠图")+" · PDF p. "+record.page,true);
+      }
+      await new Promise(resolve=>setTimeout(resolve,1500));
     }
-    const link=$("manual-original");
-    link.href=URL.createObjectURL(new Blob([file],{type:"application/pdf"}));
-    dialog.onclose=()=>{URL.revokeObjectURL(link.href);link.removeAttribute("href");list.replaceChildren();};
-    $("manual-feedback").textContent=file.name;
-    $("manual-save").onclick=async()=>{
-      if(activeConversation?.id!==owner){dialog.close();return;}
-      $("manual-save").disabled=$("manual-close").disabled=true;
-      try {
-        const result=await api("/api/manuals/"+preview.token+"/save",{method:"POST"});
-        dialog.close();notice(result.created ? "手册已入库，可在新对话中查询。" : "这份手册已在项目知识库中。",true);
-      } catch(error){$("manual-feedback").textContent=error.message;}
-      finally{$("manual-save").disabled=$("manual-close").disabled=false;}
-    };
-    notice();dialog.showModal();
-  } catch(error){notice(error.message);}
-  finally{state.busy=false;controls();}
+  } catch(error){if(current())notice(error.message);}
+  finally{option.disabled=false;}
 }
 function setupChatImages(){
-  $("manual-close").onclick=()=>$("manual-preview").close();
-  $("manual-preview").oncancel=event=>{if($("manual-save").disabled)event.preventDefault();};
   $("manual-file").onchange=event=>{
     const file=event.target.files[0];event.target.value="";void importManual(file);
   };

@@ -122,9 +122,9 @@ entry('reasoning', '回答模式：自动 / 快速 / 思考', 'reasoning-mode',
 entry('chat-collapse', '聊天输入框：收起 / 展开', 'toggle-chat-compose compact-chat-images',
       '输入框 回复框 收起 缩小 展开 箭头 单行 草稿 collapse expand composer compact',
       '左上角箭头把聊天输入区域收成一行，保留文字输入和发送按钮，再点可展开。只改变显示，不清空草稿、图片或回答模式，不停止Agent。收起时附件菜单、回答模式和上下文标签隐藏；有待发图片或 PDF 时，附件数量按钮仍可见，点击展开检查附件。Enter发送；Shift+Enter展开并换行。浏览器记住收起状态。')
-entry('chat-images', '聊天附件：图片、电路图、PDF 和厂家手册入库', 'manual-file manual-preview manual-save manual-close chat-attachment-choice chat-pdf-file chat-image-file chat-image-list chat-image-dialog close-chat-image reuse-chat-image chat-image-preview',
+entry('chat-images', '聊天附件：图片、电路图、PDF 和厂家手册入库', 'manual-file chat-attachment-choice chat-pdf-file chat-image-file chat-image-list chat-image-dialog close-chat-image reuse-chat-image chat-image-preview',
       '添加图片 添加电路图 粘贴 拖入 移除 附加到当前提问 image attachment preview reuse',
-      '用 OpenAI 整理手册会将所选 PDF 发送到 OpenAI，提取带页码的正文、表格及曲线近似值。对照原始 PDF 核对后保存到项目共享知识库，新对话可按料号查询。添加附件下拉框提供添加图片、添加电路图和添加 PDF。每次可选一份 PDF，重新选择会替换待发 PDF，发送后助手收到标有页码的可提取文字；扫描页可另发截图。添加附件与回答模式同一行，位于模式选择左侧；窄聊天区仍保留该顺序，服务信息另行显示。选择、粘贴或拖入PNG/JPEG/GIF/WebP，每次最多3张、单张最大8MB；压缩后发送，GIF只取首帧。添加电路图优先使用已保存参考图，没有上传图时把当前默认图及参数标注转成图片；输入框为空时填入分析提示，仍需发送。待发缩略图的移除按钮只移除本次附件；点击图片可放大，关闭只关闭预览，附加到当前提问复用预览图。历史提到图片不等于本轮重新附带原图。', 'frontend/chat-images.js')
+      '选择「用 OpenAI 整理手册并存入共享知识库」并上传 PDF 会启动后台任务。AI 识别图例、单位和两轴刻度，程序按原图取点，AI 复核采样叠图后自动保存到项目共享知识库。无法确认的曲线仅保留说明和页码。导入期间可继续聊天。旧版导入曲线重新上传原 PDF 后会自动复核。添加附件下拉框提供添加图片、添加电路图和添加 PDF。每次可选一份 PDF，重新选择会替换待发 PDF，发送后助手收到标有页码的可提取文字；扫描页可另发截图。添加附件与回答模式同一行，位于模式选择左侧；窄聊天区仍保留该顺序，服务信息另行显示。选择、粘贴或拖入PNG/JPEG/GIF/WebP，每次最多3张、单张最大8MB；压缩后发送，GIF只取首帧。添加电路图优先使用已保存参考图，没有上传图时把当前默认图及参数标注转成图片；输入框为空时填入分析提示，仍需发送。待发缩略图的移除按钮只移除本次附件；点击图片可放大，关闭只关闭预览，附加到当前提问复用预览图。历史提到图片不等于本轮重新附带原图。', 'frontend/chat-images.js')
 entry('agent-progress', 'Agent 任务进度与恢复面板', 'agent-progress agent-status agent-preview',
       '任务进度 状态 流式 回答 Harness agent progress',
       '显示Agent工具执行状态和逐步到达的回答文本，不显示内部推理。任务完成、失败、中断、停止含义不同；连接断开时后台可能继续运行。折叠面板不停止任务。', 'frontend/agent-harness.js')

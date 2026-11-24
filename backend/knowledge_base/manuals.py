@@ -23,8 +23,10 @@ def parse(rows, editions):
     for row in rows:
         origin = row['source_file']
         locator = row['locator']
-        location = f'PDF p. {locator}' if origin.lower().endswith('.pdf') and locator.isdigit() else locator
+        location = f'PDF p. {locator}' if (origin.lower().endswith('.pdf') or row['manual_id'].startswith('pdf-')) and locator.isdigit() else locator
         content = f"{origin} · {location}\n{row['content']}"
+        if row["kind"] == "curve_pending":
+            content += "\n此曲线尚未数字化，仅有图例定位信息，无已核对的数值采样点。"
         if row['kind'] == 'curve':
             x_name, x_unit, y_name, y_unit = json.loads(row['axes_json'])
             points = json.loads(row['points_json'])

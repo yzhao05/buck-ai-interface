@@ -205,28 +205,21 @@ async def upload(file: UploadFile = File(...), owner: str = Depends(session), re
         await file.close()
 
 
-@app.post("/api/manuals/preview")
-async def preview_manual(file: UploadFile = File(...), owner: str = Depends(session)):
-    throttle(owner, "manual-preview", 4)
+@app.post("/api/manuals/import", status_code=202)
+async def import_manual(file: UploadFile = File(...), owner: str = Depends(session)):
+    throttle(owner, "manual-import", 4)
     raw = await file.read(8 * 1024 * 1024 + 1)
     if len(raw) > 8 * 1024 * 1024:
         raise HTTPException(413, "请选择不超过 8 MB 的 PDF。")
     if not raw.startswith(b"%PDF-"):
         raise HTTPException(422, "请选择有效的 PDF 文件。")
     filename = Path((file.filename or "manual.pdf").replace(chr(92), "/")).name[:200]
-    digest, saved = await run_in_threadpool(manual_import.saved_digest, raw)
-    if saved:
-        return {"already_saved": True, "manual_id": "pdf-" + digest}
-    page_count = await run_in_threadpool(manual_import.pdf_page_count, raw)
-    result = await manual_import.extract(raw, filename)
-    if any(entry.page > page_count for entry in result.entries):
-        raise HTTPException(422, "提取结果引用了原件范围以外的页码，请选取相关页面后重试。")
-    return await run_in_threadpool(manual_import.preview, digest, filename, result, owner)
+    return manual_import.start(raw, filename, owner)
 
 
-@app.post("/api/manuals/{token}/save")
-def save_manual(token: uuid.UUID, owner: str = Depends(session)):
-    return manual_import.save(str(token), owner)
+@app.get("/api/manuals/import/{token}")
+def manual_import_status(token: uuid.UUID, owner: str = Depends(session)):
+    return manual_import.job_status(str(token), owner)
 
 
 @app.post("/api/chat/pdf")
