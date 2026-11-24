@@ -110,7 +110,7 @@ function startQueuedIdentificationPlan(){
 }
 function planInputs(){
   return JSON.stringify({sha256:state.dataset?.sha256,mapping:state.mapping,
-    fields:experimentFields.filter(id=>!['fit-method','selected-result','chat-images','controller-image'].includes(id)).map(id=>[id,$(id).value])});
+    fields:experimentFields.filter(id=>!['fit-method','selected-result','chat-images','chat-pdf','controller-image'].includes(id)).map(id=>[id,$(id).value])});
 }
 async function continueIdentificationPlan(){
   const plan=currentIdentificationPlan();

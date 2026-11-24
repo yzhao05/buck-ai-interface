@@ -50,7 +50,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   const all=await page.evaluate(()=>Object.fromEntries(BuckCircuit.specs.map(([key,,,scale,value])=>[key,Number((value*scale).toPrecision(15))])));
   await send('设置所有控制器字段',{changes:{controller:all}});assert.deepEqual(await page.evaluate(()=>BuckCircuit.read()),all);
   // Manual input inventory: every experimental control maps to a chat field.
-  assert.deepEqual(await page.evaluate(()=>experimentFields.filter(id=>!['reasoning-mode','controller-image','controller-image-name','controller-image-library','controller-parameters','controller-confirmed','selected-result','chat-images'].includes(id)&&!Object.values(configurationFields).some(s=>s[0]===id))),[]);
+  assert.deepEqual(await page.evaluate(()=>experimentFields.filter(id=>!['reasoning-mode','controller-image','controller-image-name','controller-image-library','controller-parameters','controller-confirmed','selected-result','chat-images','chat-pdf'].includes(id)&&!Object.values(configurationFields).some(s=>s[0]===id))),[]);
   const mapping=await page.evaluate(()=>state.mapping);
   await send('修改时间单位为ms',{mapping:{time_unit:'ms'}});assert.equal(await page.locator('#time-unit').inputValue(),'ms');
   await send('恢复s',{mapping:{time_unit:'s'}});assert.deepEqual(await page.evaluate(()=>state.mapping),mapping);

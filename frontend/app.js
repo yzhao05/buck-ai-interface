@@ -192,7 +192,7 @@ function controls() {
   $("choose-diagnostic-reference").disabled=waiting || !state.result;
   $("diagnostic-reference-confirm").disabled=waiting || !selectedDiagnosticReference();
   $("pwm-denoise").disabled=waiting;$("pwm-filter-cycles").disabled=waiting || $("pwm-denoise").value==='none';
-  for(const id of ["attach-chat-image","chat-use-circuit","attach-circuit-image","chat-image-file","reuse-chat-image"]) $(id).disabled=waiting;
+  for(const id of ["chat-attachment-choice","chat-pdf-file","attach-circuit-image","chat-image-file","reuse-chat-image"]) $(id).disabled=waiting;
   $("toggle-result-library").disabled=!activeConversation || (waiting && $("result-library-menu").hidden);
   document.querySelectorAll(".result-library-item").forEach(button=>button.disabled=waiting);
   $("ask-error").disabled = !state.result || (waiting && $("analysis-menu").hidden);
@@ -931,7 +931,7 @@ function configurationFingerprint() {
   return JSON.stringify({conversation:activeConversation?.id,session:sessionId,base,
     dataset:state.dataset?.dataset_id,sha256:state.dataset?.sha256,mapping:state.mapping,result:state.resultId,
     truth:state.truthDraft,reference:selectedDiagnosticReference(),referenceConfirmed:$('diagnostic-reference-confirm').checked,
-    fields:experimentFields.filter(id=>id!=="chat-images").map(id=>[$(id).id,$(id).value]),
+    fields:experimentFields.filter(id=>!["chat-images","chat-pdf"].includes(id)).map(id=>[$(id).id,$(id).value]),
     mappingFields:["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"].map(id=>$(id).value)});
 }
 function validTuningInterval(changes){
@@ -1027,7 +1027,8 @@ async function applyIdentificationAction(action, context) {
 async function sendMessage(value, {analysisRequest=false}={}) {
   const language=window.BuckI18n.language;
   const images=chatImages();
-  const text = value.trim() || (images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
+  const pdf = analysisRequest ? null : chatPdf();
+  const text = value.trim() || (pdf ? tr("请分析此 PDF 附件。") : images.length ? tr("请分析这些图片。") : ""); if (!text || historyLocked() || !activeConversation) return;
   if (!state.connected) { window.alert("Backend is not connected. Please connect to the backend and try again."); return; }
   const currentOnly=analysisRequest;
   const targetResultId=state.resultId;
@@ -1046,10 +1047,12 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     $("conversation-panel").classList.remove("is-empty");
     $("chat-input").value = "";
     $("chat-messages").querySelector(".welcome").hidden = true; $("chat-messages").querySelector(".suggestions").hidden = true;
-    const userArticle=message("user", text,"",images);
+    const displayText=pdf ? text+"\n\n📎 "+pdf.name : text;
+    const userArticle=message("user", displayText,"",images);
     const previousHistory = currentOnly ? [] : readConversation(activeConversation.id).messages.filter(m=>m.mode!=="请求未完成")
       .slice(-10).map(m=>({role:m.role,content:m.content.slice(0,8000),...(m.images?.length?{images:m.images}:{})}));
-    const requestMessage=rememberMessage("user", text, analysisMeta ? {analysis_request:analysisMeta} : null,"",images);
+    const requestMessage=rememberMessage("user", displayText, analysisMeta ? {analysis_request:analysisMeta} : null,"",images);
+    if(pdf)$("chat-pdf").value="";
     setChatImages([]);persistConversation();
     userArticle.dataset.messageId=requestMessage.id;
     finishPending = startPendingReply("正在读取实验上下文…");
@@ -1079,7 +1082,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       } catch { /* Invalid drafts remain a form validation error. */ }
     }
     try { await syncPlecsConfig(); } catch (error) { notice(error.message); }
-    const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language,images,history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
+    const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language,images,...(pdf ? {pdf} : {}),history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
       ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options,pwm_source_setting:$('pwm-source').value,
         plecs_ports:actionContext.plecs ? plecsPortContext(actionContext.plecs) : null,
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),

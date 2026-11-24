@@ -134,11 +134,19 @@
         <button id="toggle-chat-compose" type="button" class="icon-button compose-toggle" aria-label="收起输入框" title="收起输入框" aria-expanded="true" aria-controls="chat-input chat-image-list chat-compose-tools">▼</button>
         <label class="sr-only" for="chat-input">向实验助手提问</label>
         <textarea id="chat-input" rows="3" maxlength="4000" placeholder="询问波形、参数或实验计划…"></textarea>
+        <input type="hidden" id="chat-pdf">
+        <input type="file" id="chat-pdf-file" accept=".pdf,application/pdf" hidden>
         <input type="hidden" id="chat-images" value="">
         <input type="file" id="chat-image-file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
         <div id="chat-image-list" class="message-images" hidden></div>
-        <button id="compact-chat-images" type="button" class="icon-button compose-attachments" aria-label="展开查看已添加图片" title="展开查看已添加图片" hidden>▧</button>
-        <div class="compose-bottom"><div id="chat-compose-tools" class="chat-image-tools"><button type="button" id="attach-chat-image" class="button subtle small">添加图片</button><button type="button" id="chat-use-circuit" class="button subtle small">添加电路图</button></div><label for="reasoning-mode" class="sr-only">回答模式</label><select id="reasoning-mode" aria-label="回答模式"><option value="auto">自动模式</option><option value="fast">快速模式</option><option value="thinking">思考模式</option></select><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div>
+        <button id="compact-chat-images" type="button" class="icon-button compose-attachments" aria-label="展开查看附件" title="展开查看附件" hidden>▧</button>
+        <div class="compose-bottom"><div id="chat-compose-tools" class="chat-image-tools"><select id="chat-attachment-choice" aria-label="添加附件">
+          <option value="" selected disabled>添加附件</option>
+          <option value="image">添加图片</option>
+          <option value="circuit">添加电路图</option>
+          <option value="pdf">添加 PDF</option>
+          <option value="manual">用 OpenAI 整理手册</option>
+        </select></div><label for="reasoning-mode" class="sr-only">回答模式</label><select id="reasoning-mode" aria-label="回答模式"><option value="auto">自动模式</option><option value="fast">快速模式</option><option value="thinking">思考模式</option></select><span id="chat-context">未关联实验数据</span><span id="chat-mode" aria-live="polite">正在检查服务</span><button id="send-chat" type="submit" class="send-button" aria-label="发送消息">↑</button></div>
       </form>
     </main>
     <aside class="main-panel" id="analysis-panel" aria-label="波形与辨识结果" hidden>
@@ -233,6 +241,15 @@
       </div><div id="circuit-fields" class="circuit-fields"></div></div>
       <div class="circuit-dialog-footer"><span>保存修改后需重新确认电路，并重新辨识。</span><button type="submit" class="button primary" id="save-circuit">保存电路设置</button></div>
     </form>
+  </dialog>
+  <input id="manual-file" type="file" accept=".pdf,application/pdf" hidden>
+  <dialog id="manual-preview" class="chat-image-dialog" aria-labelledby="manual-title">
+    <h2 id="manual-title">手册入库预览</h2>
+    <a id="manual-original" target="_blank" rel="noopener">打开原始 PDF</a>
+    <div id="manual-entries"></div>
+    <p id="manual-feedback" role="status"></p>
+    <button type="button" id="manual-save" class="button primary">保存到项目共享知识库</button>
+    <button type="button" id="manual-close" class="button subtle">关闭</button>
   </dialog>
   <dialog id="chat-image-dialog" class="chat-image-dialog"><div class="chat-image-dialog-heading"><span id="chat-image-name"></span><button type="button" id="close-chat-image" class="section-toggle" aria-label="关闭图片">×</button></div><img id="chat-image-preview" alt=""><button type="button" id="reuse-chat-image" class="button secondary small">附加到当前提问</button></dialog>
   <div id="chart-tooltip" class="chart-tooltip" hidden></div>

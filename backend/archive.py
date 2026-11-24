@@ -40,7 +40,7 @@ class SavedConversation(StrictModel):
     meta_updated: int = Field(default=0, ge=0, le=9007199254740991)
     file_epoch: int = Field(default=0, ge=0, le=9007199254740991)
     draft: str = Field(default="", max_length=4000)
-    fields: dict[str, str] = Field(default_factory=dict, max_length=30)
+    fields: dict[str, str] = Field(default_factory=dict, max_length=32)
     attachment: dict | None = None
     messages: list[SavedMessage] = Field(default_factory=list, max_length=10000)
     experiments: list[SavedExperiment] = Field(default_factory=list, max_length=200)

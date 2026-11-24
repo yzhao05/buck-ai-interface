@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import re
+import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -50,6 +52,7 @@ from .parameter_comparison import with_ground_truth
 from .schemas import AnalysisRequest, ChatRequest, FitRequest
 from .report import ReportRequest, build_pdf
 
+from . import manual_import
 from . import archive
 from . import local_csv
 from .deployment import archive_on_volume, hosted
@@ -200,6 +203,59 @@ async def upload(file: UploadFile = File(...), owner: str = Depends(session), re
         return add_dataset(raw, Path(file.filename).name, owner, reference=reference, keep_dataset_id=keep_dataset_id)
     finally:
         await file.close()
+
+
+@app.post("/api/manuals/preview")
+async def preview_manual(file: UploadFile = File(...), owner: str = Depends(session)):
+    throttle(owner, "manual-preview", 4)
+    raw = await file.read(8 * 1024 * 1024 + 1)
+    if len(raw) > 8 * 1024 * 1024:
+        raise HTTPException(413, "请选择不超过 8 MB 的 PDF。")
+    if not raw.startswith(b"%PDF-"):
+        raise HTTPException(422, "请选择有效的 PDF 文件。")
+    filename = Path((file.filename or "manual.pdf").replace(chr(92), "/")).name[:200]
+    digest, saved = await run_in_threadpool(manual_import.saved_digest, raw)
+    if saved:
+        return {"already_saved": True, "manual_id": "pdf-" + digest}
+    page_count = await run_in_threadpool(manual_import.pdf_page_count, raw)
+    result = await manual_import.extract(raw, filename)
+    if any(entry.page > page_count for entry in result.entries):
+        raise HTTPException(422, "提取结果引用了原件范围以外的页码，请选取相关页面后重试。")
+    return await run_in_threadpool(manual_import.preview, digest, filename, result, owner)
+
+
+@app.post("/api/manuals/{token}/save")
+def save_manual(token: uuid.UUID, owner: str = Depends(session)):
+    return manual_import.save(str(token), owner)
+
+
+@app.post("/api/chat/pdf")
+def extract_chat_pdf(file: UploadFile = File(...), owner: str = Depends(session)):
+    throttle(owner, "chat-pdf", 8)
+    raw = file.file.read(8 * 1024 * 1024 + 1)
+    if len(raw) > 8 * 1024 * 1024:
+        raise HTTPException(413, "请选择不超过 8 MB 的 PDF。")
+    if not raw.startswith(b"%PDF-"):
+        raise HTTPException(422, "请选择有效的 PDF 文件。")
+    with tempfile.TemporaryFile() as output:
+        try:
+            subprocess.run(["pdftotext", "-layout", "-enc", "UTF-8", "-l", "41", "-", "-"],
+                           input=raw, stdout=output, stderr=subprocess.DEVNULL, check=True, timeout=20)
+        except FileNotFoundError:
+            raise HTTPException(503, "后端需要安装 Poppler 并将 pdftotext 加入 PATH。")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            raise HTTPException(422, "PDF 无法读取，请检查文件是否损坏或加密。")
+        output.seek(0)
+        extracted = output.read(96001)
+    pages = extracted.decode("utf-8", errors="replace").removesuffix("\f").split("\f")
+    if len(pages) > 40 or len(extracted) > 96000:
+        raise HTTPException(422, "PDF 内容过长，请仅上传相关页面（最多 40 页、24000 字符）。")
+    if not any(page.strip() for page in pages):
+        raise HTTPException(422, "PDF 无可提取文字，请上传相关页面的截图。")
+    text = "\n\n".join(f"[PDF p. {i}]\n{page.strip()}" for i, page in enumerate(pages, 1))
+    if len(text) > 24000:
+        raise HTTPException(422, "PDF 内容过长，请仅上传相关页面（最多 40 页、24000 字符）。")
+    return {"name": (file.filename or "manual.pdf")[:200], "text": text}
 
 
 @app.post("/api/reports/pdf")

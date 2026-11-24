@@ -4,6 +4,7 @@ import re
 from copy import deepcopy
 from collections import Counter
 
+from . import manual_import
 from .knowledge_base.buck import FORMULA_DOCUMENTS
 from .knowledge_base.ui import UI_DOCUMENTS
 from .knowledge_base import manuals, tdk_curve
@@ -76,16 +77,18 @@ def list_knowledge(category='all', offset=0, limit=30, manual_id=None):
         raise ValueError('Unknown knowledge category')
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError('offset must be nonnegative and limit must be 1–100')
-    selected = [doc for doc in DOCUMENTS if category == 'all' or _category(doc) == category]
+    imported, _ = manual_import.corpus()
+    selected = [doc for doc in (*DOCUMENTS, *imported) if category == 'all' or _category(doc) == category]
     if manual_id is not None:
-        if not isinstance(manual_id, str) or not re.fullmatch(r'0[1-9]|1[0-2]', manual_id) or category not in ('all', 'manual'):
-            raise ValueError('manual_id must select a manufacturer manual 01–12 with category all or manual')
+        if not isinstance(manual_id, str) or not re.fullmatch(r'0[1-9]|1[0-2]|pdf-[a-f0-9]{64}', manual_id) or category not in ('all', 'manual'):
+            raise ValueError('manual_id must select a bundled or imported manufacturer manual with category all or manual')
         selected = [doc for doc in selected if doc.get('manual_id') == manual_id]
     entries = []
     for doc in selected[offset:offset + limit]:
         summary = doc.get('summary') or doc.get('scope') or re.split(r'[。\n]', doc['content'])[0]
         entries.append({'id': doc['id'], 'title': doc['title'], 'category': _category(doc),
-                        'summary': summary[:240], 'tags': doc['tags']})
+                        'summary': summary[:240], 'tags': doc['tags'],
+                        **({'manual_id': doc['manual_id']} if doc.get('manual_id') else {})})
     end = offset + len(entries)
     return {'category': category, 'total': len(selected), 'offset': offset, 'count': len(entries),
             'next_offset': end if end < len(selected) else None, 'entries': entries,
@@ -97,13 +100,15 @@ def read_knowledge(ids, dc_current_A=None, x_value=None):
     if not isinstance(ids, list) or not 1 <= len(ids) <= 8 or any(not isinstance(key, str) or not key for key in ids):
         raise ValueError('ids must contain 1–8 nonempty knowledge IDs')
     unique = list(dict.fromkeys(ids))
-    docs = [deepcopy(_BY_ID[key]) for key in unique if key in _BY_ID]
-    result = {'count': len(docs), 'documents': docs, 'missing_ids': [key for key in unique if key not in _BY_ID]}
+    imported, curves = manual_import.corpus()
+    by_id = _BY_ID | {doc['id']: doc for doc in imported} if imported else _BY_ID
+    docs = [deepcopy(by_id[key]) for key in unique if key in by_id]
+    result = {'count': len(docs), 'documents': docs, 'missing_ids': [key for key in unique if key not in by_id]}
     if x_value is not None:
         if len(unique) != 1 or dc_current_A is not None:
             raise ValueError('Use one curve ID and one lookup argument at a time')
         result['curve_lookup'] = (tdk_curve.lookup(x_value) if unique[0] == tdk_curve.CURVE_ID
-                                  else manuals.lookup(unique[0], x_value))
+                                  else manuals.lookup(unique[0], x_value, curves if unique[0] in curves else None))
     if dc_current_A is not None:
         if unique != [tdk_curve.CURVE_ID]:
             raise ValueError('Select one supported DC bias curve ID for a current lookup')
@@ -117,7 +122,7 @@ BROWSE_TOOLS = [
         'description': '浏览知识目录。分类包括项目方法 method、公式 formula、界面 ui、厂家手册 manual。可分页，按 manual_id 选手册，再用 read_knowledge 凭 ID 读取全文。',
         'parameters': {'type': 'object', 'properties': {
             'category': {'type': 'string', 'enum': ['all', 'method', 'formula', 'ui', 'manual'], 'default': 'all'},
-            'manual_id': {'type': 'string', 'pattern': '^(0[1-9]|1[0-2])$', 'description': '可选，按厂家手册编号 01–12 筛选；manual 分类的前 12 项为手册总览。'},
+            'manual_id': {'type': 'string', 'pattern': '^(0[1-9]|1[0-2]|pdf-[a-f0-9]{64})$', 'description': '可选，按内置手册编号或导入手册的 pdf- 标识筛选；manual 分类的前 12 项为手册总览。'},
             'offset': {'type': 'integer', 'minimum': 0, 'default': 0},
             'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100, 'default': 30}},
             'additionalProperties': False}}},
@@ -161,13 +166,22 @@ def retrieve(query, count=4):
     terms = set(_tokens(q))
     numeric_ids = {term for term in terms if term.isdecimal()}
     ranked = []
-    for doc, counts, length in zip(DOCUMENTS, _COUNTS, _LENGTHS):
+    imported, _ = manual_import.corpus()
+    docs, counts_list, lengths, df, average = DOCUMENTS, _COUNTS, _LENGTHS, _DF, _AVERAGE_LENGTH
+    if imported:
+        extra = [Counter(_tokens(d["title"]+" "+d["tags"]+" "+d["content"])) for d in imported]
+        docs = DOCUMENTS + imported
+        counts_list = _COUNTS + extra
+        lengths = _LENGTHS + [sum(count.values()) for count in extra]
+        df = _DF + Counter(token for count in extra for token in count)
+        average = sum(lengths) / len(lengths)
+    for doc, counts, length in zip(docs, counts_list, lengths):
         score = 0.0
         for token in terms:
             tf = counts[token]
             if tf:
-                idf = math.log(1 + (len(DOCUMENTS) - _DF[token] + .5) / (_DF[token] + .5))
-                score += idf * tf * 2.2 / (tf + 1.2 * (.25 + .75 * length / _AVERAGE_LENGTH))
+                idf = math.log(1 + (len(docs) - df[token] + .5) / (df[token] + .5))
+                score += idf * tf * 2.2 / (tf + 1.2 * (.25 + .75 * length / average))
         if score > 0:
             exact_control = q.strip() in doc.get('controls', ())
             rank = (exact_control, not numeric_ids.isdisjoint(counts), score)

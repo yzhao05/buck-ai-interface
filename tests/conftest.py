@@ -7,7 +7,7 @@ import json
 import os
 import pytest
 import httpx
-from backend import harness_runtime
+from backend import harness_runtime, manual_import
 from backend.agent_policy import BudgetExceeded
 
 REAL_CLIENT = httpx.AsyncClient
@@ -17,6 +17,7 @@ REAL_RUN = harness_runtime.run
 @pytest.fixture(autouse=True)
 def scripted_harness(monkeypatch, tmp_path):
     monkeypatch.setattr(harness_runtime,'ROOT',tmp_path/'harness')
+    monkeypatch.setattr(manual_import, 'database', lambda: tmp_path / 'manuals.sqlite3')
     async def run(messages,tools,invoke,budget):
         if httpx.AsyncClient is REAL_CLIENT:
             raise AssertionError('A domain test must install a provider stub; use REAL_RUN for official SDK tests')

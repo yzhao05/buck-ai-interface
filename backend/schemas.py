@@ -391,7 +391,13 @@ class DiagnosticReference(StrictModel):
     confirmed_same_experiment: Literal[True]
 
 
+class ChatPdf(StrictModel):
+    name: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=24000)
+
+
 class ChatRequest(StrictModel):
+    pdf: ChatPdf | None = None
     reasoning_mode: Literal["auto", "fast", "thinking"] = "auto"
     circuit_filename: str = Field(default='', max_length=200)
     enable_diagnostic_controls: bool = False

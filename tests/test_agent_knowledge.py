@@ -40,6 +40,15 @@ def run():
     return asyncio.run(chat.answer(ChatRequest(message="解释这个电路公式"), no_execution))
 
 
+def test_attached_pdf_text_reaches_provider_with_page_and_filename(monkeypatch):
+    requests = fake_provider(monkeypatch, [{"role": "assistant", "content": "附件第 4 页给出的额定电流为 9 A。"}])
+    request = ChatRequest(message="额定电流是多少？", pdf={"name": "manual.pdf", "text": "[PDF p. 4]\nRated current: 9 A"})
+    reply = asyncio.run(chat.answer(request, no_execution))
+    assert reply["mode"] == "deepseek"
+    prompt = requests[0]["messages"][-1]["content"]
+    assert all(value in prompt for value in (request.message, "manual.pdf", "[PDF p. 4]", "Rated current: 9 A"))
+
+
 def test_agent_refines_empty_search_and_cites_only_used_documents(monkeypatch):
     requests = fake_provider(monkeypatch, [search("zzzzzzzz"), search("Buck 模型", top_k=8),
         {"role": "assistant", "content": "根据模型解释。[kb:buck-physics]"}])

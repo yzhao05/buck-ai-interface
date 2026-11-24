@@ -12,6 +12,8 @@ jobs:
           python-version: '3.13'
           cache: pip
       - run: pip install -r requirements-lock.txt -r requirements-dev.txt
+      - name: Install PDF tools
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - run: python -m pytest -q
       - uses: actions/setup-node@v4
         with:

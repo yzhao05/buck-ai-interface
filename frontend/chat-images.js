@@ -25,11 +25,41 @@ function renderMessageImages(article,images=[]){
   const gallery=document.createElement("div");gallery.className="message-images";
   for(const image of valid)gallery.append(imageThumbnail(image));article.append(gallery);
 }
+function chatPdf(){
+  try {
+    const pdf=JSON.parse($("chat-pdf").value || "null");
+    return typeof pdf?.name==="string" && typeof pdf.text==="string" && pdf.text ? pdf : null;
+  } catch { return null; }
+}
+async function attachChatPdf(file){
+  if(!file || historyLocked() || !activeConversation)return;
+  if(file.size>8*1024*1024){notice("请选择不超过 8 MB 的 PDF。");return;}
+  const target=activeConversation.id;
+  state.busy=true;controls();
+  try {
+    const form=new FormData();form.append("file",file);
+    const pdf=await api("/api/chat/pdf",{method:"POST",body:form});
+    if(activeConversation?.id!==target)return;
+    $("chat-pdf").value=JSON.stringify(pdf);
+    renderChatImages();persistConversation();
+  } catch(error){notice(error.message);}
+  finally{state.busy=false;controls();}
+}
 function renderChatImages(){
   const list=$("chat-image-list");list.replaceChildren();
-  const images=chatImages();list.hidden=!images.length;
-  $("compact-chat-images").hidden=!images.length;
-  $("compact-chat-images").textContent=`▧ ${images.length}`;
+  const images=chatImages(),pdf=chatPdf();
+  const count=images.length+(pdf ? 1 : 0);
+  list.hidden=!count;
+  if(pdf){
+    const item=document.createElement("div");item.className="chat-image-item pdf-chip";
+    const label=document.createElement("span");label.textContent="PDF · "+pdf.name;
+    const remove=document.createElement("button");remove.type="button";remove.className="chat-image-remove";remove.textContent="×";
+    window.BuckI18n.attr(remove,"aria-label","移除 PDF");
+    remove.onclick=()=>{if(historyLocked())return;$("chat-pdf").value="";renderChatImages();persistConversation();};
+    item.append(label,remove);list.append(item);
+  }
+  $("compact-chat-images").hidden=!count;
+  $("compact-chat-images").textContent=`▧ ${count}`;
   images.forEach((image,index)=>{
     const item=document.createElement("div");item.className="chat-image-item";item.append(imageThumbnail(image));
     const remove=document.createElement("button");remove.type="button";remove.className="chat-image-remove";remove.textContent="×";
@@ -96,10 +126,66 @@ async function attachCircuitImage(){
   if(!$("chat-input").value.trim())$("chat-input").value=tr("请分析这张电路图的接线与元件标注，并指出需要核对的地方。");
   persistConversation();$("chat-input").focus();notice("电路图已附加，点击发送后交给助手分析。",true);
 }
+async function importManual(file){
+  if(!file || historyLocked() || !activeConversation)return;
+  if(file.size>8*1024*1024){notice("请选择不超过 8 MB 的 PDF。");return;}
+  const owner=activeConversation.id;
+  const dialog=$("manual-preview");
+  state.busy=true;controls();
+  try {
+    notice("OpenAI 正在整理手册…",true);
+    const form=new FormData();form.append("file",file);
+    const preview=await api("/api/manuals/preview",{method:"POST",body:form,timeout:270000});
+    if(activeConversation?.id!==owner)return;
+    if(preview.already_saved){notice("这份手册已在项目知识库中。",true);return;}
+    const list=$("manual-entries");list.replaceChildren();
+    for(const entry of preview.entries){
+      const title=document.createElement("h3");
+      title.textContent="PDF p. "+entry.page+" · "+entry.title;
+      const body=document.createElement("p");
+      body.textContent=[entry.content,entry.conditions].filter(Boolean).join(" · ");
+      list.append(title,body);
+      if(entry.points.length){
+        const points=document.createElement("p");
+        const [x,xu,y,yu]=entry.axes;
+        points.textContent=x+" ["+xu+"] → "+y+" ["+yu+"]: "+entry.points.map(p=>"("+p.join(", ")+")").join(" ");
+        list.append(points);
+      }
+    }
+    const link=$("manual-original");
+    link.href=URL.createObjectURL(new Blob([file],{type:"application/pdf"}));
+    dialog.onclose=()=>{URL.revokeObjectURL(link.href);link.removeAttribute("href");list.replaceChildren();};
+    $("manual-feedback").textContent=file.name;
+    $("manual-save").onclick=async()=>{
+      if(activeConversation?.id!==owner){dialog.close();return;}
+      $("manual-save").disabled=$("manual-close").disabled=true;
+      try {
+        const result=await api("/api/manuals/"+preview.token+"/save",{method:"POST"});
+        dialog.close();notice(result.created ? "手册已入库，可在新对话中查询。" : "这份手册已在项目知识库中。",true);
+      } catch(error){$("manual-feedback").textContent=error.message;}
+      finally{$("manual-save").disabled=$("manual-close").disabled=false;}
+    };
+    notice();dialog.showModal();
+  } catch(error){notice(error.message);}
+  finally{state.busy=false;controls();}
+}
 function setupChatImages(){
-  $("attach-chat-image").onclick=()=>$("chat-image-file").click();
+  $("manual-close").onclick=()=>$("manual-preview").close();
+  $("manual-preview").oncancel=event=>{if($("manual-save").disabled)event.preventDefault();};
+  $("manual-file").onchange=event=>{
+    const file=event.target.files[0];event.target.value="";void importManual(file);
+  };
+  $("chat-attachment-choice").onchange=event=>{
+    const choice=event.target.value;event.target.selectedIndex=0;
+    if(choice==="manual")$("manual-file").click();
+    else if(choice==="circuit")void attachCircuitImage();
+    else $(choice==="pdf" ? "chat-pdf-file" : "chat-image-file").click();
+  };
+  $("chat-pdf-file").onchange=event=>{
+    const file=event.target.files[0];event.target.value="";void attachChatPdf(file);
+  };
   $("chat-image-file").onchange=event=>void attachChatFiles(event.target.files);
-  $("attach-circuit-image").onclick=$("chat-use-circuit").onclick=()=>void attachCircuitImage();
+  $("attach-circuit-image").onclick=()=>void attachCircuitImage();
   $("close-chat-image").onclick=()=>$("chat-image-dialog").close();
   $("reuse-chat-image").onclick=()=>{
     if(historyLocked())return;
@@ -114,5 +200,8 @@ function setupChatImages(){
     if(files.length){event.preventDefault();void attachChatFiles(files);}
   });
   $("chat-form").addEventListener("dragover",event=>{if(event.dataTransfer.types.includes("Files"))event.preventDefault();});
-  $("chat-form").addEventListener("drop",event=>{if(event.dataTransfer.files.length){event.preventDefault();void attachChatFiles(event.dataTransfer.files);}});
+  $("chat-form").addEventListener("drop",event=>{if(event.dataTransfer.files.length){event.preventDefault();
+    const files=[...event.dataTransfer.files];
+    if(files.length===1 && /\.pdf$/i.test(files[0].name))void attachChatPdf(files[0]);
+    else void attachChatFiles(files);}});
 }
