@@ -20,6 +20,7 @@ def test_interpreter_bridge_has_no_deadline(monkeypatch):
     monkeypatch.setenv("PANN_PYTHON", sys.executable)
     monkeypatch.setenv("APP_ACCESS_TOKEN", "private-test-token")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "private-test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "private-test-key")
     monkeypatch.setattr(pann_adapter.importlib.util, "find_spec", lambda _: None)
     calls = []
 
@@ -28,6 +29,7 @@ def test_interpreter_bridge_has_no_deadline(monkeypatch):
         assert kwargs.get("timeout") is None
         assert "APP_ACCESS_TOKEN" not in kwargs["env"]
         assert "DEEPSEEK_API_KEY" not in kwargs["env"]
+        assert "OPENAI_API_KEY" not in kwargs["env"]
         payload = json.loads(kwargs["input"])
         assert payload["options"]["epochs"] == 200
         return SimpleNamespace(returncode=0, stdout=json.dumps({"parameters": payload["initial"],

@@ -26,6 +26,26 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
       ? {chat_mode:'unavailable',archive_enabled:false,pann_available:false} : response}));
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.waitForFunction(() => state.connected && activeConversation && !historyLocked());
+    assert.equal(await page.locator('#reasoning-mode').inputValue(), 'thinking');
+    await page.evaluate(async () => {
+      persistConversation();
+      const id=activeConversation.id, key=conversationPrefix+id;
+      const legacy=JSON.parse(localStorage.getItem(key));
+      legacy.fields["reasoning-mode"]="auto";
+      localStorage.setItem(key,JSON.stringify(legacy));
+      conversationCache.delete(id);
+      await openConversation(id,false);
+    });
+    assert.equal(await page.locator('#reasoning-mode').inputValue(), 'thinking');
+    assert(await page.evaluate(()=>{
+      const saved=JSON.parse(planInputs());
+      saved.fields.unshift(["reasoning-mode","auto"]);
+      const fingerprint=configurationFingerprint();
+      document.getElementById("reasoning-mode").value="fast";
+      if(!planInputsMatch(JSON.stringify(saved)) || configurationFingerprint()!==fingerprint)return false;
+      saved.fields.find(([id])=>id==="vin")[1]="changed";
+      return !planInputsMatch(JSON.stringify(saved));
+    }));
     await require('./harness-browser-fixture.cjs').install(page);
     async function ask() {
       await page.locator('#chat-input').fill('解释 Buck 公式');
@@ -137,7 +157,7 @@ const {chromium} = require('../.tmp/browser/node_modules/playwright-core');
     assert.equal(await page.evaluate(() => activeConversation.messages.at(-1).mode), 'DeepSeek');
     await page.locator('#language-toggle').click();
     assert.equal(await page.locator('.message-tools').filter({hasText:'Local estimate for this answer (including reservations, not a bill)'}).count(),0);
-    assert.deepEqual(await page.locator('#reasoning-mode option').allTextContents(), ['Auto mode','Fast mode','Thinking mode']);
+    assert.deepEqual(await page.locator('#reasoning-mode option').allTextContents(), ['Fast mode','Thinking mode']);
     assert.deepEqual(errors, []);
     console.log('PASS: error diagnostics, hidden internal citations in new/history replies, original source retained, substantive evidence/links/code preserved, split stream markers, no page errors');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

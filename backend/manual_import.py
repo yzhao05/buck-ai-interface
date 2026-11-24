@@ -311,18 +311,15 @@ def imported_rows(stored):
     for row in csv.DictReader(io.StringIO(stored)):
         # Older imports can contain model estimates in both the text and the samples.
         # Keep IDs and source metadata available until the original PDF can be reprocessed.
-        if row["kind"] in ("curve", "curve_pending") and row.get("auto_review") not in (
-            "verified",
-            "skipped",
-        ):
-            row.update(
-                kind="curve_pending",
-                content=row["title"],
-                points_json="[]",
-                calibration_json="",
-                auto_review="",
-                value_source="旧版曲线等待自动复核",
-            )
+        review = row.get("auto_review")
+        if row["kind"] in ("curve", "curve_pending"):
+            verified = row["kind"] == "curve" and review == "verified" and row.get("calibration_json")
+            if not verified:
+                row.update(kind="curve_pending", points_json="[]", calibration_json="")
+                if review == "skipped":
+                    row.update(content=row["title"] + "。原图未取得通过自动复核的采样点。", value_source="仅保存出处")
+                else:
+                    row.update(content=row["title"], auto_review="", value_source="旧版曲线等待自动复核")
         yield row
 
 

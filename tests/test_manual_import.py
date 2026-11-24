@@ -277,3 +277,15 @@ def test_cropped_page_uses_same_axes_for_pixels_and_vectors():
 def test_disconnected_visible_segments_do_not_form_a_lookup_range():
     line = np.array([[0.15, 0.3143], [0.25, 0.04], [0.4, 0.3857], [0.76, 0.4886]])
     assert candidate(Image.new("RGB", (100, 100)), [line], [], PLAN) is None
+
+
+@pytest.mark.parametrize(("review","expected"), [("skipped","skipped"), ("verified","")])
+def test_unsubstantiated_import_cannot_publish_stale_samples(review, expected):
+    data = StringIO()
+    writer = csv.DictWriter(data, fieldnames=["kind","title","content","auto_review","points_json","calibration_json"])
+    writer.writeheader()
+    writer.writerow(dict(kind="curve", title="470M", content="old estimate 9999", auto_review=review,
+                         points_json="[[0,9999],[1,9999]]", calibration_json=""))
+    row, = manual_import.imported_rows(data.getvalue())
+    assert row["kind"] == "curve_pending" and row["points_json"] == "[]"
+    assert row["auto_review"] == expected and "9999" not in row["content"]

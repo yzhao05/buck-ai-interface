@@ -5,7 +5,7 @@ let conversationPrefix = "";
 let pendingAttachment = null;
 const conversationCache = new Map();
 const experimentFields = ["reasoning-mode","vin", "frequency", "fit-mode", "fixed-r", "fit-method", "pann-state", "pann-cycles", "pann-epochs", "start-ms", "end-ms", "train-fraction", "pwm-source", "pwm-denoise", "pwm-filter-cycles", "controller-confirmed", "controller-parameters", "controller-image", "controller-image-name", "selected-result", "chat-images", "chat-pdf"];
-const experimentDefaults = {"reasoning-mode":"auto",vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"200", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
+const experimentDefaults = {"reasoning-mode":"thinking",vin:"28", frequency:"100", "fit-mode":"LCR", "fixed-r":"6", "fit-method":"pann", "pann-state":"joint", "pann-cycles":"0", "pann-epochs":"200", "start-ms":"", "end-ms":"", "train-fraction":"70", "pwm-source":"auto", "controller-confirmed":"no"};
 experimentFields.push('controller-image-library','include-parasitics',...BuckCircuit.parts.map(p=>p[2]));
 Object.assign(experimentDefaults,{"include-parasitics":"false","inductor-resistance":"","capacitor-esr":""});
 experimentDefaults['pwm-denoise']='sg';experimentDefaults['pwm-filter-cycles']='6';
@@ -300,6 +300,8 @@ async function openConversation(id, saveCurrent = true) {
   notice(); resetExperiment(); clearChat();
   pendingAttachment=record.attachment;
   for (const field of experimentFields) $(field).value=record.fields?.[field] ?? experimentDefaults[field] ?? "";
+  // Saved Auto conversations used the Thinking settings.
+  if (!$("reasoning-mode").value) $("reasoning-mode").value=experimentDefaults["reasoning-mode"];
   renderChatImages();
   window.BuckCircuit.render();
   // A legacy "integral" value is no longer in the selector. The new identifier

@@ -120,7 +120,7 @@ window.BuckHarness = (()=>{
       const reply=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
       const text=replyText(response,response.ui_action?tr(reply):reply);
       if(response.ui_action)showOutcome(text,'界面操作未重新执行');
-      const mode=['provider_error','validation_error'].includes(response.mode)?'请求未完成':'Harness 恢复';
+      const mode=['provider_error','validation_error'].includes(response.mode)?'请求未完成':response.mode==='gpt-6.1-terra'?'GPT-6.1 Terra':'Harness 恢复';
       const article=message('assistant',text,mode);decorateResponse(article,response);
       rememberMessage('assistant',text,{...response,agent_task_id:latest.id},mode);
       if(response.mode==='provider_error')window.alert(response.provider_error);

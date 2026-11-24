@@ -92,7 +92,7 @@ def batch_action(request, proposal):
             raise ValueError('文件名与所选 CSV 不一致，请重新选择')
     if merged.pwm_source == 'controller' and merged.mode not in ('LC', 'LC_RL_RC'):
         raise ValueError("Controller reconstruction requires LC mode")
-    action = {"id": request.ui_context.request_id, "type": "identification_plan", "parser": "deepseek", "version": 2,
+    action = {"id": request.ui_context.request_id, "type": "identification_plan", "parser": request.chat_model, "version": 2,
               "filename": proposal.filename, "methods": ["weighted_integral", "pann"], "changes": changes, **extras}
     if source == 'both':
         action.update(version=3, runs=[{"method": method, "pwm_source": source}

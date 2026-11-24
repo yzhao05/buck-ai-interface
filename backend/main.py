@@ -184,8 +184,11 @@ def compact(data):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "0.1.0", "chat_mode": "deepseek" if os.getenv("DEEPSEEK_API_KEY", "").strip() else "unavailable",
-            "model": os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "requires_token": bool(TOKEN), "app_auth_header": APP_TOKEN_HEADER,
+    available = [name for name, key in (("deepseek", "DEEPSEEK_API_KEY"), ("gpt-6.1-terra", "OPENAI_API_KEY"))
+                 if os.getenv(key, "").strip()]
+    return {"status": "ok", "version": "0.1.0", "chat_mode": available[0] if available else "unavailable",
+            "chat_models": available,
+            "model": "gpt-6.1-terra" if available == ["gpt-6.1-terra"] else os.getenv("DEEPSEEK_MODEL", "deepseek-flash"), "requires_token": bool(TOKEN), "app_auth_header": APP_TOKEN_HEADER,
             "pann_available": pann_available(),
             "source_url": os.getenv("SOURCE_URL", ""), "archive_enabled": True,
             "archive_persistent": not hosted() or archive_on_volume(archive.store.directory)}

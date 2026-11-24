@@ -188,6 +188,7 @@ function controls() {
   }
   for(const id of ["inductor-resistance","capacitor-esr"]) $(id).required=!jointParasitics;
   const waiting = historyLocked();
+  $("chat-mode").disabled=waiting || !state.connected || !$("chat-mode").querySelector("option:not(:disabled)");
   $("diagnostic-reference-file").disabled=waiting || !state.result;
   $("choose-diagnostic-reference").disabled=waiting || !state.result;
   $("diagnostic-reference-confirm").disabled=waiting || !selectedDiagnosticReference();
@@ -248,6 +249,21 @@ function controls() {
   }
   renderIdentificationPlan();
 }
+function setChatModels(health){
+  const picker=$("chat-mode");
+  const available=health?.chat_models ?? (health?.chat_mode==="deepseek"?["deepseek"]:[]);
+  for(const option of picker.options)option.disabled=!available.includes(option.value);
+  let preferred;
+  try{preferred=localStorage.getItem("buck-chat-model:"+base);}catch{}
+  const chosen=Array.from(picker.options).find(option=>option.value===preferred && !option.disabled)
+    || Array.from(picker.options).find(option=>!option.disabled);
+  picker.value=chosen?.value || "deepseek";
+  picker.title=tr(chosen?"聊天模型":health?"未配置聊天模型密钥":"等待连接分析后端");
+  picker.disabled=!chosen || historyLocked();
+}
+$("chat-mode").addEventListener("change",()=>{
+  try{localStorage.setItem("buck-chat-model:"+base,$("chat-mode").value);}catch{}
+});
 async function connect() {
   const address = base;
   $("connection-status").className = "status";
@@ -266,7 +282,7 @@ async function connect() {
     state.connected = true;
     $("connection-status").className = "status connected";
     $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("后端已连接"));
-    ui($("chat-mode"), health.chat_mode === "deepseek" ? `DeepSeek · ${health.model}` : "AI unavailable · API key not configured");
+    setChatModels(health);
     const pannOption = $("fit-method").querySelector('[value="pann"]');
     pannOption.disabled = !health.pann_available;
     ui(pannOption, health.pann_available ? "PANN · 物理网络微调" : "PANN · 需后端 PyTorch");
@@ -282,7 +298,7 @@ async function connect() {
     if (address !== base) return false;
     state.connected = false;
     $("connection-status").replaceChildren(document.createElement("i"), window.BuckI18n.node("尚未连接"));
-    ui($("chat-mode"), "等待连接分析后端");
+    setChatModels(null);
     notice(error.message);
     return false;
   } finally { controls(); }
@@ -912,7 +928,7 @@ function decorateResponse(article, response) {
         if (response.route?.label) task.append(" · ");
         task.append(window.BuckI18n.node(replyTimeLabel(...timing)));
       }
-      if(response.ui_action?.parser==='deepseek')task.append(document.createTextNode(" · "),window.BuckI18n.node("DeepSeek 计划解析"));
+      if(response.ui_action?.parser)task.append(document.createTextNode(" · "),window.BuckI18n.node(response.ui_action.parser==='gpt-6.1-terra'?"GPT-6.1 Terra 计划解析":"DeepSeek 计划解析"));
       article.querySelector(".message-label").after(task);
     }
     if (response.tool_calls?.length) {
@@ -931,7 +947,7 @@ function configurationFingerprint() {
   return JSON.stringify({conversation:activeConversation?.id,session:sessionId,base,
     dataset:state.dataset?.dataset_id,sha256:state.dataset?.sha256,mapping:state.mapping,result:state.resultId,
     truth:state.truthDraft,reference:selectedDiagnosticReference(),referenceConfirmed:$('diagnostic-reference-confirm').checked,
-    fields:experimentFields.filter(id=>!["chat-images","chat-pdf"].includes(id)).map(id=>[$(id).id,$(id).value]),
+    fields:experimentFields.filter(id=>!["chat-images","chat-pdf","reasoning-mode"].includes(id)).map(id=>[$(id).id,$(id).value]),
     mappingFields:["map-time","map-current","map-voltage","map-pwm","time-unit","current-unit","voltage-unit"].map(id=>$(id).value)});
 }
 function validTuningInterval(changes){
@@ -1082,7 +1098,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
       } catch { /* Invalid drafts remain a form validation error. */ }
     }
     try { await syncPlecsConfig(); } catch (error) { notice(error.message); }
-    const response = await window.BuckHarness.request({message:text,reasoning_mode:$("reasoning-mode").value,language,images,...(pdf ? {pdf} : {}),history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
+    const response = await window.BuckHarness.request({message:text,...($("chat-mode").value==="gpt-6.1-terra"?{chat_model:"gpt-6.1-terra"}:{}),reasoning_mode:$("reasoning-mode").value,language,images,...(pdf ? {pdf} : {}),history:previousHistory,current_result_analysis:currentOnly,circuit_filename:$("controller-image-name").value,
       ui_context:actionContext ? {request_id:actionContext.request_id,options:actionContext.options,pwm_source_setting:$('pwm-source').value,
         plecs_ports:actionContext.plecs ? plecsPortContext(actionContext.plecs) : null,
         mapping:state.dataset?mappingFromForm():null,columns:state.dataset?.columns||[],catalog:publicConfigurationCatalog(actionContext.catalog),
@@ -1127,7 +1143,7 @@ async function sendMessage(value, {analysisRequest=false}={}) {
     }
     response.reply_elapsed_s = finishPending();
     const answer = window.BuckHarness.replyText(response,response.answer);
-    const replyMode=response.mode === "deepseek" && !response.error_code ? "DeepSeek" : "请求未完成";
+    const replyMode=response.error_code ? "请求未完成" : ({"deepseek":"DeepSeek","gpt-6.1-terra":"GPT-6.1 Terra"}[response.mode] || "请求未完成");
     const article = message("assistant", answer, replyMode);
     decorateResponse(article, response);
     const savedReply=rememberMessage("assistant", answer, {mode:response.mode,route:response.route, reply_elapsed_s:response.reply_elapsed_s, tool_calls:response.tool_calls, sources:response.sources,retrieved_sources:response.retrieved_sources,

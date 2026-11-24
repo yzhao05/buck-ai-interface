@@ -21,7 +21,9 @@ DEEPSEEK_PRICES = {
 
 
 class Budget:
-    def __init__(self, thinking):
+    def __init__(self, thinking, chat_model='deepseek'):
+        self.chat_model = chat_model
+        self.reasoning_effort = 'high' if thinking else ('low' if chat_model == 'gpt-6.1-terra' else 'off')
         self.thinking = thinking
         self.rounds = 14 if thinking else 7
         self.started = time.monotonic()
@@ -32,15 +34,21 @@ class Budget:
             raise ValueError('Agent budget settings require a finite nonnegative time limit')
         self.seconds = seconds or None
         self.limit = float(os.getenv('AGENT_COST_LIMIT_USD', '0.50'))
-        self.model = os.getenv('DEEPSEEK_MODEL', 'deepseek-flash')
-        prices = DEEPSEEK_PRICES.get(self.model)
-        if prices is None and not all(os.getenv(key) for key in ('AGENT_INPUT_USD_PER_M', 'AGENT_OUTPUT_USD_PER_M')):
-            raise ValueError('Configure token prices for this model')
-        custom = any(os.getenv(key) for key in ('AGENT_INPUT_USD_PER_M', 'AGENT_CACHED_INPUT_USD_PER_M', 'AGENT_OUTPUT_USD_PER_M'))
-        self.input_price = float(os.getenv('AGENT_INPUT_USD_PER_M', str(prices[0] if prices else 0)))
-        self.output_price = float(os.getenv('AGENT_OUTPUT_USD_PER_M', str(prices[2] if prices else 0)))
-        self.cached_input_price = float(os.getenv('AGENT_CACHED_INPUT_USD_PER_M', str(self.input_price if custom else prices[1])))
-        self.pricing_basis = 'configured USD rates' if custom else 'DeepSeek peak USD rates verified 2026-11-06'
+        if chat_model == 'gpt-6.1-terra':
+            self.model = chat_model
+            # Standard Responses rates. DeepSeek-specific overrides do not apply here.
+            self.input_price, self.cached_input_price, self.output_price = 1.0, .05, 5.0
+            self.pricing_basis = 'OpenAI Terra standard USD rates'
+        else:
+            self.model = os.getenv('DEEPSEEK_MODEL', 'deepseek-flash')
+            prices = DEEPSEEK_PRICES.get(self.model)
+            if prices is None and not all(os.getenv(key) for key in ('AGENT_INPUT_USD_PER_M', 'AGENT_OUTPUT_USD_PER_M')):
+                raise ValueError('Configure token prices for this model')
+            custom = any(os.getenv(key) for key in ('AGENT_INPUT_USD_PER_M', 'AGENT_CACHED_INPUT_USD_PER_M', 'AGENT_OUTPUT_USD_PER_M'))
+            self.input_price = float(os.getenv('AGENT_INPUT_USD_PER_M', str(prices[0] if prices else 0)))
+            self.output_price = float(os.getenv('AGENT_OUTPUT_USD_PER_M', str(prices[2] if prices else 0)))
+            self.cached_input_price = float(os.getenv('AGENT_CACHED_INPUT_USD_PER_M', str(self.input_price if custom else prices[1])))
+            self.pricing_basis = 'configured USD rates' if custom else 'DeepSeek peak USD rates verified 2026-11-06'
         self.max_output_tokens = int(os.getenv('AGENT_MAX_OUTPUT_TOKENS', '32768' if thinking else '8192'))
         if self.max_output_tokens <= 0:
             raise ValueError('Agent output token limit must be positive')
@@ -65,7 +73,7 @@ class Budget:
         # UTF-8 bytes upper-bound normal text token counts; include protocol overhead.
         inputs = len(json.dumps(payload, ensure_ascii=False).encode('utf-8')) + 4096
         available = self.limit - self.reserved - inputs * self.input_price / 1e6
-        requested = payload.get("max_tokens", self.max_output_tokens)
+        requested = payload.get("max_output_tokens", payload.get("max_tokens", self.max_output_tokens))
         if type(requested) is not int or requested <= 0:
             raise ValueError('Model output token limit must be a positive integer')
         ceiling = min(requested, self.max_output_tokens)
@@ -100,7 +108,8 @@ class Budget:
         del self.reservations[call_id]
 
     def metadata(self):
-        return {'thinking': self.thinking, 'model_calls': self.calls,
+        return {'thinking': self.reasoning_effort != 'off', 'reasoning_effort': self.reasoning_effort,
+                'reasoning_mode': 'thinking' if self.thinking else 'fast', 'model_calls': self.calls,
                 'model_call_limit': self.rounds, 'time_limit_s': self.seconds,
                 'max_output_tokens': self.max_output_tokens,
                 'unsettled_model_calls': len(self.reservations),

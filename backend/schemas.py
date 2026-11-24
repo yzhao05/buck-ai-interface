@@ -1,7 +1,7 @@
 from typing import Literal
 import json
 import math
-from pydantic import BaseModel, ConfigDict, Field, model_validator, create_model
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, create_model
 from copy import deepcopy
 from .vision import ChatImage
 
@@ -397,8 +397,9 @@ class ChatPdf(StrictModel):
 
 
 class ChatRequest(StrictModel):
+    chat_model: Literal["deepseek", "gpt-6.1-terra"] = "deepseek"
     pdf: ChatPdf | None = None
-    reasoning_mode: Literal["auto", "fast", "thinking"] = "auto"
+    reasoning_mode: Literal["fast", "thinking"] = "thinking"
     circuit_filename: str = Field(default='', max_length=200)
     enable_diagnostic_controls: bool = False
     diagnostic_reference: DiagnosticReference | None = None
@@ -423,6 +424,11 @@ class ChatRequest(StrictModel):
     analysis_history_requested: bool = False
     conversation_messages: list[ConversationMessage] = Field(default_factory=list, max_length=10000)
     conversation_retrieval_requested: bool = False
+
+    @field_validator("reasoning_mode", mode="before")
+    @classmethod
+    def legacy_auto_mode(cls, value):
+        return "thinking" if value == "auto" else value
 
     @model_validator(mode="before")
     @classmethod

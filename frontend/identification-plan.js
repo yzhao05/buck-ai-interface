@@ -6,7 +6,7 @@ function validFourRuns(plan){
   return Array.isArray(plan?.runs) && plan.runs.length===4
     && plan.runs.every((run,index)=>run && `${run.pwm_source}:${run.method}`===pairs[index]);
 }
-function currentPlanParser(plan){return plan?.parser==='deepseek' && (plan.version===2 || (plan.version===3 && validFourRuns(plan)));}
+function currentPlanParser(plan){return ['deepseek','gpt-6.1-terra'].includes(plan?.parser) && (plan.version===2 || (plan.version===3 && validFourRuns(plan)));}
 function planRuns(plan){
   const source=plan.changes?.pwm_source;
   return plan.version===3 ? plan.runs : plan.methods.map(method=>({method,pwm_source:source&&source!=='auto'?source:plan.pwmSource}));
@@ -39,7 +39,7 @@ function currentIdentificationPlan(){
     if(!validStoredIdentificationPlan(plan))plan=null;
     if(plan && !["complete","cancelled"].includes(plan.status)){
       if(!currentPlanParser(plan)){
-        plan.status="cancelled";plan.note="旧版计划已停止，请重新发送指令交由 DeepSeek 解析。已提交的计算仍会保存到实验历史。";
+        plan.status="cancelled";plan.note="旧版计划已停止，请重新发送指令生成新计划。已提交的计算仍会保存到实验历史。";
       }else{plan.status="paused";plan.note="页面已恢复，请检查当前设置后继续计划。";}
     }
     identificationPlans.set(key,plan);
@@ -103,20 +103,30 @@ async function acceptIdentificationPlan(action,context){
   toggleSection("toggle-experiment","experiment-content","实验配置",true);setIdentificationOpen(true);
   return tr(action.version===3
     ? "DeepSeek 已解析四组辨识计划：实际 PWM 和重建 PWM 分别运行加权积分、PANN。开始前检查全部条件，四份结果分别保存。"
-    : "DeepSeek 已解析两种方法的执行计划：先加权积分，再 PANN。缺少条件会显示在计划卡片中，补齐后点击继续；结果分别保存在本会话。")+'\n\n'+identificationPlanSource(action);
+    : "DeepSeek 已解析两种方法的执行计划：先加权积分，再 PANN。缺少条件会显示在计划卡片中，补齐后点击继续；结果分别保存在本会话。").replace("DeepSeek",action.parser==="gpt-6.1-terra"?"GPT-6.1 Terra":"DeepSeek")+'\n\n'+identificationPlanSource(action);
 }
 function startQueuedIdentificationPlan(){
   if(currentIdentificationPlan()?.status==='queued' && !historyLocked())void continueIdentificationPlan();
 }
 function planInputs(){
   return JSON.stringify({sha256:state.dataset?.sha256,mapping:state.mapping,
-    fields:experimentFields.filter(id=>!['fit-method','selected-result','chat-images','chat-pdf','controller-image'].includes(id)).map(id=>[id,$(id).value])});
+    fields:experimentFields.filter(id=>!['fit-method','selected-result','chat-images','chat-pdf','controller-image','reasoning-mode'].includes(id)).map(id=>[id,$(id).value])});
+}
+function planInputsMatch(saved){
+  const current=planInputs();
+  if(saved===current)return true;
+  try{
+    const previous=JSON.parse(saved);
+    // Older fingerprints included the chat mode among the experiment fields.
+    previous.fields=previous.fields.filter(([id])=>id!=="reasoning-mode");
+    return JSON.stringify(previous)===current;
+  }catch{return false;}
 }
 async function continueIdentificationPlan(){
   const plan=currentIdentificationPlan();
   if(!plan || !['queued','paused'].includes(plan.status) || historyLocked())return;
   if(!currentPlanParser(plan)){
-    plan.status='cancelled';plan.note="旧版计划已停止，请重新发送指令交由 DeepSeek 解析。已提交的计算仍会保存到实验历史。";
+    plan.status='cancelled';plan.note="旧版计划已停止，请重新发送指令生成新计划。已提交的计算仍会保存到实验历史。";
     saveIdentificationPlan(plan);renderIdentificationPlan();return;
   }
   const owner=identificationPlanKey();
@@ -127,7 +137,7 @@ async function continueIdentificationPlan(){
     if(!state.connected)throw new Error("请先连接分析后端。");
     // Once a job has been submitted, reject edits before asking for new circuit
     // confirmation or validating a different configuration.
-    if((plan.inputs || plan.done.length || plan.jobId) && plan.inputs!==planInputs())throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
+    if((plan.inputs || plan.done.length || plan.jobId) && !planInputsMatch(plan.inputs))throw new Error("计划的数据或参数已更改。请恢复原设置，或取消计划后重新发出指令。");
     const c=plan.changes;
     if((c.mode || $('fit-mode').value)==='FULL_STAGE')throw new Error(tr('七参数模式仅支持单次开关电路波形拟合。运行两种方法前请明确选择简化模型。'));
     if(!plan.done.length && !plan.jobId && !plan.settingsApplied){

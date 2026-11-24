@@ -146,7 +146,7 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
   .compose-bottom #send-chat { grid-column:3; grid-row:1; }
 }
 .compose-bottom span { font-size: 10px; min-width: 0; max-width: none; }
-.compose-bottom #chat-mode { text-align: right; white-space: normal; overflow-wrap: anywhere; color: #738b90; }
+.compose-bottom #chat-mode { justify-self:end; width:auto; min-width:0; max-width:100%; height:32px; margin:0; padding:0 5px; font-size:11px; color:var(--teal); cursor:pointer; }
 .send-button { height: 33px; width: 33px; }
 .message { margin-bottom: 26px; }
 .message-content { font-size: 13px; line-height: 2; }

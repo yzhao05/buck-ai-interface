@@ -26,10 +26,10 @@ class CitationValidationError(ValueError):
     pass
 
 
-def provider_failure(exc=None, *, missing=False, **metadata):
+def provider_failure(exc=None, *, missing=False, key_name="DEEPSEEK_API_KEY", **metadata):
     if missing:
         code = "missing_api_key"
-        message = "AI service is not configured. Please set DEEPSEEK_API_KEY on the backend and try again."
+        message = f"AI service is not configured. Please set {key_name} on the backend and try again."
     elif isinstance(exc, AgentMemoryError):
         code = 'agent_memory_pressure'
         message = 'The backend has too little memory available for this analysis. The task can be resumed when memory is available.'

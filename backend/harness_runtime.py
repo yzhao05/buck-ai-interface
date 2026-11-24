@@ -20,6 +20,7 @@ import threading
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
+from . import terra_provider
 from .agent_policy import BudgetExceeded
 from .provider_errors import HarnessTurnError, AgentCapacityError, AgentMemoryError, SessionRestoreError
 from .memory_usage import log_memory, low_headroom, memory_readings
@@ -54,6 +55,7 @@ class Gateway:
         self.persona = None
         self.image_marker = None
         self.image_blocks = []
+        self.terra_reasoning = {}
         self.require_image_marker = False
         self.lock = threading.Lock()
         gateway = self
@@ -110,17 +112,26 @@ class Gateway:
                         gateway.restore_images(body)
                         if gateway.budget.calls >= gateway.budget.rounds:
                             raise BudgetExceeded('model step budget reached')
-                        body['max_tokens'] = gateway.budget.reserve(body)
+                        body['thinking'] = {'type':'enabled' if gateway.budget.thinking else 'disabled'}
+                        if gateway.budget.chat_model == 'gpt-6.1-terra':
+                            body.setdefault('max_tokens', gateway.budget.max_output_tokens)
+                            upstream_body = terra_provider.payload(body, gateway.terra_reasoning, gateway.budget.reasoning_effort)
+                            upstream_body['max_output_tokens'] = gateway.budget.reserve(upstream_body)
+                        else:
+                            body['max_tokens'] = gateway.budget.reserve(body)
                         call_id = gateway.budget.calls
-                    body['thinking'] = {'type':'enabled' if gateway.budget.thinking else 'disabled'}
-                    root = os.getenv('HARNESS_BASE_URL') or os.getenv('DEEPSEEK_BASE_URL','https://api.deepseek.com').rstrip('/').removesuffix('/v1')+'/anthropic'
-                    endpoint = root.rstrip('/') + ('/messages' if root.rstrip('/').endswith('/v1') else '/v1/messages')
                     with httpx.Client(timeout=gateway.budget.remaining(), trust_env=False) as client:
-                        headers = {'x-api-key':os.environ['DEEPSEEK_API_KEY'],'anthropic-version':self.headers.get('anthropic-version','2023-06-01')}
-                        if self.headers.get('anthropic-beta'):
-                            headers['anthropic-beta'] = self.headers['anthropic-beta']
+                        if gateway.budget.chat_model == 'gpt-6.1-terra':
+                            stream = terra_provider.stream(client, upstream_body, gateway.terra_reasoning)
+                        else:
+                            root = os.getenv('HARNESS_BASE_URL') or os.getenv('DEEPSEEK_BASE_URL','https://api.deepseek.com').rstrip('/').removesuffix('/v1')+'/anthropic'
+                            endpoint = root.rstrip('/') + ('/messages' if root.rstrip('/').endswith('/v1') else '/v1/messages')
+                            headers = {'x-api-key':os.environ['DEEPSEEK_API_KEY'],'anthropic-version':self.headers.get('anthropic-version','2023-06-01')}
+                            if self.headers.get('anthropic-beta'):
+                                headers['anthropic-beta'] = self.headers['anthropic-beta']
+                            stream = client.stream('POST', endpoint, json=body, headers=headers)
                         gateway.provider_stage = 'upstream_attempted'
-                        with client.stream('POST', endpoint, json=body, headers=headers) as upstream:
+                        with stream as upstream:
                             gateway.provider_stage = 'upstream_responded'
                             upstream.raise_for_status()
                             self.send_response(200)
@@ -393,9 +404,10 @@ async def _run(messages, tools, invoke, budget):
         # the process drive (upstream #11313). Launch on the system drive;
         # the SDK's logical cwd and all durable data stay in this session home.
         runtime_cwd = os.environ.get('SystemDrive', 'C:') + '\\' if os.name == 'nt' else str(home)
+        # Keep the SDK's Messages transport profile; the gateway selects the actual upstream model.
         harness = DeepSeekHarness(dsh_home=str(home),cwd=str(home),runtime_cwd=runtime_cwd,
             profile='sdk-minimal',patches=(str(path),),
-            model=os.getenv('DEEPSEEK_MODEL','deepseek-flash'),base_url=gateway.url,
+            model='deepseek-flash' if budget.chat_model=='gpt-6.1-terra' else budget.model,base_url=gateway.url,
             api_key=gateway.secret,max_tokens=budget.max_output_tokens,
             reasoning_effort='high' if budget.thinking else 'off',
             initialize_timeout_seconds=30,request_timeout_seconds=30)
@@ -421,7 +433,7 @@ async def _run(messages, tools, invoke, budget):
                         session = harness.start_session(identifier)
                 else:
                     session = harness.start_session(identifier)
-                emit('status',{'text':'DeepSeek Harness 已接管工具调度'})
+                emit('status',{'text':'正在用 GPT-6.1 Terra 处理请求' if budget.chat_model == 'gpt-6.1-terra' else 'DeepSeek Harness 已接管工具调度'})
                 marker.touch()
                 def run_with_gateway_images():
                     nonlocal stage
