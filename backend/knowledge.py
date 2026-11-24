@@ -95,13 +95,19 @@ def list_knowledge(category='all', offset=0, limit=30, manual_id=None):
             'note': '目录仅用于选读；引用前请用 read_knowledge 读取全文。'}
 
 
+def knowledge_index():
+    """Current documents and imported curves from one corpus snapshot, for exact-ID lookup."""
+    imported, curves = manual_import.corpus()
+    by_id = _BY_ID | {doc['id']: doc for doc in imported} if imported else _BY_ID
+    return by_id, curves
+
+
 def read_knowledge(ids, dc_current_A=None, x_value=None):
     """Read exact IDs in requested order, without BM25 or hidden substitution."""
     if not isinstance(ids, list) or not 1 <= len(ids) <= 8 or any(not isinstance(key, str) or not key for key in ids):
         raise ValueError('ids must contain 1–8 nonempty knowledge IDs')
     unique = list(dict.fromkeys(ids))
-    imported, curves = manual_import.corpus()
-    by_id = _BY_ID | {doc['id']: doc for doc in imported} if imported else _BY_ID
+    by_id, curves = knowledge_index()
     docs = [deepcopy(by_id[key]) for key in unique if key in by_id]
     result = {'count': len(docs), 'documents': docs, 'missing_ids': [key for key in unique if key not in by_id]}
     if x_value is not None:

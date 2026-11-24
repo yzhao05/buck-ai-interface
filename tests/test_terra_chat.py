@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from backend.provider_errors import HarnessTurnError
-from backend import chat, harness_runtime, main, terra_provider
+from backend import chat, harness_runtime, main, manual_import, terra_provider
 from backend.schemas import ChatRequest
 from conftest import REAL_RUN
 
@@ -167,7 +167,7 @@ def test_model_switch_reuses_receipts_and_checks_old_manual_citation(monkeypatch
         return "[kb:"+key+"]"
 
     monkeypatch.setattr(harness_runtime, "run", run)
-    monkeypatch.setattr(chat, "read_knowledge", lambda ids: {"documents":[doc.copy()]})
+    monkeypatch.setattr(manual_import, "corpus", lambda: ([doc.copy()], {}))
     token = harness_runtime.scope.set({"owner":"owner-A"})
     try:
         def ask(model):

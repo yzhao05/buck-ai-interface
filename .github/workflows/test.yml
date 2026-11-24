@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
           cache: pip
@@ -15,7 +15,7 @@ jobs:
       - name: Install PDF tools
         run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - run: python -m pytest -q
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       - name: Check conversation metadata and frontend syntax

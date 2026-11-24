@@ -3,6 +3,7 @@ import json
 import os
 import re
 import asyncio
+from copy import deepcopy
 from .agent_policy import Budget, evidence
 from . import harness_runtime
 from .local_csv import TOOL as LOCAL_CSV_TOOL
@@ -15,7 +16,7 @@ import httpx
 
 from .vision import provider_message
 from .configuration import agent_action, port_action, PORT_TOOL, TOOL as CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL, PROMPT as CONFIG_PROMPT, PLAN_PROMPT
-from .knowledge import retrieve, list_knowledge, read_knowledge, BROWSE_TOOLS
+from .knowledge import knowledge_index, retrieve, list_knowledge, read_knowledge, BROWSE_TOOLS
 from .provider_errors import provider_failure, CitationValidationError
 from .experiment_history import summarize_experiments, repeatability_summary, ResultLibrary, READ_RESULT_TOOL
 from .historical_analyses import analysis_context
@@ -488,7 +489,7 @@ async def _answer(request, invoke, *, local_files=False):
         # or a fresh automatic search. Expose only the older documents cited now.
         missing = cited_ids - {d['id'] for d in docs}
         if missing:
-            current_sources = {}
+            current_sources, _ = knowledge_index()
             for ledger in ledgers():
                 for entry in reversed(ledger.get('evidence', {}).values()):
                     if entry['tool'] not in {'search_knowledge', 'read_knowledge'} or entry['output'].get('error'):
@@ -498,12 +499,10 @@ async def _answer(request, invoke, *, local_files=False):
                         if key not in missing:
                             continue
                         # Manuals and UI instructions can change while keeping the same ID.
-                        if key not in current_sources:
-                            current_sources[key] = next(iter(read_knowledge([key])['documents']), None)
-                        current = current_sources[key]
+                        current = current_sources.get(key)
                         if current is None or current['content'] != doc['content']:
                             continue
-                        docs.append(current)
+                        docs.append(deepcopy(current))
                         missing.remove(key)
                 if not missing:
                     break
