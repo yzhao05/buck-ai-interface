@@ -113,11 +113,13 @@ class Gateway:
                         # Both upstream HTTP APIs accept an omitted output limit.
                         body.pop('max_tokens', None)
                         body['thinking'] = {'type':'enabled' if gateway.budget.thinking else 'disabled'}
-                        if gateway.budget.chat_model == 'gpt-6.1-terra':
+                        is_terra = gateway.budget.chat_model == 'gpt-6.1-terra'
+                        if is_terra:
                             upstream_body = terra_provider.payload(body, gateway.terra_reasoning, gateway.budget.reasoning_effort)
                         call_id = gateway.budget.start_call()
-                    with httpx.Client(timeout=None, trust_env=False) as client:
-                        if gateway.budget.chat_model == 'gpt-6.1-terra':
+                    # Terra uses the deployment's HTTPS proxy and CA settings, as PDF import does.
+                    with httpx.Client(timeout=None, trust_env=is_terra) as client:
+                        if is_terra:
                             stream = terra_provider.stream(client, upstream_body, gateway.terra_reasoning)
                         else:
                             root = os.getenv('HARNESS_BASE_URL') or os.getenv('DEEPSEEK_BASE_URL','https://api.deepseek.com').rstrip('/').removesuffix('/v1')+'/anthropic'

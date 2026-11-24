@@ -1,5 +1,8 @@
 """Public provider failures. Never expose provider bodies, credentials or prompts."""
+import errno
 import logging
+import socket
+import ssl
 import httpx
 
 
@@ -23,6 +26,23 @@ class SessionRestoreError(RuntimeError):
 
 class CitationValidationError(ValueError):
     pass
+
+
+def network_reason(exc):
+    """Use typed causes only: exception text can contain proxy credentials."""
+    while exc is not None:
+        if isinstance(exc, httpx.ProxyError):
+            return 'proxy'
+        if isinstance(exc, socket.gaierror):
+            return 'dns'
+        if isinstance(exc, ssl.SSLCertVerificationError):
+            return 'tls_certificate'
+        if isinstance(exc, ssl.SSLError):
+            return 'tls'
+        if isinstance(exc, OSError) and exc.errno in errno.errorcode:
+            return errno.errorcode[exc.errno]
+        exc = exc.__cause__
+    return 'unspecified'
 
 
 def provider_failure(exc=None, *, missing=False, key_name="DEEPSEEK_API_KEY", **metadata):
@@ -64,10 +84,13 @@ def provider_failure(exc=None, *, missing=False, key_name="DEEPSEEK_API_KEY", **
         code = "provider_failed"
         message = "The backend could not finish the Agent task. Check the backend logs for the Agent failure."
     logging.getLogger('uvicorn.error').warning(
-        'Agent failure: code=%s exception=%s cause=%s http_status=%s', code,
+        'Agent failure: code=%s exception=%s cause=%s http_status=%s provider=%s network_reason=%s', code,
         type(exc).__name__ if exc else 'none',
         type(exc.__cause__).__name__ if exc and exc.__cause__ else 'none',
-        exc.response.status_code if isinstance(exc,httpx.HTTPStatusError) else 'none')
+        exc.response.status_code if isinstance(exc,httpx.HTTPStatusError) else 'none',
+        ('openai' if metadata.get('agent_budget', {}).get('pricing_model') == 'gpt-6.1-terra'
+         else 'deepseek' if metadata.get('agent_budget') else 'unknown'),
+        network_reason(exc) if isinstance(exc, httpx.TransportError) else 'none')
     return {**metadata, "mode": "provider_error", "answer": "", "provider_error": message,
             "error_code": code, "ui_action": None, "sources": metadata.get("sources", []),
             "tool_calls": metadata.get("tool_calls", []), "job_id": metadata.get("job_id")}

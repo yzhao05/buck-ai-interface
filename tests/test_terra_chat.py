@@ -2,6 +2,8 @@ import asyncio
 import base64
 import io
 import json
+import socket
+import ssl
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -9,7 +11,8 @@ import httpx
 import pytest
 from PIL import Image
 
-from backend.provider_errors import HarnessTurnError
+from backend.agent_policy import Budget
+from backend.provider_errors import HarnessTurnError, provider_failure
 from backend import chat, harness_runtime, main, manual_import, terra_provider
 from backend.schemas import ChatRequest
 from conftest import REAL_RUN
@@ -19,6 +22,8 @@ from conftest import REAL_RUN
 def test_terra_picker_routes_real_harness_tools_and_text(monkeypatch, mode, effort):
     requests = []
     answer = "Verified [kb:ui-overview]"
+    # The simulated Responses endpoint is a loopback server, even on hosts with a system proxy.
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_MODEL", "")
     monkeypatch.setenv("OPENAI_API_KEY", "local-test")
@@ -205,3 +210,56 @@ def test_model_switch_reuses_receipts_and_checks_old_manual_citation(monkeypatch
         assert calls == ["run_plecs_experiment", "evaluate_plecs_experiment"]
     finally:
         harness_runtime.scope.reset(token)
+
+
+def test_terra_chat_uses_deployment_https_proxy(monkeypatch, caplog):
+    connections = []
+
+    class Proxy(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_CONNECT(self):
+            connections.append((self.path, self.headers.get("Authorization")))
+            self.send_error(502, "proxy-test-detail")
+
+    # Both endpoints are local. Only the CONNECT request indicates proxy routing.
+    with ThreadingHTTPServer(("127.0.0.1", 0), Proxy) as server:
+        target = f"127.0.0.1:{server.server_port}"
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.delenv("https_proxy", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.setenv("NO_PROXY", "")
+        monkeypatch.setenv("HTTPS_PROXY", "http://" + target)
+        monkeypatch.setattr(terra_provider, "ENDPOINT", f"https://{target}/v1/responses")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        budget = Budget(False, "gpt-6.1-terra")
+        try:
+            with harness_runtime.Gateway([], None, budget, lambda *_: None) as gateway, httpx.Client(trust_env=False) as local:
+                response = local.post(gateway.url + "/v1/messages", headers={"Authorization": "Bearer " + gateway.secret},
+                                      json={"messages": [{"role": "user", "content": "Hello"}]})
+                assert response.status_code == 502
+                assert isinstance(gateway.error, httpx.ProxyError)
+                failure = provider_failure(gateway.error, agent_budget=budget.metadata())
+        finally:
+            server.shutdown()
+            thread.join()
+    assert connections == [(target, None)]
+    assert failure["error_code"] == "provider_connection_failed"
+    assert "provider=openai network_reason=proxy" in caplog.text
+    assert "proxy-test-detail" not in caplog.text and "test-key" not in caplog.text
+
+
+@pytest.mark.parametrize(("cause", "reason"), [
+    (socket.gaierror(-2, "private-diagnostic"), "dns"),
+    (ssl.SSLCertVerificationError(1, "private-diagnostic"), "tls_certificate"),
+])
+def test_connection_log_classifies_nested_causes_without_logging_text(caplog, cause, reason):
+    wrapped = RuntimeError("private-diagnostic")
+    wrapped.__cause__ = cause
+    error = httpx.ConnectError("private-diagnostic")
+    error.__cause__ = wrapped
+    provider_failure(error, agent_budget=Budget(False, "gpt-6.1-terra").metadata())
+    assert "provider=openai network_reason=" + reason in caplog.text
+    assert "private-diagnostic" not in caplog.text
