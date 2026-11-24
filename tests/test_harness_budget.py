@@ -1,4 +1,4 @@
-"""Budget diagnostics through the real SDK, without a paid provider call."""
+"""Provider diagnostics through the real SDK, without a paid provider call."""
 import asyncio
 import json
 import threading
@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from backend import chat, harness_runtime
-from backend.agent_policy import Budget, BudgetExceeded
+from backend.agent_policy import Budget
 from backend.provider_errors import provider_failure
 from backend.schemas import ChatRequest
 from conftest import REAL_RUN
@@ -26,7 +26,7 @@ def test_first_ui_question_with_real_harness(monkeypatch, stop_reason, language)
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             requests.append(payload)
-            final_reason = ('end_turn' if payload['max_tokens'] >= 12000 else 'max_tokens') if stop_reason == 'long_answer' else stop_reason
+            final_reason = 'end_turn' if stop_reason == 'long_answer' else stop_reason
             called = any(any(b.get('type') == 'tool_result' for b in item['content'])
                          for item in payload['messages'] if isinstance(item['content'], list))
             block = {'type': 'text', 'text': ''} if called else {
@@ -85,6 +85,7 @@ def test_first_ui_question_with_real_harness(monkeypatch, stop_reason, language)
     assert len(requests) == 2
     expected_language = 'English' if language == 'en' else 'Simplified Chinese'
     for payload in requests:
+        assert 'max_tokens' not in payload
         assert f'Write all user-visible text for this turn in {expected_language}.' in str(payload['system'])
         assert f'"reply_language": "{expected_language}"' in str(payload['messages'])
     assert result['agent_budget']['reserved_cost_usd'] < .5
@@ -127,8 +128,7 @@ def test_provider_retries_preserve_original_error_and_do_not_spend_again(monkeyp
     assert budget.calls == len(requests) == 1
 
 
-@pytest.mark.parametrize('expired', [False, True])
-def test_sdk_timeout_is_not_mislabeled_as_total_budget(monkeypatch, expired):
+def test_sdk_timeout_is_reported_as_provider_timeout(monkeypatch):
     import deepseek_harness
     monkeypatch.setenv('AGENT_TIME_LIMIT_S', '300')
     budget = Budget(False)
@@ -139,33 +139,18 @@ def test_sdk_timeout_is_not_mislabeled_as_total_budget(monkeypatch, expired):
             pass
 
         def start(self):
-            if expired:
-                budget.started -= budget.seconds + 1
             raise TimeoutError('private SDK timeout diagnostics')
 
         def close(self):
             closed.append(True)
 
     monkeypatch.setattr(deepseek_harness, 'DeepSeekHarness', Runtime)
-    expected = BudgetExceeded if expired else TimeoutError
-    with pytest.raises(expected) as failure:
+    with pytest.raises(TimeoutError) as failure:
         asyncio.run(REAL_RUN([{'role': 'user', 'content': 'test'}], [], None, budget))
     public = provider_failure(failure.value, agent_budget=budget.metadata())
-    assert public['error_code'] == ('agent_budget_exceeded' if expired else 'provider_timeout')
+    assert public['error_code'] == 'provider_timeout'
     assert 'private SDK' not in public['provider_error']
     assert closed and not harness_runtime.active
-
-
-@pytest.mark.parametrize('message,reason', [
-    ('time budget reached', 'time'),
-    ('model step budget reached', 'model_calls'),
-    ('estimated cost budget reached', 'estimated_cost'),
-])
-def test_budget_error_identifies_exact_limit(message, reason):
-    result = provider_failure(BudgetExceeded(message), agent_budget=Budget(True).metadata())
-    assert result['budget_reason'] == reason
-    assert result['agent_budget']['model_calls'] == 0
-    assert 'Model requests admitted: 0' in result['provider_error']
 
 
 def test_invalid_protocol_requests_do_not_fail_model_turn():
@@ -227,41 +212,18 @@ def test_cleanup_failure_preserves_original_error(monkeypatch, failure_type):
     assert not list(harness_runtime.ROOT.rglob('buck.patch.yml'))
 
 
-@pytest.mark.parametrize('value', ['nan', 'inf', '-inf', '-1'])
-def test_invalid_time_setting_is_rejected(monkeypatch, value):
-    monkeypatch.setenv('AGENT_TIME_LIMIT_S', value)
-    with pytest.raises(ValueError, match='budget settings'):
-        Budget(False)
-
-
-def test_positive_time_setting_is_respected(monkeypatch):
-    monkeypatch.setenv('AGENT_TIME_LIMIT_S', '1200')
-    budget = Budget(False)
-    assert budget.seconds == 1200
-    budget.started -= 1201
-    with pytest.raises(BudgetExceeded, match='time budget'):
-        budget.remaining()
-
-
-@pytest.mark.parametrize('value', [None, '0'])
-def test_unlimited_time_keeps_other_budgets(monkeypatch, value):
-    if value is None:
-        monkeypatch.delenv('AGENT_TIME_LIMIT_S', raising=False)
-    else:
-        monkeypatch.setenv('AGENT_TIME_LIMIT_S', value)
-    budget = Budget(False)
+@pytest.mark.parametrize('thinking', [False, True])
+def test_legacy_deployment_limits_are_ignored(monkeypatch, thinking):
+    for key in ('AGENT_TIME_LIMIT_S', 'AGENT_COST_LIMIT_USD', 'AGENT_MAX_OUTPUT_TOKENS'):
+        monkeypatch.setenv(key, '1')
+    budget = Budget(thinking)
     budget.started -= 1000000
-    assert budget.remaining() is None
-    assert budget.metadata()['time_limit_s'] is None
-    json.dumps(budget.metadata(), allow_nan=False)
-    assert budget.reserve({'messages': []}) > 0
-    budget.calls = budget.rounds
-    with pytest.raises(BudgetExceeded, match='model step'):
-        budget.reserve({})
-    budget.calls = 0
-    budget.reserved = budget.limit
-    with pytest.raises(BudgetExceeded, match='estimated cost'):
-        budget.reserve({})
+    for _ in range(25):
+        budget.start_call()
+    meta = budget.metadata()
+    assert meta['model_calls'] == 25
+    assert all(meta[key] is None for key in ('time_limit_s', 'cost_limit_usd', 'max_output_tokens', 'model_call_limit'))
+    json.dumps(meta, allow_nan=False)
 
 
 def test_local_tool_stops_at_mcp_timeout_without_task_deadline(monkeypatch):
@@ -296,8 +258,7 @@ def test_local_tool_stops_at_mcp_timeout_without_task_deadline(monkeypatch):
         asyncio.run(REAL_RUN([], [{'function':{'name':'slow'}}], invoke, Budget(False)))
 
 
-@pytest.mark.parametrize('remaining,expected', [(None, 150), (30, 30), (1200, 150)])
-def test_simulation_timeout_is_independent_of_unlimited_task(monkeypatch, remaining, expected):
+def test_simulation_subprocess_has_its_own_timeout(monkeypatch):
     from backend import simulation_analysis
     arguments = []
 
@@ -313,12 +274,8 @@ def test_simulation_timeout_is_independent_of_unlimited_task(monkeypatch, remain
 
     monkeypatch.setattr(simulation_analysis, 'directory', lambda *_: None)
     monkeypatch.setattr(simulation_analysis.asyncio, 'create_subprocess_exec', spawn)
-    token = harness_runtime.scope.set({'remaining': lambda: remaining})
-    try:
-        assert asyncio.run(simulation_analysis.evaluate_async('owner', 'experiment', 'result')) == {'status': 'completed'}
-    finally:
-        harness_runtime.scope.reset(token)
-    assert arguments[-1] == str(expected)
+    assert asyncio.run(simulation_analysis.evaluate_async('owner', 'experiment', 'result')) == {'status': 'completed'}
+    assert arguments[-1] == '150'
 
 
 @pytest.mark.parametrize('complete', [False, True])
@@ -354,8 +311,8 @@ def test_gateway_settles_cumulative_usage_only_for_complete_stream(monkeypatch, 
             assert response.content == raw
             if complete:
                 assert gateway.error is None
-                assert budget.reserved == pytest.approx((1000*budget.input_price+9000*budget.cached_input_price+200*budget.output_price)/1e6)
-                assert not budget.reservations
+                assert budget.estimated_cost == pytest.approx((1000*budget.input_price+9000*budget.cached_input_price+200*budget.output_price)/1e6)
+                assert not budget.pending
             else:
                 assert isinstance(gateway.error, HarnessTurnError)
-                assert len(budget.reservations) == 1
+                assert len(budget.pending) == 1

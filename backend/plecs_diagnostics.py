@@ -219,7 +219,7 @@ def open_model(owner, model):
 
 
 TOOLS = [
-    {'type':'function','function':{'name':'get_plecs_job_result','description':'读取已发出的云端 PLECS 任务结果，包括预算结束后迟到的真实结果；不会重新执行实验。','parameters':{'type':'object','properties':{'job_id':{'type':'string'}},'required':['job_id'],'additionalProperties':False}}},
+    {'type':'function','function':{'name':'get_plecs_job_result','description':'读取已发出的云端 PLECS 任务结果，包括聊天任务结束后才回传的真实结果；不会重新执行实验。','parameters':{'type':'object','properties':{'job_id':{'type':'string'}},'required':['job_id'],'additionalProperties':False}}},
     {"type":"function","function":{"name":"open_plecs_model","description":"在 PLECS 打开已选择电路的独立副本，不执行仿真、不修改原文件。","parameters":{"type":"object","properties":{"model":{"type":"string"}},"required":["model"],"additionalProperties":False}}},
     {'type':'function','function':{'name':'search_plecs_models','description':'递归列出已配置模型文件夹中的名称与路径，不读取文件内容、不登记模型、不启动程序。可由 Agent 提供精确名称/路径用于匹配；省略 hints 则列出候选；通过 next_offset 翻页，search_complete=false 表示扫描不完整。','parameters':{'type':'object','properties':{'hints':{'type':'array','items':{'type':'string','maxLength':1000},'maxItems':30},'offset':{'type':'integer','minimum':0,'default':0},'limit':{'type':'integer','minimum':1,'maximum':100,'default':30}},'additionalProperties':False}}},
     {'type':'function','function':{'name':'check_plecs_connection','description':'只检查本机 PLECS RPC 1080 是否响应，不启动程序、不读取或打开模型、不仿真。','parameters':{'type':'object','properties':{},'additionalProperties':False}}},

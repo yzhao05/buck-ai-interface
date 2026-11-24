@@ -84,7 +84,6 @@ def payload(body, reasoning, effort):
         "parallel_tool_calls": False,
         "include": ["reasoning.encrypted_content"],
         "reasoning": {"effort": effort},
-        "max_output_tokens": body["max_tokens"],
     }
 
 

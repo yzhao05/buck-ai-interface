@@ -154,11 +154,13 @@ def test_saved_search_evidence_survives_only_in_same_harness_session(monkeypatch
     asyncio.run(scenario())
 
 
-def test_tool_round_limit_stops_more_searches(monkeypatch):
-    requests = fake_provider(monkeypatch, [search("Buck " + str(i)) for i in range(20)])
+def test_knowledge_search_can_finish_after_twenty_tool_rounds(monkeypatch):
+    replies = [search("Buck " + str(i)) for i in range(20)]
+    replies.append({"role": "assistant", "content": "Finished"})
+    requests = fake_provider(monkeypatch, replies)
     result = run()
-    assert result["mode"] == "provider_error"
-    assert result['error_code']=='agent_budget_exceeded' and len(requests)<=14
+    assert result["answer"] == "Finished"
+    assert result["agent_budget"]["model_calls"] == len(requests) == 21
 
 
 def test_failure_after_job_submission_keeps_job_id(monkeypatch):

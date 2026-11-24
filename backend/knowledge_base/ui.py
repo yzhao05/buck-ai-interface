@@ -70,7 +70,7 @@ entry('pann-state', 'PANN 窗口初值', 'pann-state', '窗口初值 联合估�
 entry('pann-window', 'PANN 窗口长度', 'pann-cycles', '窗口长度 自动 训练噪声 pann_window_cycles window length',
       '自动按训练噪声选择，或明确1/2/3个开关周期。用于PANN训练窗口，不是总辨识区间，也不是去噪窗口。更长不一定更准确；加权积分方法不使用该PANN设置。')
 entry('pann-epochs', 'PANN 训练轮数', 'pann-epochs', '轮数 训练 epochs training iterations',
-      '界面10～300，默认200，控制PANN训练轮数；联合初值另有50轮预热。当前训练按轮数执行，没有训练墙钟时间上限。Agent回答的时间预算是另一概念。增加轮数不保证参数更准；积分方法不使用此值。')
+      '界面10～300，默认200，控制PANN训练轮数；联合初值另有50轮预热。当前训练按轮数执行，没有训练墙钟时间上限。增加轮数不保证参数更准；积分方法不使用此值。')
 entry('interval', '开始时间 / 结束时间', 'start-ms end-ms', '区间 起点 终点 时间 start_s end_s interval ms',
       '界面单位ms，后端为秒；留空使用可用数据的对应端点。选择恒定负载且有效的辨识区间，必须开始早于结束。重建模式要求从0开始并结束于1ms前，示例建议0～0.8ms。图上拖动缩放不是修改此处辨识区间。')
 entry('train-fraction', '训练区间占比', 'train-fraction train-label', '训练 留出 验证 比例 train_fraction split heldout',
@@ -118,7 +118,7 @@ entry('chat', 'AI 实验助手：输入、发送与快捷提问', 'chat-input se
       '发送键左侧的聊天模型菜单可选择 DeepSeek 或 GPT-6.1 Terra。从下一条消息起使用所选模型，浏览器按后端地址记住选择。输入最多4000字符；发送箭头或Enter提交，Shift+Enter换行。欢迎区三个快捷问题会直接发送相应问题，不只是填入输入框。上下文标签表示关联数据。工具由Agent按问题与已有证据选择，不强制检索；执行辨识、改参数、仿真须依据明确请求。')
 entry('reasoning', '回答模式：快速 / 思考', 'reasoning-mode',
       '快速模式 思考模式 reasoning thinking fast low high',
-      '默认使用思考模式。DeepSeek 快速模式关闭思考，思考模式开启思考。GPT-6.1 Terra 快速模式使用轻度推理（low），思考模式使用高强度推理（high）。都可使用同一工具目录，按预算限制模型调用，快速最多7次、思考最多14次。不是计算方法，也不会切换PANN/积分。模式随会话保存。费用元数据保留在会话记录中，不在回答下方展示；它是本轮本地USD估算（含未完成请求的预留），不是DeepSeek账户账单或每日花费，不能与平台显示的人民币金额直接比较。完整响应按usage结算并释放未使用额度；DeepSeek 默认采用对应模型高峰价格，Terra 使用 OpenAI 标准价格，缓存输入单独计价。')
+      '默认使用思考模式。DeepSeek 快速模式关闭思考，思考模式开启思考。GPT-6.1 Terra 快速模式使用轻度推理（low），思考模式使用高强度推理（high）。都可使用同一工具目录，应用不限制每条回答的耗时、费用和模型调用次数，输出长度由模型服务决定。不是计算方法，也不会切换PANN/积分。模式随会话保存。费用元数据保留在会话记录中，不在回答下方展示；它是本轮本地USD估算，不是DeepSeek账户账单或每日花费，不能与平台显示的人民币金额直接比较。完整响应按服务商返回的用量估算费用；DeepSeek 默认采用对应模型高峰价格，Terra 使用 OpenAI 标准价格，缓存输入单独计价。')
 entry('chat-collapse', '聊天输入框：收起 / 展开', 'toggle-chat-compose compact-chat-images',
       '输入框 回复框 收起 缩小 展开 箭头 单行 草稿 collapse expand composer compact',
       '左上角箭头把聊天输入区域收成一行，保留文字输入和发送按钮，再点可展开。只改变显示，不清空草稿、图片或回答模式，不停止Agent。收起时附件菜单、回答模式和上下文标签隐藏；有待发图片或 PDF 时，附件数量按钮仍可见，点击展开检查附件。Enter发送；Shift+Enter展开并换行。浏览器记住收起状态。')

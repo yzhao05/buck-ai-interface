@@ -289,3 +289,27 @@ def test_unsubstantiated_import_cannot_publish_stale_samples(review, expected):
     row, = manual_import.imported_rows(data.getvalue())
     assert row["kind"] == "curve_pending" and row["points_json"] == "[]"
     assert row["auto_review"] == expected and "9999" not in row["content"]
+
+
+@pytest.mark.parametrize("damage", ["calibration", "samples", "axes"])
+def test_broken_curve_record_keeps_source_but_cannot_break_other_lookups(damage):
+    from backend.curve_digitization import Calibration
+    calibration = Calibration.model_validate({**PLAN, "method": "image", "positions": PLAN["anchors"]})
+    row = dict(id="curve-ok", manual_id="pdf-fixture", locator="2", source_file="fixture.pdf",
+               title="Fixture A", kind="curve", content="Verified series", url="", conditions="",
+               axes_json='["Current","A","Inductance","uH"]', points_json=json.dumps(calibration.samples()),
+               calibration_json=calibration.model_dump_json(), value_source="PDF", auto_review="verified")
+    broken_field, bad_value = {
+        "calibration": ("calibration_json", "{}"),
+        "samples": ("points_json", "[[0,9999]]"),
+        "axes": ("axes_json", "{}"),
+    }[damage]
+    broken = {**row, "id": "curve-broken", "content": "9999", broken_field: bad_value}
+    data = StringIO()
+    writer = csv.DictWriter(data, fieldnames=row)
+    writer.writeheader()
+    writer.writerows([row, broken])
+    docs, curves = manual_import.manuals.parse(manual_import.imported_rows(data.getvalue()), {})
+    assert set(curves) == {"curve-ok"}
+    assert docs[1]["id"] == "curve-broken" and "PDF p. 2" in docs[1]["content"]
+    assert "9999" not in docs[1]["content"]

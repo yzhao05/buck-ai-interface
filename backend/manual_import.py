@@ -23,7 +23,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from .knowledge_base import manuals
-from .curve_digitization import candidate, geometry, overlay, render_page
+from .curve_digitization import Calibration, candidate, geometry, overlay, render_page
 
 
 class Entry(BaseModel):
@@ -313,7 +313,23 @@ def imported_rows(stored):
         # Keep IDs and source metadata available until the original PDF can be reprocessed.
         review = row.get("auto_review")
         if row["kind"] in ("curve", "curve_pending"):
-            verified = row["kind"] == "curve" and review == "verified" and row.get("calibration_json")
+            try:
+                axes = json.loads(row.get("axes_json") or "[]")
+            except (ValueError, TypeError):
+                axes = []
+            if not (isinstance(axes, list) and len(axes) == 4 and all(isinstance(a, str) and a.strip() for a in axes)):
+                axes = []
+                row["axes_json"] = "[]"
+            verified = False
+            if row["kind"] == "curve" and review == "verified" and axes:
+                try:
+                    calibration = Calibration.model_validate_json(row.get("calibration_json") or "")
+                    samples = json.loads(row.get("points_json") or "[]")
+                    verified = (samples == calibration.samples()
+                                and all(type(v) in (int, float) for pair in samples for v in pair)
+                                and all(a[0] < b[0] for a, b in zip(samples, samples[1:])))
+                except (TypeError, ValueError, OverflowError):
+                    pass
             if not verified:
                 row.update(kind="curve_pending", points_json="[]", calibration_json="")
                 if review == "skipped":

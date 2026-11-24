@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend import chat, plecs_local, plecs_diagnostics as rpc
-from backend.agent_policy import Budget, BudgetExceeded, evidence
+from backend.agent_policy import evidence
 from backend.schemas import ChatRequest
 
 
@@ -86,9 +86,7 @@ def test_registration_never_silently_shortens_simulation(tmp_path,monkeypatch):
     assert result['status']=='unavailable'
 
 
-def test_budget_and_missing_evidence(monkeypatch):
-    monkeypatch.setenv('AGENT_COST_LIMIT_USD','0.00001')
-    with pytest.raises(BudgetExceeded):Budget(True).reserve({'messages':[{'content':'hello'}]})
+def test_missing_evidence():
     assert evidence({'diagnostics':{}})['missing']
     history=[{'epoch':i,'loss':1/(i+1),'C_F':.001} for i in range(500)]
     result={'diagnostics':{'pann':{'epoch_history':history}}}

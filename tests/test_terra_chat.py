@@ -1,10 +1,13 @@
 import asyncio
+import base64
+import io
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
+from PIL import Image
 
 from backend.provider_errors import HarnessTurnError
 from backend import chat, harness_runtime, main, manual_import, terra_provider
@@ -22,6 +25,17 @@ def test_terra_picker_routes_real_harness_tools_and_text(monkeypatch, mode, effo
     monkeypatch.setattr(harness_runtime, "run", REAL_RUN)
     assert main.health()["chat_models"] == ["gpt-6.1-terra"]
     assert main.health()["model"] == "gpt-6.1-terra"
+
+    # Two valid attachments total over 500 kB on the wire. The old USD 0.50
+    # reservation rejected this request before the provider saw either image.
+    images = []
+    if mode == "thinking":
+        monkeypatch.setattr(harness_runtime, "hosted", lambda: True)
+        for colour in ("red", "blue"):
+            png = io.BytesIO()
+            Image.new("RGB", (256, 256), colour).save(png, format="PNG", compress_level=0)
+            url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode("ascii")
+            images.append({"name": colour + ".png", "data_url": url})
 
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -76,6 +90,9 @@ def test_terra_picker_routes_real_harness_tools_and_text(monkeypatch, mode, effo
                     },
                 }
             )
+            if mode == "fast" and len(requests) == 1:
+                # An incomplete usage report must not borrow the SDK's placeholder zero.
+                del frames[-1]["response"]["usage"]["input_tokens"]
             data = "".join("data: " + json.dumps(frame) + "\n\n" for frame in frames).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -93,7 +110,7 @@ def test_terra_picker_routes_real_harness_tools_and_text(monkeypatch, mode, effo
     try:
         result = asyncio.run(
             chat.answer(
-                ChatRequest(message="Read the UI overview", chat_model="gpt-6.1-terra", reasoning_mode=mode),
+                ChatRequest(message="Read the UI overview", chat_model="gpt-6.1-terra", reasoning_mode=mode, images=images),
                 no_experiment
             )
         )
@@ -103,13 +120,19 @@ def test_terra_picker_routes_real_harness_tools_and_text(monkeypatch, mode, effo
         thread.join(timeout=2)
     assert result["mode"] == "gpt-6.1-terra", result
     assert result["answer"] == answer and result["sources"][0]["id"] == "ui-overview"
-    assert result["agent_budget"]["unsettled_model_calls"] == 0
+    assert result["agent_budget"]["unsettled_model_calls"] == (1 if mode == "fast" else 0)
     assert result["agent_budget"]["thinking"] is True
     assert result["agent_budget"]["reasoning_effort"] == effort
     assert result["agent_budget"]["reasoning_mode"] == mode
     assert len(requests) == 2 and all(r["model"] == "gpt-6.1-terra" and r["store"] is False for r in requests)
+    assert all("max_output_tokens" not in r for r in requests)
     assert all(r["reasoning"]["effort"] == effort for r in requests)
     assert any(t["name"] == "mcp__buck__read_knowledge" for t in requests[0]["tools"])
+    if images:
+        urls = [part["image_url"] for item in requests[0]["input"] if isinstance(item.get("content"), list)
+                for part in item["content"] if part["type"] == "input_image"]
+        assert urls == [image["data_url"] for image in images]
+        assert sum(map(len, urls)) > 500_000
     items = requests[-1]["input"]
     assert any(i.get("encrypted_content") == "opaque" for i in items)
     assert any(i.get("type") == "function_call_output" and "ui-overview" in i["output"] for i in items)
@@ -134,6 +157,7 @@ def test_terra_image_and_incomplete_response():
     }
     payload = terra_provider.payload(body, {}, "low")
     assert payload["input"][1]["content"][0]["image_url"] == "data:image/png;base64,image-bytes"
+    assert "max_output_tokens" not in payload
     assert payload["reasoning"] == {"effort": "low"}
     error = {
         "type": "response.incomplete",

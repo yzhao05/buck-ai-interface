@@ -1,7 +1,7 @@
 """Official DeepSeek Harness SDK adapter; no application-owned agent loop.
 
 The minimal official profile calls the numerical backend over MCP. A loopback
-provider gateway enforces this application's budgets on *every* model request,
+provider gateway routes requests and records provider-reported usage,
 including retries and compaction. Shell/file tools are disabled by profile patch.
 """
 import asyncio
@@ -21,7 +21,6 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 from . import terra_provider
-from .agent_policy import BudgetExceeded
 from .provider_errors import HarnessTurnError, AgentCapacityError, AgentMemoryError, SessionRestoreError
 from .memory_usage import log_memory, low_headroom, memory_readings
 
@@ -110,17 +109,14 @@ class Gateway:
                         gateway.provider_stage = 'gateway_received'
                         gateway.refresh_persona(body)
                         gateway.restore_images(body)
-                        if gateway.budget.calls >= gateway.budget.rounds:
-                            raise BudgetExceeded('model step budget reached')
+                        # The SDK adds its own token cap to Messages requests.
+                        # Both upstream HTTP APIs accept an omitted output limit.
+                        body.pop('max_tokens', None)
                         body['thinking'] = {'type':'enabled' if gateway.budget.thinking else 'disabled'}
                         if gateway.budget.chat_model == 'gpt-6.1-terra':
-                            body.setdefault('max_tokens', gateway.budget.max_output_tokens)
                             upstream_body = terra_provider.payload(body, gateway.terra_reasoning, gateway.budget.reasoning_effort)
-                            upstream_body['max_output_tokens'] = gateway.budget.reserve(upstream_body)
-                        else:
-                            body['max_tokens'] = gateway.budget.reserve(body)
-                        call_id = gateway.budget.calls
-                    with httpx.Client(timeout=gateway.budget.remaining(), trust_env=False) as client:
+                        call_id = gateway.budget.start_call()
+                    with httpx.Client(timeout=None, trust_env=False) as client:
                         if gateway.budget.chat_model == 'gpt-6.1-terra':
                             stream = terra_provider.stream(client, upstream_body, gateway.terra_reasoning)
                         else:
@@ -145,14 +141,14 @@ class Gateway:
                             stopped = False
                             decoder = codecs.getincrementaldecoder('utf-8')()
                             for raw in upstream.iter_bytes():
-                                gateway.budget.remaining()
                                 buffered += decoder.decode(raw)
                                 while '\n' in buffered:
                                     line, buffered = buffered.split('\n',1)
                                     if line.startswith('data:') and line[5:].strip() != '[DONE]':
                                         try:
                                             frame = json.loads(line[5:].lstrip())
-                                            if frame.get('type') == 'message_start':
+                                            # Terra's opening frame carries SDK placeholders; OpenAI reports usage at completion.
+                                            if frame.get('type') == 'message_start' and gateway.budget.chat_model != 'gpt-6.1-terra':
                                                 usage.update(frame.get('message', {}).get('usage') or {})
                                             if frame.get('type') == 'message_delta':
                                                 update = frame.get('usage') or {}
@@ -179,15 +175,14 @@ class Gateway:
                         if gateway.error is None:
                             gateway.error = exc
                         failure = gateway.error
-                    status = (failure.response.status_code if isinstance(failure, httpx.HTTPStatusError)
-                              else 429 if isinstance(failure, BudgetExceeded) else 502)
+                    status = failure.response.status_code if isinstance(failure, httpx.HTTPStatusError) else 502
                     if response_started:
                         # A second HTTP status line would corrupt the SSE body.
                         # The adapter reports the stored original error.
                         self.close_connection = True
                         return
                     try:
-                        self.reply(status, {'error':{'message':'Harness gateway request failed','type':'budget_or_transport'}})
+                        self.reply(status, {'error':{'message':'Harness gateway request failed','type':'provider_error'}})
                     except OSError:
                         pass
 
@@ -209,7 +204,6 @@ class Gateway:
                         value = {'isError':True,'content':[{'type':'text','text':'Tool not admitted'}]}
                     else:
                         try:
-                            gateway.budget.remaining()
                             output = gateway.invoke(name, arguments)
                             value = {'isError':bool(isinstance(output,dict) and output.get('error')),
                                      'content':[{'type':'text','text':json.dumps(output,ensure_ascii=False,allow_nan=False)}]}
@@ -254,7 +248,7 @@ class Gateway:
         body['messages'] = [m for m in body['messages'] if not redundant(m)]
 
     def restore_images(self, body):
-        """Expand only the app-generated suffix of a user prompt, before budget accounting."""
+        """Expand only the app-generated suffix of a user prompt, before sending the provider request."""
         if not self.image_marker:
             return
         found_in_last_user = False
@@ -331,7 +325,6 @@ async def _run(messages, tools, invoke, budget):
     home = ROOT / identifier
     home.mkdir(parents=True, exist_ok=True)
     emit = state.get('emit', lambda *_:None)
-    state['remaining'] = budget.remaining
     context = contextvars.copy_context()
     loop = asyncio.get_running_loop()
     pending = set()
@@ -344,12 +337,9 @@ async def _run(messages, tools, invoke, budget):
             future = context.copy().run(asyncio.run_coroutine_threadsafe,invoke(name,args),loop)
             pending.add(future)
         try:
-            remaining = budget.remaining()
-            timeout = MCP_TOOL_TIMEOUT_S if remaining is None else min(remaining, MCP_TOOL_TIMEOUT_S)
-            return future.result(timeout=timeout)
+            return future.result(timeout=MCP_TOOL_TIMEOUT_S)
         except TimeoutError:
             if future.cancel():
-                budget.remaining()
                 raise TimeoutError('MCP tool execution timed out') from None
             raise
         except BaseException:
@@ -408,8 +398,9 @@ async def _run(messages, tools, invoke, budget):
         harness = DeepSeekHarness(dsh_home=str(home),cwd=str(home),runtime_cwd=runtime_cwd,
             profile='sdk-minimal',patches=(str(path),),
             model='deepseek-flash' if budget.chat_model=='gpt-6.1-terra' else budget.model,base_url=gateway.url,
-            api_key=gateway.secret,max_tokens=budget.max_output_tokens,
+            api_key=gateway.secret,
             reasoning_effort='high' if budget.thinking else 'off',
+            # RPC acknowledgements are separate from the unbounded response stream.
             initialize_timeout_seconds=30,request_timeout_seconds=30)
         active[task_id] = (harness,identifier)
         stage = 'start'
@@ -464,19 +455,12 @@ async def _run(messages, tools, invoke, budget):
                         'rpc_code=%s images=%d message=%s recovery=gateway_images',
                         task_id, exc.code, len(images), rpc_diagnostic(exc.message))
                     return run_with_gateway_images()
-            result = await asyncio.wait_for(asyncio.to_thread(blocking), timeout=budget.remaining())
+            result = await asyncio.to_thread(blocking)
             if gateway.error:
                 raise gateway.error
             if result.finish_reason not in ('completed',None) or not result.final_response.strip():
                 raise HarnessTurnError(result.finish_reason if result.finish_reason not in ('completed', None) else 'empty')
             return result.final_response
-        except asyncio.TimeoutError:
-            # SDK/RPC timeouts are not evidence that our whole-answer deadline
-            # expired. Prefer the upstream failure if its retries timed out.
-            if gateway.error is not None:
-                raise gateway.error
-            budget.remaining()  # Raises BudgetExceeded only for an expired deadline.
-            raise
         except Exception as exc:
             rpc = exc if isinstance(exc, JsonRpcError) else exc.__cause__
             if isinstance(rpc, JsonRpcError):
