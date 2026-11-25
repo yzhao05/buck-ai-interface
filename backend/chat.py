@@ -461,16 +461,22 @@ async def _answer(request, invoke, *, local_files=False):
                     output = analysis_result(output)
                 if name == 'start_identification' and output and output.get('job_id'):
                     active_job = output
-            if name not in {'read_diagnosis','record_diagnosis'} and isinstance(output,dict):
-                output = {**output,'evidence_id':notebook.evidence(name,output)}
-            detail = {'query':output['query'],'count':output['count']} if name=='search_knowledge' and 'query' in output else {}
-            traces.append({**detail,'name':name,'status':'未执行' if isinstance(output,dict) and output.get('error') else '已执行'})
-            emit('tool_end',{'name':name,'status':traces[-1]['status']})
-            return output
         except (ValueError,TypeError,KeyError) as exc:
-            traces.append({'name':name,'status':'未执行'})
-            emit('tool_end',{'name':name,'status':'未执行'})
-            return {'error':str(exc)}
+            output = {'error':str(exc)}
+            if name != 'read_image_curve':
+                traces.append({'name':name,'status':'未执行'})
+                emit('tool_end',{'name':name,'status':'未执行'})
+                return output
+        if name not in {'read_diagnosis','record_diagnosis'} and isinstance(output,dict):
+            output = {**output,'evidence_id':notebook.evidence(name,output)}
+        detail = {'query':output['query'],'count':output['count']} if name=='search_knowledge' and 'query' in output else {}
+        status = '未执行' if isinstance(output, dict) and output.get('error') else '已执行'
+        if name == 'read_image_curve' and (output.get('error') or output.get('status') == 'unreadable'):
+            detail['diagnostic'] = output.get('error') or output.get('reason')
+            status = '读图失败' if output.get('error') else '曲线未通过校验'
+        traces.append({**detail,'name':name,'status':status})
+        emit('tool_end',{'name':name,'status':status})
+        return output
 
     def metadata():
         return dict(ui_action=ui_action, agent_budget=budget.metadata(),plecs_experiments=experiment_reports,

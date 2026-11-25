@@ -43,6 +43,7 @@ def database():
                 # previous process are interrupted, before admitting any new task.
                 with db:
                     db.execute("UPDATE tasks SET state='interrupted' WHERE state='running'")
+                    db.execute("UPDATE tasks SET state='cancelled' WHERE state='terminating'")
                 _initialized_database = path
         with db:
             yield db
@@ -52,16 +53,22 @@ def database():
 
 def event(identifier,kind,data):
     with database() as db:
-        db.execute('INSERT INTO events(task,kind,data) VALUES (?,?,?)',(identifier,kind,json.dumps(data,ensure_ascii=False)))
+        db.execute("INSERT INTO events(task,kind,data) SELECT id,?,? FROM tasks WHERE id=? AND state='running'",
+                   (kind,json.dumps(data,ensure_ascii=False),identifier))
 
 
 def finish(identifier, state, result=None):
-    cancellation = {'text':'任务已停止；正在执行的本机仿真可能仍在收尾，未安排重跑。'}
-    encoded = json.dumps(result,ensure_ascii=False) if result is not None else None
     with database() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT state FROM tasks WHERE id=?',(identifier,)).fetchone()
+        if not row or row['state'] not in {'running','terminating'}:
+            return
+        if row['state'] == 'terminating':
+            state, result = 'cancelled', None
+        encoded = json.dumps(result,ensure_ascii=False) if result is not None else None
         db.execute('UPDATE tasks SET state=?,result=? WHERE id=?',(state,encoded,identifier))
-        db.execute('INSERT INTO events(task,kind,data) VALUES (?,?,?)',
-                   (identifier,'result' if encoded else 'status',encoded or json.dumps(cancellation,ensure_ascii=False)))
+        if encoded is not None:
+            db.execute("INSERT INTO events(task,kind,data) VALUES (?,'result',?)",(identifier,encoded))
     logging.getLogger('uvicorn.error').info('Agent task finished: id=%s state=%s error_code=%s',
                                             identifier, state, (result or {}).get('error_code') or 'none')
 
@@ -85,7 +92,7 @@ def read(owner,identifier,after=0, *, include_binding=True):
 def latest(owner):
     with database() as db:
         row = db.execute("""SELECT id FROM tasks WHERE owner=?
-            ORDER BY CASE WHEN state='running' THEN 0 ELSE 1 END,
+            ORDER BY CASE WHEN state IN ('running','terminating') THEN 0 ELSE 1 END,
             (SELECT MAX(seq) FROM events WHERE task=tasks.id AND kind='attempt_start') DESC,
             created DESC LIMIT 1""",(owner,)).fetchone()
     return read(owner,row['id']) if row else None
@@ -94,7 +101,7 @@ def latest(owner):
 def launch(owner,body,runner,identifier=None,resume=False):
     # A resumed older task is not necessarily the most recently created row.
     with database() as db:
-        active = db.execute("SELECT 1 FROM tasks WHERE owner=? AND state='running' LIMIT 1",(owner,)).fetchone()
+        active = db.execute("SELECT 1 FROM tasks WHERE owner=? AND state IN ('running','terminating') LIMIT 1",(owner,)).fetchone()
     if active:
         raise ValueError('This conversation already has an active Agent task')
     if len(running)>=agent_capacity():
@@ -106,8 +113,8 @@ def launch(owner,body,runner,identifier=None,resume=False):
             row = db.execute('SELECT request,state FROM tasks WHERE owner=? AND id=?',(owner,identifier)).fetchone()
             if not row:
                 raise ValueError('Task not found')
-            if row['state'] not in {'interrupted','failed','cancelled'}:
-                raise ValueError('Only interrupted tasks may be resumed')
+            if row['state'] not in {'interrupted','failed'}:
+                raise ValueError('Only interrupted or failed tasks may be resumed')
             body = ChatRequest.model_validate_json(row['request'])
             attempts = db.execute("SELECT data FROM events WHERE task=? AND kind='tool_start'",(identifier,))
             can_restart_session = all(json.loads(row['data']).get('name') in REPLAYABLE_READS for row in attempts)
@@ -124,7 +131,7 @@ def launch(owner,body,runner,identifier=None,resume=False):
             result = await runner(body)
             finish(identifier, 'failed' if result.get('mode')=='provider_error' else 'completed', result)
         except asyncio.CancelledError:
-            finish(identifier,'cancelled')
+            finish(identifier,'interrupted')
         except Exception as exc:
             from .provider_errors import provider_failure
             result = provider_failure(exc)
@@ -139,14 +146,26 @@ def launch(owner,body,runner,identifier=None,resume=False):
         if running.get(identifier) is completed:
             running.pop(identifier,None)
             if completed.cancelled():
-                finish(identifier,'cancelled')
+                finish(identifier,'interrupted')
     task.add_done_callback(finished)
     return {'id':identifier,'state':'running'}
 
 
 def cancel(owner,identifier):
-    read(owner,identifier)
-    task = running.get(identifier)
-    if task:
+    with database() as db:
+        changed = db.execute("UPDATE tasks SET state='terminating' WHERE owner=? AND id=? AND state='running'",
+                             (owner,identifier)).rowcount
+        if not changed:
+            # A disconnected client may terminate after its runner already failed.
+            db.execute("UPDATE tasks SET state='cancelled',result=NULL WHERE owner=? AND id=? AND state IN ('interrupted','failed')",
+                       (owner,identifier))
+        row = db.execute('SELECT state FROM tasks WHERE owner=? AND id=?',(owner,identifier)).fetchone()
+        if not row:
+            raise ValueError('Task not found')
+    if changed:
+        task = running.get(identifier)
+        if task is None:
+            finish(identifier,'cancelled')
+            return {'status':'cancelled'}
         task.cancel()
-    return {'status':'cancelling' if task else 'inactive'}
+    return {'status':row['state']}

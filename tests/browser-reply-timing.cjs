@@ -12,7 +12,7 @@ const { chromium } = require('../.tmp/browser/node_modules/playwright-core');
     const page = await browser.newPage();
     const timer = page.locator('.reply-timer');
     const row = page.locator('.message.assistant').last().locator('.message-task');
-    let release, latest;
+    let release, latest, submitted=0, resumes=0, completedBeforeCancel=false;
     let ending = new Promise(resolve => { release=resolve; });
     const result = {mode:'deepseek',answer:'Done',route:{label:'自主 Agent'},agent_budget:{elapsed_s:99}};
     await page.route('**/*', async route => {
@@ -22,10 +22,18 @@ const { chromium } = require('../.tmp/browser/node_modules/playwright-core');
         return route.fulfill({contentType:'application/x-ndjson',body:JSON.stringify({kind:'end',data:terminal})+'\n'});
       }
       if (url.pathname.startsWith('/api/')) {
+        if (url.pathname==='/api/agent/tasks') {
+          return route.fulfill({json:{id:`timed-task-${++submitted}`}});
+        }
+        if (url.pathname.endsWith('/cancel')) {
+          if(completedBeforeCancel)return route.fulfill({json:{status:'completed',result}});
+          latest={id:`timed-task-${submitted}`,state:'cancelled'};
+          return route.fulfill({json:{status:'cancelled'}});
+        }
+        if (url.pathname.endsWith('/resume')) resumes++;
         const data = {
           '/api/health':{status:'ok',chat_mode:'deepseek',archive_enabled:false},
-          '/api/agent/tasks':{id:'timed-task'},
-          '/api/agent/tasks/timed-task':latest,
+          [`/api/agent/tasks/timed-task-${submitted}`]:latest,
           '/api/agent/tasks/latest':{task:latest},
         };
         return route.fulfill({json:data[url.pathname] || {}});
@@ -61,9 +69,21 @@ const { chromium } = require('../.tmp/browser/node_modules/playwright-core');
     assert.equal(await row.innerText(),final);
     await page.locator('#chat-input').fill('stop timing');
     await page.locator('#send-chat').click();
-    await finish({state:'cancelled',result:null});
+    await page.waitForFunction(()=>state.agentTask==='timed-task-2');
+    await page.getByRole('button',{name:'Terminate task',exact:true}).click();
+    // The event stream is still pending. The acknowledgement must unblock send.
+    await ready();
     assert.match(await row.innerText(),/^Wait time:/);
-    latest={id:'timed-task',state:'cancelled'};
+    assert.equal(await page.locator('#agent-status').innerText(),'Task terminated. You can send a new task.');
+    assert.equal(await page.evaluate(()=>localStorage.getItem(`buck-agent:${base}:${sessionId}`)),null);
+    release({state:'cancelled',result:null});
+    ending = new Promise(resolve => { release=resolve; });
+    await page.locator('#chat-input').fill('interrupted timing');
+    await page.locator('#send-chat').click();
+    await page.waitForFunction(()=>state.agentTask==='timed-task-3');
+    assert.equal(resumes,0);
+    await finish({state:'interrupted',result:null});
+    latest={id:'timed-task-3',state:'interrupted'};
     await page.locator('#agent-progress').evaluate(el=>{el.open=true;});
     await page.locator('#agent-resume').click();
     assert.match(await timer.innerText(),/^Recovery time:/);
@@ -81,6 +101,20 @@ const { chromium } = require('../.tmp/browser/node_modules/playwright-core');
     await page.reload();
     await ready();
     assert.equal(await row.innerText(),failureTime);
+    latest={id:`timed-task-${submitted}`,state:'cancelled'};
+    const previousResumes=resumes;
+    await page.evaluate(()=>BuckHarness.recover());
+    assert.equal(resumes,previousResumes);
+    assert.equal(await page.locator('#agent-status').textContent(),'任务已终止，可以发送新任务。');
+    completedBeforeCancel=true;
+    await page.locator('#chat-input').fill('finish before termination acknowledgement');
+    await page.locator('#send-chat').click();
+    await page.waitForFunction(()=>Boolean(state.agentTask));
+    await page.getByRole('button',{name:'终止任务',exact:true}).click();
+    await ready();
+    assert.equal(await page.locator('#chat-messages .assistant .message-content').last().innerText(),'Done');
+    assert.equal(await page.locator('#agent-status').textContent(),'任务已完成');
+    release({state:'completed',result});
     // Archive entries without browser measurements keep their own timing semantics.
     const legacy = await page.evaluate(()=>{
       const article=message('assistant','older');

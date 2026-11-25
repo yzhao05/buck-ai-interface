@@ -51,7 +51,13 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
       }
       if(path.endsWith('/settings')){writes.push(path);return Response.json({});}
       if(path==='/api/agent/tasks')return Response.json({id:'slow-task'});
-      if(path.endsWith('/slow-task/events'))return new Response(JSON.stringify({kind:'end',data:{state:'completed',result:{answer:'slow reply'}}})+'\n');
+      if(path.endsWith('/slow-task/events')){
+        const end=JSON.stringify({kind:'end',data:{state:'completed',result:{answer:'slow reply'}}})+'\n';
+        return new Response(new ReadableStream({
+          start(controller){controller.enqueue(new TextEncoder().encode(end));},
+          pull(controller){controller.error(new Error('Connection lost after the final event'));}
+        },{highWaterMark:0}));
+      }
       return originalFetch(url,init);
     };
     try{
@@ -155,7 +161,7 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   // Exercise the real chat catch branch, not only the stream reader.
   await page.locator('#chat-input').fill('停止状态回归检查');await page.locator('#send-chat').click();
   await page.waitForFunction(()=>!state.chatBusy);
-  assert.match(await page.locator('.message.assistant').last().innerText(),/任务已停止，可恢复/);
+  assert.match(await page.locator('.message.assistant').last().innerText(),/任务已终止，可以发送新任务/);
   assert.equal(alerts.length,0);
   assert.equal(await page.evaluate(()=>readConversation(activeConversation.id).messages.at(-1).response.task_state),'cancelled');
   recoveryEvents=[{kind:'end',data:{state:'interrupted',result:null}}];
@@ -166,6 +172,12 @@ const {chromium}=require('../.tmp/browser/node_modules/playwright-core');
   recoveryEvents=[{kind:'result',data:old}];
   const disconnected=await page.evaluate(async()=>{try{await BuckHarness.request({message:'resume'});return 'accepted';}catch(error){return error.taskState;}});
   assert.equal(disconnected,'disconnected');
+  await page.route('**/api/agent/tasks',route=>route.fulfill({status:409,json:{detail:'This conversation already has an active Agent task'}}),{times:1});
+  const conflict=await page.evaluate(async()=>{
+    try{await BuckHarness.request({message:'new task'});}catch(error){return error.status;}
+  });
+  assert.equal(conflict,409);
+  assert(await page.locator('#agent-cancel').isEnabled());
   await page.locator('#chat-input').fill('断线状态回归检查');await page.locator('#send-chat').click();
   await page.waitForFunction(()=>!state.chatBusy);
   assert.match(await page.locator('.message.assistant').last().innerText(),/后台任务可能仍在运行/);

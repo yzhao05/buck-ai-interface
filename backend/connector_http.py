@@ -3,6 +3,10 @@ import getpass
 import re
 
 
+OPENAI_RECONNECT_SECONDS = 60
+OPENAI_HEARTBEAT_SECONDS = 5
+
+
 def bridge_post(client, path, **kwargs):
     """Use the Studio API gateway when its browser entry requires login."""
     response = client.post(path, **kwargs)

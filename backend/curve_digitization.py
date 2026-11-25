@@ -96,8 +96,8 @@ class Calibration(BaseModel):
     y_range: tuple[FiniteFloat, FiniteFloat]
     x_scale: Literal["linear", "log"]
     y_scale: Literal["linear", "log"]
-    ticks: AxisTicks | None = None
-    identity: TraceIdentity | None = None
+    ticks: AxisTicks
+    identity: TraceIdentity
     image_size: tuple[Annotated[int, Field(gt=1)], Annotated[int, Field(gt=1)]] | None = None
     stroke: StrokeStyle | None = None
     ink_check: InkCheck | None = None
@@ -114,27 +114,26 @@ class Calibration(BaseModel):
         for (low, high), scale in [(self.x_range, self.x_scale), (self.y_range, self.y_scale)]:
             if low >= high or (scale == "log" and low <= 0):
                 raise ValueError("Invalid axis range for selected scale")
-        if self.ticks:
-            for pair, limits, scale, first, last in (
-                (self.ticks.x, self.x_range, self.x_scale, left, right),
-                (self.ticks.y, self.y_range, self.y_scale, bottom, top),
+        for pair, limits, scale, first, last in (
+            (self.ticks.x, self.x_range, self.x_scale, left, right),
+            (self.ticks.y, self.y_range, self.y_scale, bottom, top),
+        ):
+            (p0, v0), (p1, v1) = pair[0], pair[-1]
+            if (
+                (p1 - p0) / (last - first) < 0.05
+                or min(p0, p1) < min(first, last) - 0.005
+                or max(p0, p1) > max(first, last) + 0.005
+                or not limits[0] <= v0 < v1 <= limits[1]
+                or (scale == "log" and v0 <= 0)
             ):
-                (p0, v0), (p1, v1) = pair[0], pair[-1]
-                if (
-                    (p1 - p0) / (last - first) < 0.05
-                    or min(p0, p1) < min(first, last) - 0.005
-                    or max(p0, p1) > max(first, last) + 0.005
-                    or not limits[0] <= v0 < v1 <= limits[1]
-                    or (scale == "log" and v0 <= 0)
-                ):
-                    raise ValueError("Ticks must be ordered and separated inside the plot")
-                transform = math.log if scale == "log" else float
-                lo, hi = map(transform, limits)
-                for pos, val in pair:
-                    if abs((pos - first) / (last - first) - (transform(val) - lo) / (hi - lo)) > 0.025:
-                        raise ValueError("Printed ticks disagree with axis bounds or scale")
-        if self.method == "pixel_trace" and not (self.identity and self.ticks and self.image_size):
-            raise ValueError("Pixel trace requires identified series, ticks and image dimensions")
+                raise ValueError("Ticks must be ordered and separated inside the plot")
+            transform = math.log if scale == "log" else float
+            lo, hi = map(transform, limits)
+            for pos, val in pair:
+                if abs((pos - first) / (last - first) - (transform(val) - lo) / (hi - lo)) > 0.025:
+                    raise ValueError("Printed ticks disagree with axis bounds or scale")
+        if self.method == "pixel_trace" and not self.image_size:
+            raise ValueError("Pixel trace requires image dimensions")
         if self.method == "pixel_trace":
             width = self.image_size[0]
             columns = [x * (width - 1) for x, _ in self.positions]
@@ -151,7 +150,7 @@ class Calibration(BaseModel):
         return self
 
     def has_archive_evidence(self):
-        if not (self.ink_check and self.axis_error_px and self.ticks and self.image_size):
+        if not (self.ink_check and self.axis_error_px and self.image_size):
             return False
         if (self.method == "vector") != (self.stroke is not None):
             return False
@@ -175,10 +174,7 @@ class Calibration(BaseModel):
                 result = (1 - t) * low + t * high
             return float(format(result, ".12g"))
 
-        left, bottom = self.lower_left
-        right, top = self.upper_right
-        xt = self.ticks.x if self.ticks else ((left, self.x_range[0]), (right, self.x_range[1]))
-        yt = self.ticks.y if self.ticks else ((bottom, self.y_range[0]), (top, self.y_range[1]))
+        xt, yt = self.ticks.x, self.ticks.y
 
         def read(pos, ticks, scale):
             (p0, v0), (p1, v1) = ticks[0], ticks[-1]
@@ -468,8 +464,6 @@ def candidate(image, paths, grid, plan, *, allow_two=False):
         for axis, size in zip(("x", "y"), image.size)
     }
     frame = Calibration.model_validate({**plan, **scales, "method": "image", "positions": plan["anchors"]})
-    if not frame.ticks or not frame.identity:
-        return None
     anchors = np.array(frame.positions)
 
     def snap(p):
@@ -595,13 +589,12 @@ def overlay(image, calibration):
     draw.rectangle((l, t, r, b), outline="#009cbe", width=2)
     # Leave the line between markers visible to the independent reviewer.
     indexes = np.linspace(0, len(calibration.positions) - 1, min(40, len(calibration.positions)), dtype=int)
-    if calibration.ticks:
-        for pos, _ in calibration.ticks.x:
-            x, _ = pixel((pos, calibration.lower_left[1]))
-            draw.line((x, b - 5, x, b + 5), fill="#003aff", width=2)
-        for pos, _ in calibration.ticks.y:
-            _, y = pixel((calibration.lower_left[0], pos))
-            draw.line((l - 5, y, l + 5, y), fill="#003aff", width=2)
+    for pos, _ in calibration.ticks.x:
+        x, _ = pixel((pos, calibration.lower_left[1]))
+        draw.line((x, b - 5, x, b + 5), fill="#003aff", width=2)
+    for pos, _ in calibration.ticks.y:
+        _, y = pixel((calibration.lower_left[0], pos))
+        draw.line((l - 5, y, l + 5, y), fill="#003aff", width=2)
     for i in indexes:
         p = calibration.positions[i]
         x, y = pixel(p)

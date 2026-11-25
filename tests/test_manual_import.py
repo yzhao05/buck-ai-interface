@@ -103,7 +103,8 @@ def test_automatic_import_and_shared_lookup(monkeypatch):
         assert req.url == "https://api.openai.com/v1/responses"
         body = json.loads(req.content)
         assert body["store"] is False
-        content = body["input"][0]["content"]
+        *content, format_instruction = body["input"][0]["content"]
+        assert "JSON" in format_instruction["text"]
         if content[1]["type"] == "input_file":
             assert base64.b64decode(content[1]["file_data"].split(",")[1]) == raw
             result = {"entries": entries}
@@ -303,18 +304,21 @@ def test_unsubstantiated_import_cannot_publish_stale_samples(review, expected):
     assert row["auto_review"] == expected and "9999" not in row["content"]
 
 
-@pytest.mark.parametrize("damage", ["calibration", "samples", "axes"])
+@pytest.mark.parametrize("damage", ["calibration", "samples", "axes", "legacy_unversioned", "legacy_v2"])
 def test_broken_curve_record_keeps_source_but_cannot_break_other_lookups(damage):
-    from backend.curve_digitization import Calibration
-    calibration = Calibration.model_validate({**PLAN, "method": "image", "positions": PLAN["anchors"]})
+    image, plan = tdk_raster_fixture()
+    calibration = candidate(image, [], [], plan)
     row = dict(id="curve-ok", manual_id="pdf-fixture", locator="2", source_file="fixture.pdf",
                title="Fixture A", kind="curve", content="Verified series", url="", conditions="",
                axes_json='["Current","A","Inductance","uH"]', points_json=json.dumps(calibration.samples()),
-               calibration_json=calibration.model_dump_json(), value_source="PDF", auto_review="verified")
+               calibration_json=calibration.model_dump_json(), value_source="PDF", auto_review="verified",
+               digitization_version="3", series_scope="general")
     broken_field, bad_value = {
         "calibration": ("calibration_json", "{}"),
         "samples": ("points_json", "[[0,9999]]"),
         "axes": ("axes_json", "{}"),
+        "legacy_unversioned": ("digitization_version", ""),
+        "legacy_v2": ("digitization_version", "2"),
     }[damage]
     broken = {**row, "id": "curve-broken", "content": "9999", broken_field: bad_value}
     data = StringIO()
@@ -354,6 +358,49 @@ def tdk_raster_fixture():
         "anchors": [[150 / 1200, 546 / 1200], [400 / 1200, 552 / 1200], [495 / 1200, 582 / 1200]],
     }
     return image, plan
+
+
+@pytest.mark.parametrize("stage", ["曲线定位", "曲线复核"])
+def test_curve_tool_returns_failed_stage_and_safe_provider_detail(monkeypatch, stage):
+    image, plan = tdk_raster_fixture()
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+    request = ChatRequest(message="read curve", images=[dict(name="test.png", data_url=data_url)])
+    monkeypatch.delenv("OPENAI_RELAY_TOKEN", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    async def post(self, url, *, json, **kwargs):
+        content = json["input"][0]["content"]
+        assert "JSON" in content[-1]["text"]
+        images = sum(block["type"] == "input_image" for block in content)
+        if stage == "曲线复核" and images == 1:
+            from json import dumps
+            return httpx.Response(200, request=httpx.Request("POST", url), json={
+                "status": "completed", "output": [{"content": [
+                    {"type": "output_text", "text": dumps({"curves": {"1": plan}})}
+                ]}]
+            })
+        return httpx.Response(400, request=httpx.Request("POST", url), json={
+            "error": {"param": "input", "code": "invalid_image", "message": "Invalid image: sk-private"}
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    value = asyncio.run(manual_import.read_image_curve(request.images, 1, "470M", [3], "A"))
+    assert all(part in value["error"] for part in (stage, "HTTP 400", "invalid_image", "param=input"))
+    assert "sk-private" not in value["error"]
+    async def run(messages, tools, execute, budget):
+        await execute("read_image_curve", dict(image_index=1, series="470M", x_values=[3], x_unit="A"))
+        invalid = await execute("read_image_curve", dict(image_index=2, series="470M", x_values=[3], x_unit="A"))
+        ledger = await execute("read_diagnosis", {})
+        assert ledger["evidence"][invalid["evidence_id"]]["output"]["error"] == invalid["error"]
+        return "No calibrated reading."
+
+    monkeypatch.setattr(harness_runtime, "run", run)
+    result = asyncio.run(chat.answer(request.model_copy(update={"chat_model": "gpt-6.1-terra"}), None))
+    trace = result["tool_calls"][0]
+    assert trace["status"] == "读图失败" and trace["diagnostic"] == value["error"]
+    assert result["tool_calls"][1]["diagnostic"] == "Select a current image attachment by its 1-based index"
 
 
 def test_terra_chat_traces_same_color_by_connectivity_and_uses_printed_ticks(monkeypatch):
@@ -564,11 +611,15 @@ def test_scanned_part_mapping_requires_original_evidence_and_unique_assignment(f
         assert all(row["points_json"] == "[]" for row in rows)
 
 
-@pytest.mark.parametrize("damage", ["reference", "marks", "ink", "version"])
+@pytest.mark.parametrize("damage", ["reference", "marks", "ink", "version", "ticks", "identity"])
 def test_invalid_archived_evidence_isolated_and_rediscovered(damage):
     image, plan = tdk_raster_fixture()
     cal = candidate(image, [], [], plan)
     raw = json.loads(cal.model_dump_json())
+    if damage in ("ticks", "identity"):
+        del raw[damage]
+        with pytest.raises(ValueError):
+            type(cal).model_validate(raw)
     if damage == "marks":
         raw["axis_error_px"]["x"] += 1
     if damage == "ink":

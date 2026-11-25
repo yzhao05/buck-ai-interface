@@ -940,6 +940,7 @@ function decorateResponse(article, response) {
         const row=document.createElement('div');
         row.append(window.BuckI18n.node(tools[t.name] || t.name), " · ", window.BuckI18n.node(t.status));
         if(t.query)row.append(document.createTextNode(` · ${t.query} (${t.count})`));
+        if(t.name==="read_image_curve" && t.diagnostic)row.append(document.createTextNode(" · "+t.diagnostic));
         log.append(row);
       });
       article.append(log);

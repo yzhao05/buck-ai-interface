@@ -131,9 +131,9 @@ entry('agent-progress', 'Agent 任务进度与恢复面板', 'agent-progress age
 entry('agent-steer', '追加指令 / 发送追加指令', 'agent-instruction agent-steer',
       '追加指令 补充 方向 停止条件 steer instruction',
       '向当前活跃Harness任务补充排查方向或停止条件，最多4000字符；空内容或没有当前任务不发送。不是发起独立新聊天，也不是修改正在执行的数值算法参数。', 'frontend/agent-harness.js')
-entry('agent-stop', '停止任务 / 找回或恢复任务', 'agent-cancel agent-resume',
-      '停止 取消 中断 找回 恢复 agent cancel stop resume recover',
-      '停止任务请求取消当前Agent运行，不回滚已经完成的修改或计算。找回/恢复先查询当前会话已保存或最新任务：运行中重新连接，已完成取回回答，中断/失败/取消任务尝试恢复。已执行实验复用证据，状态未知的操作不应盲目重做；恢复产生的配置建议不会自动应用到可能已变更的界面。结果分析任务绑定提交时的快照；若与右侧当前结果不同，会在主对话提示重新选择，不混用结果。', 'frontend/agent-harness.js')
+entry('agent-stop', '终止任务 / 找回或恢复任务', 'agent-cancel agent-resume',
+      '停止任务 终止 取消 中断 找回 恢复 agent cancel stop terminate resume recover',
+      '终止当前 Agent 后可直接发送新任务。已终止的任务不能恢复，已经完成的修改和计算会保留。找回/恢复可以重新连接运行中的任务、取回已完成的回答，或尝试恢复意外中断和失败的任务。已执行实验复用证据，状态未知的操作不应盲目重做。恢复产生的配置建议不会自动应用到可能已变更的界面。结果分析任务绑定提交时的快照，与当前结果不同时会提示重新选择。', 'frontend/agent-harness.js')
 entry('plan', '辨识计划面板：折叠、继续、取消与关闭', 'identification-plan identification-plan-details plan-continue plan-cancel plan-close plan-progress plan-runs',
       '计划 排队 多组 继续计划 取消后续任务 关闭卡片 identification plan continue cancel dismiss',
       '点击标题左侧箭头可折叠详情，标题上的完成进度仍会更新，计划继续运行。展开可查看文件、每组进度和暂停原因。继续计划按原配置接续未完成步骤，须满足数据、任务状态和必要确认。取消后续任务会保留已完成结果，当前正在执行的数值辨识仍会完成。计划完成或取消后，右上角 × 可关闭卡片；刷新当前标签页仍保持关闭，辨识记录可从右栏查看。', 'frontend/identification-plan.js')

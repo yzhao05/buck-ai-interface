@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import hashlib
 import json
@@ -727,7 +728,6 @@ def get_agent_task(identifier: str, after: int = 0, owner: str = Depends(session
 
 @app.get('/api/agent/tasks/{identifier}/events')
 async def agent_events(identifier: str, after: int = 0, owner: str = Depends(session)):
-    import asyncio
     try:
         first_snapshot = agent_tasks.read(owner,identifier,after,include_binding=False)
     except ValueError as exc:
@@ -738,7 +738,7 @@ async def agent_events(identifier: str, after: int = 0, owner: str = Depends(ses
             for item in snapshot['events']:
                 cursor = item['seq']
                 yield json.dumps(item,ensure_ascii=False)+'\n'
-            if snapshot['state'] != 'running' and len(snapshot['events'])<200:
+            if snapshot['state'] not in {'running','terminating'} and len(snapshot['events'])<200:
                 yield json.dumps({'kind':'end','data':{'state':snapshot['state'],'result':snapshot['result']}},ensure_ascii=False)+'\n'
                 break
             yield '{"kind":"heartbeat","data":{}}\n'
@@ -754,7 +754,8 @@ class AgentInstruction(BaseModel):
 
 @app.post('/api/agent/tasks/{identifier}/steer')
 async def steer_agent(identifier: str, body: AgentInstruction, owner: str = Depends(session)):
-    get_agent_task(identifier,0,owner)
+    if get_agent_task(identifier,0,owner)['state'] != 'running':
+        raise HTTPException(409,'Only running tasks accept instructions')
     try:
         await run_in_threadpool(harness_runtime.steer,identifier,body.message)
         agent_tasks.event(identifier,'instruction',{'text':body.message})
@@ -765,15 +766,23 @@ async def steer_agent(identifier: str, body: AgentInstruction, owner: str = Depe
 
 @app.post('/api/agent/tasks/{identifier}/cancel')
 async def cancel_agent(identifier: str, owner: str = Depends(session)):
-    get_agent_task(identifier,0,owner)
-    return agent_tasks.cancel(owner,identifier)
+    current = get_agent_task(identifier,0,owner)
+    if current['state'] == 'completed':
+        return {'status':'completed','result':current['result']}
+    reply = agent_tasks.cancel(owner,identifier)
+    if reply['status'] == 'terminating':
+        task = agent_tasks.running.get(identifier)
+        if task is not None:
+            await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+        return {'status':get_agent_task(identifier,0,owner)['state']}
+    return reply
 
 
 @app.post('/api/agent/tasks/{identifier}/resume')
 async def resume_agent(identifier: str, request: Request, owner: str = Depends(session)):
     current = get_agent_task(identifier,0,owner)
-    if current['state'] not in {'interrupted','failed','cancelled'}:
-        raise HTTPException(409,'Only interrupted tasks may be resumed')
+    if current['state'] not in {'interrupted','failed'}:
+        raise HTTPException(409,'Only interrupted or failed tasks may be resumed')
     try:
         return agent_tasks.launch(owner,None,chat_runner(request,owner),identifier,resume=True)
     except ValueError as exc:

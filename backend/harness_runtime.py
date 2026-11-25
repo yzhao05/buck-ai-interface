@@ -480,6 +480,7 @@ async def _run(messages, tools, invoke, budget):
             raise
         finally:
             failure_in_flight = sys.exc_info()[0] is not None
+            gateway.closed.set()
             active.pop(task_id,None)
             with pending_lock:
                 stopping.set()

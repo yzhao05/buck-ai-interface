@@ -25,35 +25,63 @@ window.BuckHarness = (()=>{
     document.getElementById('agent-cancel').disabled=!id;
   }
   function taskNotice(error){
-    const text=({cancelled:'任务已停止，可恢复。',interrupted:'任务已中断，可恢复。',disconnected:'连接中断，后台任务可能仍在运行。请点击“找回 / 恢复任务”重新连接。'})[error.taskState];
+    const text=({cancelled:terminatedText,interrupted:'任务已中断，可恢复。',disconnected:'连接中断，后台任务可能仍在运行。请点击“找回 / 恢复任务”重新连接。'})[error.taskState];
     return text?{text:tr(text),response:{agent_task_id:error.agentTaskId,task_state:error.taskState}}:null;
   }
+  const terminatedText='任务已终止，可以发送新任务。';
+  let activeStream=null;
+  function showTerminated(){
+    setActiveTask(null);
+    rememberTask(null);
+    document.getElementById('agent-instruction').value='';
+    showOutcome('',terminatedText);
+  }
+  function finishTask(id,terminal,storageKey){
+    if(terminal.state==='cancelled'){
+      showTerminated();
+      throw taskError('cancelled',id);
+    }
+    setActiveTask(null);
+    const result=terminal.result;
+    status(({completed:'任务已完成',failed:'任务未完成，可查看已保存证据',interrupted:'任务已中断，可恢复'})[terminal.state]||terminal.state);
+    window.BuckMarkdown.render(document.getElementById('agent-preview'),result?.ui_action?'':replyText(result,result?.answer||result?.provider_error));
+    if(result?.ui_action)status('等待界面应用操作');
+    if(terminal.state==='completed')rememberTask(null,storageKey);
+    if(terminal.state==='interrupted')throw taskError('interrupted',id);
+    if(!result)throw taskError('failed',id);
+    return {...result,agent_task_id:id};
+  }
   async function follow(id){
-    try{return await followEvents(id);}
+    const controller=new AbortController();
+    const storageKey=key();
+    activeStream=controller;
+    try{return await followEvents(id,controller.signal,storageKey);}
     catch(error){
+      if(controller.signal.aborted)return finishTask(id,controller.signal.reason,storageKey);
       if(error.taskState)throw error;
       throw taskError('disconnected',id);
-    }
+    }finally{if(activeStream===controller)activeStream=null;}
   }
-  async function followEvents(id){
+  async function followEvents(id,signal,storageKey){
     setActiveTask(id);
     document.getElementById('agent-progress').hidden=false;
     document.getElementById('agent-progress').open=true;
     document.getElementById('agent-preview').textContent='';
-    const storageKey=key();
-    let result=null,buffer='',ended=false,preview='';
-    const response=await fetch(base.replace(/\/$/,'')+`/api/agent/tasks/${id}/events`,{headers:headers()});
+    status('正在准备 Agent 任务');
+    let buffer='',preview='';
+    const response=await fetch(base.replace(/\/$/,'')+`/api/agent/tasks/${id}/events`,{headers:headers(),signal});
     if(!response.ok)throw new Error('Cannot reconnect to the Agent task.');
     const reader=response.body.getReader(),decoder=new TextDecoder();
     try{while(true){
       const {value,done}=await reader.read();
+      signal.throwIfAborted();
       if(done)break;
       buffer+=decoder.decode(value,{stream:true});
       let newline;
       while((newline=buffer.indexOf('\n'))>=0){
         const line=buffer.slice(0,newline);buffer=buffer.slice(newline+1);if(!line)continue;
         const item=JSON.parse(line);
-        if(item.kind==='attempt_start'){result=null;preview='';document.getElementById('agent-preview').textContent='';status(item.data.text);}
+        if(item.kind==='attempt_start'){preview='';document.getElementById('agent-preview').textContent='';status(item.data.text);}
         if(item.kind==='status')status(item.data.text);
         if(item.kind==='tool_start')status('正在执行：',tools[item.data.name]||item.data.name);
         if(item.kind==='tool_end')status(tools[item.data.name]||item.data.name,' · ',item.data.status);
@@ -61,27 +89,14 @@ window.BuckHarness = (()=>{
           preview+=item.data.text;
           window.BuckMarkdown.render(document.getElementById('agent-preview'),preview,{streaming:true});
         }
-        if(item.kind==='result')result=item.data;
         if(item.kind==='end'){
-          ended=true;
-          setActiveTask(null);
-          // The final task snapshot is authoritative, including a null result.
-          // Old result events belong to previous attempts after a resume.
-          result=item.data.result;
-          status(({completed:'任务已完成',failed:'任务未完成，可查看已保存证据',interrupted:'任务已中断，可恢复',cancelled:'任务已停止，可恢复。'})[item.data.state]||item.data.state);
-          window.BuckMarkdown.render(document.getElementById('agent-preview'),result?.ui_action?'':replyText(result,result?.answer||result?.provider_error));
-          if(result?.ui_action)status('等待界面应用操作');
-          if(item.data.state==='completed')rememberTask(null,storageKey);
-          if(['cancelled','interrupted'].includes(item.data.state))throw taskError(item.data.state,id);
-          if(!result)throw taskError('failed',id);
+          return finishTask(id,item.data,storageKey);
         }
       }
     }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
-    if(!ended||!result)throw new Error('Connection interrupted. The Agent task remains on the backend; reconnect to retrieve it.');
-    return {...result,agent_task_id:id};
+    throw new Error('Connection interrupted. The Agent task remains on the backend; reconnect to retrieve it.');
   }
   async function request(body){
-    setActiveTask(null);
     const task=await api('/api/agent/tasks',{method:'POST',body,timeout:null});
     rememberTask(task.id);
     return follow(task.id);
@@ -99,7 +114,8 @@ window.BuckHarness = (()=>{
         catch(error){if(error.status!==404)throw error;rememberTask(null);}
       }
       if(!latest)latest=(await api('/api/agent/tasks/latest')).task;
-      if(!latest){status('没有可恢复的 Agent 任务');return;}
+      if(!latest){setActiveTask(null);status('没有可恢复的 Agent 任务');return;}
+      if(latest.state==='cancelled'){showTerminated();return;}
       if(latest.analysis_result_id && latest.analysis_result_id!==state.resultId){
         const text=tr('该任务分析的结果与右侧当前显示的结果不同。请在右侧点击“让助手分析结果”分析当前结果；如需恢复原任务，请先选择原来的结果。');
         status(text);message('assistant',text,'任务状态');rememberMessage('assistant',text,null,'任务状态');return;
@@ -110,12 +126,14 @@ window.BuckHarness = (()=>{
         && (!response.error_code || response.mode==='validation_error' || response.ui_action_status
           || (!response.mode && response.error_code==='analysis_result_unavailable')));
       if(latest.state==='completed' && savedReply){
+        setActiveTask(null);
         rememberTask(null);
         showOutcome(savedReply.content,savedReply.response.error_code==='ui_action_failed'?'界面操作失败':'此任务已完成，回答已在当前会话中');return;
       }
       if(latest.state!=='completed')finishPending=startPendingReply('正在恢复 Agent 任务…','本次恢复用时');
-      if(['interrupted','failed','cancelled'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
-      const response=await follow(latest.id);
+      if(['interrupted','failed'].includes(latest.state))await api(`/api/agent/tasks/${latest.id}/resume`,{method:'POST'});
+      const response=latest.state==='completed' && latest.result
+        ? finishTask(latest.id,latest,key()) : await follow(latest.id);
       if(finishPending)response.recovery_elapsed_s=finishPending();
       const reply=response.ui_action?'任务已恢复。配置建议未自动应用到可能已变化的界面，请重新发送修改指令。':response.answer||response.provider_error;
       const text=replyText(response,response.ui_action?tr(reply):reply);
@@ -146,8 +164,19 @@ window.BuckHarness = (()=>{
     };
     document.getElementById('agent-cancel').onclick=async()=>{
       const id=state.agentTask;if(!id)return;
-      try{await api(`/api/agent/tasks/${id}/cancel`,{method:'POST'});if(id===state.agentTask)status('正在停止任务…');}
-      catch(error){if(id===state.agentTask)status(error.message);}
+      const button=document.getElementById('agent-cancel');
+      button.disabled=true;
+      status('正在终止任务…');
+      try{
+        const reply=await api(`/api/agent/tasks/${id}/cancel`,{method:'POST',timeout:null});
+        if(id!==state.agentTask)return;
+        if(reply.status==='cancelled' || reply.status==='completed'){
+          if(activeStream)activeStream.abort({state:reply.status,result:reply.result});
+          else if(reply.status==='cancelled')showTerminated();
+          else await recover();
+        }
+      }catch(error){if(id===state.agentTask)status(error.message);}
+      finally{if(id===state.agentTask)button.disabled=false;}
     };
     document.getElementById('agent-resume').onclick=()=>recover().catch(error=>status(error.message));
     document.getElementById('bridge-pair').onclick=async event=>{

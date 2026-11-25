@@ -160,6 +160,10 @@ def test_notebook_evidence_systematic_floor_and_reopening(tmp_path):
     failed=restored.evidence('simulation',{'status':'failed','error':'offline'})
     args['hypotheses'][0].update(status='systematic_floor',supporting_evidence=[failed])
     with pytest.raises(ValueError):restored.update(args)
+    unreadable=restored.evidence('read_image_curve',{'status':'unreadable','reason':'No verified trace'})
+    args['hypotheses'][0]['supporting_evidence']=[unreadable]
+    with pytest.raises(ValueError,match='Failed or missing checks'):
+        restored.update(args)
 
 
 def test_simulation_artifacts_reidentification_truth_and_dedupe(tmp_path,monkeypatch):

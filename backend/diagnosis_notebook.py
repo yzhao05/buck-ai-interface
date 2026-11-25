@@ -61,7 +61,7 @@ class Notebook:
             if hypothesis.status in {'supported','rejected','systematic_floor'}:
                 usable = [self.data['evidence'][ref]['output'] for ref in references]
                 if not any(isinstance(item,dict) and not item.get('error') and
-                           item.get('status') not in {'failed','unavailable','uncertain','unconfigured'} for item in usable):
+                           item.get('status') not in {'failed','unavailable','uncertain','unconfigured','unreadable'} for item in usable):
                     raise ValueError('Failed or missing checks cannot resolve a hypothesis')
         self.data.update(update.model_dump())
         self.save()

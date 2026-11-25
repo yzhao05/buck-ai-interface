@@ -36,11 +36,13 @@ def test_only_process_restart_interrupts_running_tasks(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_tasks, 'ROOT', tmp_path)
     with agent_tasks.database() as db:
         db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?)',('task','owner','running','{}',None,0))
+        db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?)',('stopped','other','terminating','{}',None,0))
     # A GET can arrive between the admission commit and the in-memory task registration.
     assert agent_tasks.read('owner','task')['state'] == 'running'
     # Reopen the existing database as a fresh worker.
     monkeypatch.setattr(agent_tasks, '_initialized_database', None)
     assert agent_tasks.latest('owner')['state'] == 'interrupted'
+    assert agent_tasks.latest('other')['state'] == 'cancelled'
 
 
 def test_resuming_older_task_still_blocks_new_task(tmp_path, monkeypatch):
@@ -87,6 +89,42 @@ def test_cancel_before_runner_starts_releases_capacity(tmp_path, monkeypatch):
         await asyncio.sleep(0)
         assert identifier not in agent_tasks.running
         assert agent_tasks.read('owner', identifier)['state'] == 'cancelled'
+    asyncio.run(scenario())
+
+
+def test_termination_discards_late_result_and_accepts_next_task(tmp_path, monkeypatch):
+    from backend import main
+    monkeypatch.setattr(agent_tasks, 'ROOT', tmp_path)
+    monkeypatch.setattr(agent_tasks, 'agent_capacity', lambda: 1)
+
+    async def scenario():
+        started = asyncio.Event()
+        async def first(_):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                harness_runtime.scope.get()['emit']('text_delta', {'text':'stale'})
+                return {'answer':'stale'}
+        async def second(body):
+            return {'answer':body.message}
+        identifier = agent_tasks.launch('owner', ChatRequest(message='first'), first)['id']
+        await started.wait()
+        replies = await asyncio.gather(main.cancel_agent(identifier,'owner'), main.cancel_agent(identifier,'owner'))
+        assert replies == [{'status':'cancelled'}] * 2
+        snapshot = agent_tasks.read('owner',identifier)
+        assert snapshot['result'] is None
+        assert [item['kind'] for item in snapshot['events']] == ['attempt_start']
+        with pytest.raises(main.HTTPException) as rejected:
+            await main.resume_agent(identifier,None,'owner')
+        assert rejected.value.status_code == 409
+        with pytest.raises(ValueError,match='Only interrupted'):
+            agent_tasks.launch('owner',None,first,identifier,resume=True)
+        next_id = agent_tasks.launch('owner',ChatRequest(message='second'),second)['id']
+        assert next_id != identifier
+        await agent_tasks.running[next_id]
+        assert agent_tasks.read('owner',next_id)['result'] == {'answer':'second'}
+        assert await main.cancel_agent(next_id,'owner') == {'status':'completed','result':{'answer':'second'}}
     asyncio.run(scenario())
 
 
