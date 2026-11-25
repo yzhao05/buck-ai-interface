@@ -140,6 +140,11 @@ def test_automatic_import_and_shared_lookup(monkeypatch):
         assert client.get(url, headers=other).status_code == 404
         data = outcome(client, url, headers)
         assert data["status"] == "completed", data
+        stages = [step["stage"] for step in data["steps"]]
+        assert stages[:4] == ["queued", "read", "extract", "validate"]
+        assert stages[4:9] == ["page", "locate", "trace", "part", "verify"]
+        assert all(step["page"] == 2 for step in data["steps"][4:-1])
+        assert stages[-1] == "save"
         assert data["result"] == dict(
             entries=4,
             verified=1,
@@ -148,6 +153,7 @@ def test_automatic_import_and_shared_lookup(monkeypatch):
         )
         repeat = outcome(client, upload(client, raw, other), other)
         assert repeat["result"]["already_saved"] is True
+        assert [step["stage"] for step in repeat["steps"]] == ["queued", "read", "reuse"]
     with closing(manual_import.connect()) as db:
         assert db.execute("SELECT digest,source FROM manual_files").fetchall() == [(doc[4:], raw)]
     assert calls == ["extract", "locate", "verify", "verify"]
@@ -162,6 +168,37 @@ def test_automatic_import_and_shared_lookup(monkeypatch):
     assert lookup(1)["status"] == "axis_interpolation"
     assert lookup(9)["status"] == "outside_sampled_range"
     assert set(manual_import.corpus()[1]) == {curve_id}
+
+
+@pytest.mark.parametrize("corrected", [True, False])
+def test_entry_validation_retry_reports_the_field(monkeypatch, corrected):
+    raw = example_pdf()
+    calls = []
+
+    async def respond(prompt, content):
+        assert base64.b64decode(content[1]["file_data"].split(",")[1]) == raw
+        if calls:
+            assert "entries[0].conditions" in prompt
+        calls.append(prompt)
+        entry = dict(page=1, title="Rated current", content="4 A", is_curve=False, axes=[])
+        if corrected and len(calls) == 2:
+            entry["conditions"] = ""
+        return {"entries": [entry]}
+
+    monkeypatch.setattr(manual_import, "request_json", respond)
+    headers = {"X-Session-ID": str(uuid4()), APP_TOKEN_HEADER: "Bearer " + TOKEN}
+    with TestClient(app) as client:
+        result = outcome(client, upload(client, raw, headers), headers)
+    assert len(calls) == 2
+    stages = [step["stage"] for step in result["steps"]]
+    assert stages[:6] == ["queued", "read", "extract", "validate", "repair", "validate"]
+    assert "entries[0].conditions" in result["steps"][4]["detail"]
+    if corrected:
+        assert result["status"] == "completed" and result["result"]["entries"] == 1
+        assert stages[-1] == "save"
+    else:
+        assert result["status"] == "failed" and "entries[0].conditions" in result["error"]
+        assert "save" not in stages and not manual_import.corpus()[0]
 
 
 def test_bad_page_fails_without_partial_import(monkeypatch):
@@ -255,11 +292,11 @@ def test_legacy_samples_hidden_until_original_pdf_passes_review(monkeypatch, mal
 
     monkeypatch.setattr(manual_import, "request_json", provider)
     with pytest.raises(HTTPException) as failure:
-        asyncio.run(manual_import.process(raw, "renamed.pdf", lambda page: None))
+        asyncio.run(manual_import.process(raw, "renamed.pdf", lambda *args: None))
     assert failure.value.status_code == 422
     verify_unavailable()
     malformed = None
-    result = asyncio.run(manual_import.process(raw, "renamed.pdf", lambda page: None))
+    result = asyncio.run(manual_import.process(raw, "renamed.pdf", lambda *args: None))
     assert result["verified"] == 1 and result["entries"] == 1
     assert "9999" not in knowledge.read_knowledge([key])["documents"][0]["content"]
     assert knowledge.read_knowledge([key], x_value=0)["curve_lookup"]["y"] == pytest.approx(
@@ -467,7 +504,7 @@ def test_scanned_manual_publishes_calculated_columns_to_shared_csv(monkeypatch):
     raw = example_pdf()
     doc = "pdf-" + hashlib.sha256(raw).hexdigest()
 
-    async def extract(raw, filename):
+    async def extract(raw, filename, progress):
         return manual_import.Extraction(
             entries=[
                 dict(
@@ -493,7 +530,7 @@ def test_scanned_manual_publishes_calculated_columns_to_shared_csv(monkeypatch):
         "render_page",
         lambda raw, page, raster=False: png.getvalue() if raster else b'<svg viewBox="0 0 1201 1201"/>',
     )
-    result = asyncio.run(manual_import.process(raw, "scanned.pdf", lambda page: None))
+    result = asyncio.run(manual_import.process(raw, "scanned.pdf", lambda *args: None))
     assert result["verified"] == 1
     _, stored = manual_import.saved_rows(raw)
     (row,) = csv.DictReader(StringIO(stored))

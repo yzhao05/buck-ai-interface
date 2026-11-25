@@ -207,7 +207,8 @@ async def upload(file: UploadFile = File(...), owner: str = Depends(session), re
         raw = await file.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
             raise HTTPException(413, "CSV 超过 32 MB。")
-        return add_dataset(raw, Path(file.filename).name, owner, reference=reference, keep_dataset_id=keep_dataset_id)
+        return await run_in_threadpool(add_dataset, raw, Path(file.filename).name, owner,
+                                       reference=reference, keep_dataset_id=keep_dataset_id)
     finally:
         await file.close()
 

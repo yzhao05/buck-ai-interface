@@ -19,6 +19,25 @@ def client(monkeypatch):
     return c
 
 
+def test_dense_plecs_csv_preserves_all_rows(client, monkeypatch):
+    import asyncio
+    parse = main.read_csv
+
+    def parse_off_event_loop(raw, name):
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        return parse(raw, name)
+
+    monkeypatch.setattr(main, "read_csv", parse_off_event_loop)
+    rows = 600_001
+    header = b"time,current,voltage\n"
+    row = b"0,1,12\n"
+    contents = header + row * rows
+    response = client.post("/api/datasets", files={"file": ("scope.csv", contents)})
+    assert response.status_code == 200
+    assert response.json()["rows"] == rows
+
+
 def test_upload_fit_chat_and_isolation(client):
     demo=client.post("/api/demo"); assert demo.status_code==200
     data=demo.json()

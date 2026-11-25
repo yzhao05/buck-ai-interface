@@ -149,14 +149,14 @@ async function reconcileFiles(record, remoteFiles, {verify=false,receipt={},prog
     if (valid && !other?.valid) {
       progress("上传 CSV",own.filename);
       const form=new FormData();form.append("file",own.blob,own.filename);
-      const ack=await archiveRequest(`/conversations/${record.id}/files/${sha}?epoch=${epoch}`,{method:"POST",body:form,timeout:90000});
+      const ack=await archiveRequest(`/conversations/${record.id}/files/${sha}?epoch=${epoch}`,{method:"POST",body:form,timeout:null});
       if (serverArchiveOnly() && ack?.sha256!==sha) throw new Error("服务器尚未确认 CSV 校验值。");
       if (serverArchiveOnly() && archivePersistent && current()) await BuckAttachments.acknowledged(own);
     } else if (serverArchiveOnly() && other?.valid) {
       if (own && other.verified && archivePersistent && current()) await BuckAttachments.acknowledged(own);
     } else if (!valid && other?.valid) {
       progress("下载 CSV",other.filename);
-      const blob=await archiveRequest(`/conversations/${record.id}/files/${sha}`,{asBlob:true,timeout:90000});
+      const blob=await archiveRequest(`/conversations/${record.id}/files/${sha}`,{asBlob:true,timeout:null});
       if (await csvDigest(blob)!==sha) throw new Error("后端 CSV 校验失败，同步未完成。");
       if (!current()) return {stale:true};
       const saved=await BuckAttachments.save(scope,sha,other.filename,blob,epoch);
@@ -364,7 +364,7 @@ async function synchronizeArchive({preferRemote=false,background=false,currentFi
 async function recoverCsvFromArchive(dataset) {
   if (!archiveEnabled) return null;
   try {
-    const blob=await archiveRequest(`/conversations/${activeConversation.id}/files/${dataset.sha256}`,{asBlob:true,timeout:90000});
+    const blob=await archiveRequest(`/conversations/${activeConversation.id}/files/${dataset.sha256}`,{asBlob:true,timeout:null});
     if (await csvDigest(blob)!==dataset.sha256) return null;
     try { if (!serverArchiveOnly()) await BuckAttachments.save(csvScope(),dataset.sha256,dataset.filename,blob,activeConversation.file_epoch || 0); } catch {}
     return blob;

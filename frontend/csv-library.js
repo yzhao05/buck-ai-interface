@@ -88,7 +88,7 @@ async function historicalCsvFile(entry) {
   }
   if (!blob && archiveEnabled && state.connected) {
     try {
-      blob=await archiveRequest(`/conversations/${entry.conversationId}/files/${entry.sha256}`,{asBlob:true});
+      blob=await archiveRequest(`/conversations/${entry.conversationId}/files/${entry.sha256}`,{asBlob:true,timeout:null});
       if(await csvDigest(blob)!==entry.sha256)blob=null;
     } catch { blob=null; }
   }

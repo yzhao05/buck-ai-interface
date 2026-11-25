@@ -30,7 +30,7 @@ entry('language', '顶部语言与服务状态', 'language-toggle connection-sta
       'EN/中文切换界面语言。新任务的流式说明和最终回答使用发送时的界面语言，恢复同一任务时沿用原语言。后端已连接表示后端健康检查成功，不等于模型回答或 PLECS 仿真已经成功。尚未连接时去连接设置核对地址。提示条 × 只关闭当前提示，不修复错误也不撤销操作。')
 entry('csv-upload', '导入波形：拖入或选择 PLECS CSV', 'csv-file dropzone',
       '上传 导入 CSV 波形 upload import waveform',
-      '点击上传区或拖入 CSV，最大 32 MB。使用本地后端时，也可在连接设置保存包含实验 CSV 的文件夹，再告诉助手文件名。助手可递归搜索该目录，找到明确匹配后直接加载，同名文件可用相对路径区分。导入后读取列、建议映射并检查数据，不会仅因上传就开始参数辨识。需要时间、电感电流、输出电压；实际 PWM 列可选。接着核对信号与单位映射。')
+      '点击上传区或拖入 CSV，每个文件最大 32 MiB，不设行数上限。浏览器会等待 CSV 上传完成。使用本地后端时，也可在连接设置保存包含实验 CSV 的文件夹，再告诉助手文件名。助手可递归搜索该目录，找到明确匹配后直接加载，同名文件可用相对路径区分。导入后读取列、建议映射并检查数据，不会仅因上传就开始参数辨识。需要时间、电感电流、输出电压；实际 PWM 列可选。接着核对信号与单位映射。')
 entry('csv-library', '已有实验示例与历史 CSV', 'load-demo empty-demo toggle-csv-library csv-library-list csv-library-menu',
       '示例 历史CSV 下拉 文件列表 demo historical CSV library',
       '加载已有实验示例（空波形区的加载实验示例也是同一入口）加载项目示例数据，不生成一次新的实测实验。旁边下拉箭头展开/收起历史 CSV 列表，点击聊天区不会自动收起；列表内按Esc可收起。点击文件后收起列表并加载到当前会话；这不等于切换到文件原来的会话。加载失败时先检查备份状态或重新上传原文件。', 'frontend/csv-library.js')
@@ -122,9 +122,9 @@ entry('reasoning', '回答模式：快速 / 思考', 'reasoning-mode',
 entry('chat-collapse', '聊天输入框：收起 / 展开', 'toggle-chat-compose compact-chat-images',
       '输入框 回复框 收起 缩小 展开 箭头 单行 草稿 collapse expand composer compact',
       '左上角箭头把聊天输入区域收成一行，保留文字输入和发送按钮，再点可展开。只改变显示，不清空草稿、图片或回答模式，不停止Agent。收起时附件菜单、回答模式和上下文标签隐藏；有待发图片或 PDF 时，附件数量按钮仍可见，点击展开检查附件。Enter发送；Shift+Enter展开并换行。浏览器记住收起状态。')
-entry('chat-images', '聊天附件：图片、电路图、PDF 和厂家手册入库', 'manual-file chat-attachment-choice chat-pdf-file chat-image-file chat-image-list chat-image-dialog close-chat-image reuse-chat-image chat-image-preview',
+entry('chat-images', '聊天附件：图片、电路图、PDF 和厂家手册入库', 'manual-file manual-progress manual-reconnect chat-attachment-choice chat-pdf-file chat-image-file chat-image-list chat-image-dialog close-chat-image reuse-chat-image chat-image-preview',
       '添加图片 添加电路图 粘贴 拖入 移除 附加到当前提问 image attachment preview reuse',
-      '选择「用 OpenAI 整理手册并存入共享知识库」并上传 PDF 会启动后台任务。AI 识别图例、单位和两轴刻度，程序按原图取点，AI 复核采样叠图后自动保存到项目共享知识库。无法确认的曲线仅保留说明和页码。导入期间可继续聊天。旧版导入曲线重新上传原 PDF 后会自动复核。添加附件下拉框提供添加图片、添加电路图和添加 PDF。每次可选一份 PDF，重新选择会替换待发 PDF，发送后助手收到标有页码的可提取文字；扫描页可另发截图。添加附件与回答模式同一行，位于模式选择左侧；窄聊天区仍保留该顺序，服务信息另行显示。选择、粘贴或拖入PNG/JPEG/GIF/WebP，每次最多3张、单张最大8MB；压缩后发送，GIF只取首帧。添加电路图优先使用已保存参考图，没有上传图时把当前默认图及参数标注转成图片；输入框为空时填入分析提示，仍需发送。待发缩略图的移除按钮只移除本次附件；点击图片可放大，关闭只关闭预览，附加到当前提问复用预览图。历史提到图片不等于本轮重新附带原图。', 'frontend/chat-images.js')
+      '选择「用 OpenAI 整理手册并存入共享知识库」并上传 PDF 会启动后台任务。AI 识别图例、单位和两轴刻度，程序按原图取点，AI 复核采样叠图后自动保存到项目共享知识库。无法确认的曲线仅保留说明和页码。输入框上方的手册导入进度展示实际执行的步骤、曲线页码和保存结果。条目格式错误会自动重提取一次，再次失败时列出字段原因。进度查询中断后可点击「重新查看进度」。导入期间可继续聊天。旧版导入曲线重新上传原 PDF 后会自动复核。添加附件下拉框提供添加图片、添加电路图和添加 PDF。每次可选一份 PDF，重新选择会替换待发 PDF，发送后助手收到标有页码的可提取文字；扫描页可另发截图。添加附件与回答模式同一行，位于模式选择左侧；窄聊天区仍保留该顺序，服务信息另行显示。选择、粘贴或拖入PNG/JPEG/GIF/WebP，每次最多3张、单张最大8MB；压缩后发送，GIF只取首帧。添加电路图优先使用已保存参考图，没有上传图时把当前默认图及参数标注转成图片；输入框为空时填入分析提示，仍需发送。待发缩略图的移除按钮只移除本次附件；点击图片可放大，关闭只关闭预览，附加到当前提问复用预览图。历史提到图片不等于本轮重新附带原图。', 'frontend/chat-images.js')
 entry('agent-progress', 'Agent 任务进度与恢复面板', 'agent-progress agent-status agent-preview',
       '任务进度 状态 流式 回答 Harness agent progress',
       '显示Agent工具执行状态和逐步到达的回答文本，不显示内部推理。任务完成、失败、中断、停止含义不同；连接断开时后台可能继续运行。折叠面板不停止任务。', 'frontend/agent-harness.js')

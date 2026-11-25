@@ -123,6 +123,13 @@
           <button type="button" id="plan-cancel" class="button subtle small">取消后续任务</button>
         </details>
       </section>
+        <details id="manual-progress" class="harness-progress" hidden><summary>手册导入进度</summary>
+          <strong id="manual-filename"></strong>
+          <p id="manual-status" role="status"></p>
+          <div id="manual-outcome"></div>
+          <button id="manual-reconnect" type="button" class="button subtle small" hidden>重新查看进度</button>
+          <ul id="manual-steps"></ul>
+        </details>
         <details id="agent-progress" class="harness-progress"><summary>Agent 任务进度与恢复</summary>
     <p id="agent-status" role="status">Harness 任务进度与恢复</p>
     <div id="agent-preview" style="max-height:140px;overflow:auto"></div>

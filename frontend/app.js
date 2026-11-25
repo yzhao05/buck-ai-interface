@@ -128,7 +128,7 @@ function errorText(body) {
   if (Array.isArray(body.detail)) return body.detail.map(e => `${e.loc?.slice(1).join(".")}: ${e.msg}`).join("\n");
   return "请求失败，请检查后端服务。";
 }
-async function api(path, {method = "GET", body, timeout = 90000, asBlob = false, archiveCode = "", archiveProtocol = "", owner = sessionId} = {}) {
+async function api(path, {method = "GET", body, timeout = (method === "POST" && path.split("?")[0] === "/api/datasets" ? null : 90000), asBlob = false, archiveCode = "", archiveProtocol = "", owner = sessionId} = {}) {
   if (!base) throw new Error("请在连接设置中填写魔搭创空间的应用地址，或启动本地后端。");
   const controller = timeout === null ? null : new AbortController();
   const timer = controller && setTimeout(() => controller.abort(), timeout);

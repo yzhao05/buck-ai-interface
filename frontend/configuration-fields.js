@@ -143,7 +143,7 @@ function addLocalCsvSelections(catalog,action){
 }
 async function configurationCsvFile(item){
   if(!item.local)return historicalCsvFile(item.entry);
-  const blob=await api('/api/local-csv/file',{method:'POST',body:{relative_path:item.local.relative_path,id:item.id},asBlob:true});
+  const blob=await api('/api/local-csv/file',{method:'POST',body:{relative_path:item.local.relative_path,id:item.id},asBlob:true,timeout:null});
   if(item.local.sha256 && await csvDigest(blob)!==item.local.sha256)throw new Error('文件内容已变化，请重新选择。');
   return new File([blob],item.name,{type:'text/csv'});
 }

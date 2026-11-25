@@ -114,6 +114,8 @@ DEEPSEEK_MODEL=deepseek-flash
 
 `node tests/browser-four-run-plan.cjs` 验证截图原句、关闭的辨识面板、缺列和未确认时不提交、四组独立配置与报告名称，以及第三组运行中刷新后的恢复与去重。模型回复和后三个数值任务使用测试替身，第一组积分真实计算；此测试不验证四组的数值精度或真实 DeepSeek 服务。设置环境变量 `MATRIX_SCENARIO=failure` 可验证第三组失败后保留前两份结果、禁止重复提交及修改已开始计划的参数；`MATRIX_SCENARIO=cancel` 验证取消第三组运行中的后续计划时，已提交结果仍保存且第四组不启动。已开始计划会先检查参数是否改变，再检查电路确认等条件，避免要求用户确认一份实际不允许继续的配置。
 
+在项目根目录运行浏览器回归前，先用 `npm install --prefix .tmp/browser playwright-core@1.64.1` 安装测试依赖。手册进度测试可用 `node tests/browser-manual-progress.cjs` 单独运行；它使用本机 Chrome 和模拟接口，可通过 `CHROME_PATH` 指定浏览器路径。
+
 回归测试：`python -m pytest tests/test_identification_plan.py tests/test_configuration.py tests/test_chat_adapter.py -q`。本地后端在 8001 端口启动后，运行 `node tests/browser-identification-plan.cjs` 验证两方法真实计算（PANN 200 轮）；可通过 `PLAN_CSV` 指定含噪 CSV，否则使用仓库 Case16A 示例。`node tests/browser-identification-plan-guards.cjs` 验证失败保留、同名文件歧义、重复/过期操作和英文显示。`node tests/browser-identification-plan-recovery.cjs` 使用真实积分结果和模拟 PANN 任务验证运行中刷新、继续原任务及不重复提交（不用于验证 PANN 数值精度）。后端回归使用模拟 DeepSeek 响应，不调用外部服务；上述计划浏览器测试默认使用 `tests/plan-chat-fixtures.cjs` 的固定解析回复，无需 Key，设置 `TEST_LIVE_DEEPSEEK=1` 可验证真实解析。`node tests/browser-plan-pwm-source.cjs` 默认模拟解析回复，使用截图原句验证两份任务及报告的 measured 来源、缺少 PWM 列时暂停（积分真实计算，PANN 响应模拟）；设置 `TEST_LIVE_DEEPSEEK=1` 可接入已配置 Key 的后端验证真实模型解析。
 
 缺少 CSV、已应用列映射、实际 PWM 或重建电路确认时，设置可保留但不会启动。改变电路图、数据、映射或电路参数会使旧确认失效；AI 可以记录用户明确作出的确认，不能自行推断接线一致。存在正在运行的任务、回复返回时会话/CSV/设置已变化、重复返回同一操作时不重复应用或启动。操作执行状态保存在回复中，恢复历史不会重放。单次配置工具及两方法计划均在所选模型缺少密钥或结构化调用失败时停止，不使用本地规则猜测参数，也不退回旧配置启动；本地不再按关键词分发或裁定执行意图，计划由同一个 Harness Agent 提出。比较已运行结果不会启动新任务，文件名及 R1/C2 等控制器元件标记不作为负载 R；计划存储失败会显示提示并解除界面锁定。需要同时部署前后端，无新增环境变量。
@@ -157,7 +159,7 @@ Agent 必须遵守用户的执行限制；后端不再用自然语言关键词�
 - 验证：按时间分训练/留出。实测 PWM 模式使用记录的开关状态；已知控制器模式使用自主闭环预测。两者均不在后段重置到测量状态。
 - 可选 PANN：使用压缩包里的物理递归网络，训练段积分估计初始化，再用波形损失微调。
 - DeepSeek：波形摘要、读取辨识结果、启动真实辨识任务、检索专业知识库；调用失败显式降级。
-- 数据/结果按随机会话隔离；后端缓存默认 1 小时过期，浏览器 CSV 副本随会话保留并按需恢复；任务单工作线程排队；上传 32 MB / 350000 行上限；生产环境强制应用口令。
+- 数据/结果按随机会话隔离；后端缓存默认 1 小时过期，浏览器 CSV 副本随会话保留并按需恢复；任务单工作线程排队；单个 CSV 最大 32 MiB，不设行数上限；生产环境强制应用口令。
 
 ## Buck 公式知识层
 

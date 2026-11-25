@@ -12,7 +12,6 @@ import pandas as pd
 from .schemas import Mapping
 
 MAX_BYTES = 32 * 1024 * 1024
-MAX_ROWS = 350000
 
 
 @dataclass
@@ -24,7 +23,7 @@ class Dataset:
 
 def read_csv(raw: bytes, name: str) -> Dataset:
     if not raw or len(raw) > MAX_BYTES:
-        raise ValueError("CSV 必须非空且小于 32 MB。")
+        raise ValueError("CSV 必须非空且不超过 32 MiB。")
     if b"\x00" in raw:
         raise ValueError("请导出 UTF-8 / GB18030 文本 CSV，不支持二进制或 UTF-16 文件。")
     # Validate incrementally: never retain a decoded copy of the entire file.
@@ -45,9 +44,9 @@ def read_csv(raw: bytes, name: str) -> Dataset:
         first = next(csv.reader(stream, delimiter=delimiter), [])
     if len(first) < 3 or len(first) > 32 or len(first) != len(set(first)):
         raise ValueError("首行需要 3～32 个不重复的列名（至少时间、电流、电压）。")
-    frame = pd.read_csv(io.BytesIO(raw), encoding=encoding, sep=delimiter, nrows=MAX_ROWS + 1)
-    if len(frame) > MAX_ROWS or len(frame) < 30:
-        raise ValueError("需要 30～350000 行数据；请在 PLECS 中选择合适时间段导出。")
+    frame = pd.read_csv(io.BytesIO(raw), encoding=encoding, sep=delimiter)
+    if len(frame) < 30:
+        raise ValueError("CSV 至少需要 30 行数据。")
     return Dataset(name[:150], frame, hashlib.sha256(raw).hexdigest())
 
 

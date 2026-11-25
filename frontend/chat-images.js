@@ -126,42 +126,107 @@ async function attachCircuitImage(){
   if(!$("chat-input").value.trim())$("chat-input").value=tr("请分析这张电路图的接线与元件标注，并指出需要核对的地方。");
   persistConversation();$("chat-input").focus();notice("电路图已附加，点击发送后交给助手分析。",true);
 }
-async function importManual(file){
-  if(!file || historyLocked() || !activeConversation)return;
-  if(file.size>8*1024*1024){notice("请选择不超过 8 MB 的 PDF。");return;}
-  const option=$("chat-attachment-choice").querySelector('option[value="manual"]');
-  if(option.disabled)return;
-  const owner=activeConversation.id, vault=conversationPrefix, service=base;
-  const current=()=>base===service && conversationPrefix===vault;
-  option.disabled=true;
-  try {
-    notice("OpenAI 正在整理手册…",true);
-    const form=new FormData();form.append("file",file);
-    const job=await api("/api/manuals/import",{method:"POST",body:form,owner});
-    let lastPage=null;
-    while(current()){
-      const record=await api("/api/manuals/import/"+job.job_id,{owner});
-      if(!current())return;
-      if(record.status==="failed")throw Error(record.error);
-      if(record.status==="completed"){
-        const result=record.result;
-        const details=result.unreadable.map(row=>"p. "+row.page+" · "+row.title).join("\n");
-        const label=tr(result.already_saved?"这份手册已在项目知识库中。":"手册已入库，可在新对话中查询。");
-        notice([label,tr("已收录条目")+" "+result.entries,tr("可查值曲线")+" "+result.verified,
-                details?tr("以下曲线仅保存说明和页码：")+"\n"+details:""].filter(Boolean).join("\n"),true);
-        return;
-      }
-      if(record.status!=="processing")throw Error(tr("无法读取手册导入状态，请重新选择 PDF。"));
-      if(record.page && record.page!==lastPage){
-        lastPage=record.page;
-        notice(tr("正在自动取点并复核叠图")+" · PDF p. "+record.page,true);
+const manualJobs=new Map();
+const manualStages={
+  upload:[1,"上传 PDF"], queued:[1,"等待后台处理"], read:[1,"读取 PDF 并检查已有记录"],
+  extract:[2,"提取手册条目"], validate:[2,"校验条目字段和页码"], repair:[2,"根据校验错误重新提取条目"],
+  page:[3,"读取曲线图页"], locate:[3,"定位图例、坐标轴和刻度"], trace:[3,"标定坐标轴并提取曲线"],
+  part:[3,"核对料号来源页"], verify:[3,"复核曲线采样叠图"],
+  reuse:[4,"核对已入库的手册"], save:[4,"写入共享知识库"]
+};
+function manualKey(){return activeConversation && JSON.stringify([base,conversationPrefix,activeConversation.id]);}
+function manualStepText(step){
+  const stage=manualStages[step.stage];
+  return [stage?stage[0]+"/4":"",stage?tr(stage[1]):step.stage,step.page?"PDF p. "+step.page:"",step.detail].filter(Boolean).join(" · ");
+}
+function renderManualJob(){
+  const job=manualJobs.get(manualKey()), panel=$("manual-progress");
+  panel.hidden=!job;
+  $("chat-attachment-choice").querySelector('option[value="manual"]').disabled=job?.status==="processing";
+  if(!job)return;
+  $("manual-filename").textContent=job.filename || "";
+  const steps=job.steps || [];
+  const rows=steps.map(step=>{
+    const row=document.createElement("li");row.textContent=manualStepText(step);return row;
+  });
+  $("manual-steps").replaceChildren(...rows);
+  const last=rows.at(-1)?.textContent || "";
+  const status=job.status==="failed" ? [tr("手册导入失败"),last].filter(Boolean).join(" · ")
+    : job.status==="disconnected" ? tr("读取导入进度失败")
+    : job.status==="completed" ? tr("手册导入完成") : last || tr("正在读取导入进度");
+  if($("manual-status").textContent!==status)$("manual-status").textContent=status;
+  $("manual-reconnect").hidden=job.status!=="disconnected";
+  const result=job.result;
+  $("manual-outcome").textContent=result ? [
+    tr(result.already_saved?"这份手册已在项目知识库中。":"手册已入库，可在新对话中查询。"),
+    tr("已收录条目")+" "+result.entries+" · "+tr("可查值曲线")+" "+result.verified,
+    ...(result.unreadable.length?[tr("以下曲线仅保存说明和页码："),...result.unreadable.map(r=>"p. "+r.page+" · "+r.title)]:[])
+  ].join("\n") : tr(job.error || "");
+}
+async function watchManualJob(key,job){
+  if(job.watching || !job.id || job.status!=="processing")return;
+  job.watching=true;
+  try{
+    while(key===manualKey() && manualJobs.get(key)===job){
+      const record=await api("/api/manuals/import/"+job.id,{owner:job.owner});
+      if(!["processing","completed","failed"].includes(record.status))throw Error(tr("无法读取手册导入状态，请重新选择 PDF。"));
+      Object.assign(job,{error:""},record);
+      if(key!==manualKey() || manualJobs.get(key)!==job)return;
+      renderManualJob();
+      if(record.status!=="processing"){
+        notice(job.error || $("manual-outcome").textContent,record.status==="completed");return;
       }
       await new Promise(resolve=>setTimeout(resolve,1500));
     }
-  } catch(error){if(current())notice(error.message);}
-  finally{option.disabled=false;}
+  }catch(error){
+    job.status=error.status===404?"failed":"disconnected";job.error=error.message;
+    if(key===manualKey())renderManualJob();
+  }finally{job.watching=false;}
+}
+function restoreManualJob(){
+  const key=manualKey();
+  let job=manualJobs.get(key);
+  if(key && !job){
+    try{
+      const saved=sessionStorage.getItem("manual-job:"+key);
+      // Earlier versions stored just the job ID.
+      const token=saved?.startsWith("{") ? JSON.parse(saved) : {id:saved};
+      if(typeof token?.id==="string" && token.id){
+        job={id:token.id,filename:typeof token.filename==="string"?token.filename:"",owner:activeConversation.id,status:"processing"};
+        manualJobs.set(key,job);
+      }
+    }catch{/* storage may be unavailable or incomplete */}
+  }
+  if(job?.status==="disconnected")job.status="processing";
+  renderManualJob();
+  if(job){$("manual-progress").open=true;void watchManualJob(key,job);}
+}
+async function importManual(file){
+  if(!file || historyLocked() || !activeConversation)return;
+  if(file.size>8*1024*1024){notice("请选择不超过 8 MB 的 PDF。");return;}
+  const key=manualKey();
+  if(manualJobs.get(key)?.status==="processing")return;
+  const job={owner:activeConversation.id,filename:file.name,status:"processing",steps:[{stage:"upload"}]};
+  manualJobs.set(key,job);
+  try{sessionStorage.removeItem("manual-job:"+key);}catch{/* in-memory progress remains available */}
+  $("agent-progress").open=false;
+  $("manual-progress").open=true;
+  renderManualJob();
+  notice();
+  try{
+    const form=new FormData();form.append("file",file);
+    const reply=await api("/api/manuals/import",{method:"POST",body:form,owner:job.owner});
+    job.id=reply.job_id;
+    try{sessionStorage.setItem("manual-job:"+key,JSON.stringify({id:job.id,filename:job.filename}));}catch{/* optional reload recovery */}
+    await watchManualJob(key,job);
+  }catch(error){
+    Object.assign(job,{status:"failed",error:error.message});
+    if(key===manualKey()){renderManualJob();notice(error.message);}
+  }
 }
 function setupChatImages(){
+  $("manual-reconnect").onclick=restoreManualJob;
+  document.addEventListener("buck-language-change",renderManualJob);
   $("manual-file").onchange=event=>{
     const file=event.target.files[0];event.target.value="";void importManual(file);
   };

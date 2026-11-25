@@ -24,7 +24,7 @@ async function archiveCurrentCsv(file = null) {
     if (!file) {
       const stored = await window.BuckAttachments.load(scope, dataset.sha256, activeConversation.file_epoch || 0);
       if (stored && await csvDigest(stored.blob)===dataset.sha256) { state.csvFile = stored.blob; csvWarning(); return; }
-      file = await api(`/api/datasets/${dataset.dataset_id}/csv`, {asBlob:true});
+      file = await api(`/api/datasets/${dataset.dataset_id}/csv`, {asBlob:true,timeout:null});
     }
     state.csvFile = file;
     await window.BuckAttachments.save(scope, dataset.sha256, dataset.filename, file, activeConversation.file_epoch || 0);
@@ -304,6 +304,7 @@ async function openConversation(id, saveCurrent = true) {
   activeConversation=record; sessionId=record.id;
   $("chat-image-dialog").close();
   notice(); resetExperiment(); clearChat();
+  restoreManualJob();
   pendingAttachment=record.attachment;
   for (const field of experimentFields) $(field).value=record.fields?.[field] ?? experimentDefaults[field] ?? "";
   $("identification-plan-state").value=record.fields?.["identification-plan-state"] || "";

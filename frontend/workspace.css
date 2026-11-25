@@ -136,6 +136,8 @@ html[lang="en"] .result-actions { flex-wrap: wrap; }
 .compose-bottom { display: grid; grid-template-columns: auto minmax(120px,130px) minmax(0,1fr) minmax(0,auto) 33px; gap: 10px; padding: 5px 14px 13px; align-items:center; }
 .compose-bottom #reasoning-mode { min-width:0; width:auto; margin:0; font-size:11px; height:32px; }
 .harness-progress { align-self: stretch; min-width: 0; margin-inline: var(--chat-control-gutter); }
+#manual-progress { overflow-wrap: anywhere; }
+#manual-outcome { white-space: pre-line; }
 @container(max-width:600px){
   .compose-bottom { grid-template-columns:minmax(0,1fr) minmax(96px,110px) 33px; gap:6px; padding:5px 8px 10px; }
   .compose-bottom .chat-image-tools { gap:5px; min-width:0; }
