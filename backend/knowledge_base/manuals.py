@@ -33,11 +33,15 @@ def parse(rows, editions):
             xs, ys = zip(*points)
             if not all(math.isfinite(v) for pair in points for v in pair) or any(a >= b for a, b in zip(xs, xs[1:])):
                 raise ValueError(f"Invalid curve samples in {row['id']}")
+            if row.get("series_scope") == "part" and row.get("part_reference_json"):
+                ref = json.loads(row["part_reference_json"])
+                content += f"\n{ref['label']} → {ref['part_number']} (PDF p. {ref['page']})"
             curves[row['id']] = (xs, ys, x_name, x_unit, y_name, y_unit, row)
             content += (f"\n{x_name} [{x_unit}] → {y_name} [{y_unit}]. {row['value_source']}。"
                         f"{row['conditions']}\n{len(xs)} points, x = {xs[0]} … {xs[-1]}. "
                         'read_knowledge accepts x_value in the stated x unit. Sample pairs (x,y):\n'
-                        + ' '.join(f'({x:g},{y:g})' for x, y in points))
+                        + (' '.join(f'({x:g},{y:g})' for x, y in points) if len(points)<=81
+                           else 'Dense trace stored; use read_knowledge with x_value for an individual reading.'))
         edition = editions.get(row['manual_id'])
         references = [{'title': '厂家来源', 'url': row['url']}] if row['url'] else []
         if edition:
@@ -62,11 +66,44 @@ def lookup(key, value, curves=None):
               'x_quantity': xn, 'x_unit': xu, 'x': value, 'y_quantity': yn, 'y_unit': yu,
               'y': None, 'range': [xs[0], xs[-1]], 'value_source': row['value_source'],
               'conditions': row['conditions']}
+    calibration = json.loads(row["calibration_json"]) if row.get("digitization_version") in ("2", "3") and row.get("calibration_json") else {}
+    if row.get("series_scope") == "part" and row.get("part_reference_json"):
+        result["part_reference"] = json.loads(row["part_reference_json"])
+    if calibration:
+        if calibration.get("ink_check"):
+            result.update(method=calibration["method"], ink_check=calibration["ink_check"], axis_error_px=calibration.get("axis_error_px"), stroke=calibration.get("stroke"))
+        result["tick_pixels"] = {
+            axis: [[round(pos * (size - 1), 2), mark] for pos, mark in calibration["ticks"][axis]]
+            for axis, size in zip(("x", "y"), calibration["image_size"])
+        }
+        result.update(ticks=calibration["ticks"], x_scale=calibration["x_scale"], y_scale=calibration["y_scale"],
+                      identity=calibration["identity"], image_size=calibration["image_size"])
     if value < xs[0] or value > xs[-1]:
         return {**result, 'status': 'outside_sampled_range'}
     i = bisect_left(xs, value)
+    if calibration.get("method") == "pixel_trace":
+        # Match the nearest column in image coordinates, including on logarithmic x axes.
+        transform = math.log if calibration["x_scale"] == "log" else float
+        marks = calibration["ticks"]["x"]
+        (p0, v0), (p1, v1) = marks[0], marks[-1]
+        fraction = (transform(value) - transform(v0)) / (transform(v1) - transform(v0))
+        w, h = calibration["image_size"]
+        column = math.floor((p0 + fraction * (p1 - p0)) * (w - 1) + 0.5 + 1e-9)
+        first = round(calibration["positions"][0][0] * (w - 1))
+        i = max(0, min(column - first, len(xs) - 1))
+        x, y = calibration["positions"][i]
+        return {**result, 'status':'pixel_column', 'y':float(format(ys[i],'.3g')), 'sample_x':xs[i],
+                'pixel_center':[round(x*(w-1)),round(y*(h-1),2)]}
     if xs[i] == value:
-        return {**result, 'status': 'sample', 'y': ys[i]}
+        y = float(format(ys[i], '.3g')) if calibration.get('ink_check') else ys[i]
+        return {**result, 'status': 'sample', 'y': y}
+    if calibration.get("method") == "vector":
+        coord = math.log if calibration["x_scale"]=="log" else float
+        t=(coord(value)-coord(xs[i-1]))/(coord(xs[i])-coord(xs[i-1]))
+        a,b=ys[i-1],ys[i]
+        y=math.exp((1-t)*math.log(a)+t*math.log(b)) if calibration["y_scale"]=="log" else (1-t)*a+t*b
+        return {**result,"status":"axis_interpolation","y":float(format(y,".3g")),
+                "neighboring_points":[[xs[i-1],a],[xs[i],b]]}
     if row['manual_id'] == '08' and row['locator'] == '3' and xn == 'DC bias current':
         fraction = (value - xs[i-1]) / (xs[i] - xs[i-1])
         return {**result, 'status': 'linear_interpolation', 'y': round(ys[i-1] + fraction * (ys[i] - ys[i-1]), 2),

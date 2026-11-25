@@ -367,7 +367,7 @@ window.BuckI18n = (() => {
     "以下曲线仅保存说明和页码：": "Only descriptions and page numbers were saved for:",
     "手册已入库，可在新对话中查询。": "Manual saved. It is available in new conversations.",
     "这份手册已在项目知识库中。": "This manual is already in the project knowledge base.",
-    "手册处理响应不完整，请重新上传 PDF 重试。": "The model response was incomplete. Upload the PDF again to retry.",
+    "OpenAI 返回的识别结果不完整，请重试。": "OpenAI returned an incomplete recognition result. Please retry.",
     "模型未返回有效手册条目。": "The model did not return valid manual entries.",
     "请在后端配置 OPENAI_RELAY_TOKEN 并启动本机连接器，或配置 OPENAI_API_KEY 使用直连。": "Configure OPENAI_RELAY_TOKEN on the server and start the local connector, or set OPENAI_API_KEY for a direct connection.",
     "无法连接 OpenAI 或请求超时。": "Could not reach OpenAI or the request timed out.",
@@ -379,8 +379,8 @@ window.BuckI18n = (() => {
     "无法确认 PDF 的实际页数。": "Could not determine the PDF page count.",
     "提取结果引用了原件范围以外的页码。": "An extracted page number is outside the PDF.",
     "无法读取手册导入状态，请重新选择 PDF。": "Could not read the import status. Select the PDF again.",
-    "模型返回的曲线定位结果不完整，请重新上传 PDF 重试。": "The curve location response was incomplete. Upload the PDF again to retry.",
-    "模型返回的叠图复核结果不完整，请重新上传 PDF 重试。": "The overlay review was incomplete. Upload the PDF again to retry.",
+    "模型返回的曲线定位结果不完整，请重试。": "The curve location response was incomplete. Please retry.",
+    "模型返回的叠图复核结果不完整，请重试。": "The overlay review was incomplete. Please retry.",
     "添加 PDF": "Add PDF",
     "移除 PDF": "Remove PDF",
     "展开查看附件": "Expand to view attachments",
@@ -696,7 +696,7 @@ window.BuckI18n = (() => {
     "已连接，但浏览器禁止保存设置；关闭页面后需要重新输入访问口令。": "Connected, but browser storage is blocked. You will need to enter the access code again after closing this page.",
     "连接未成功，请检查页面提示。": "Connection failed. Check the message on the page.",
     "读取波形统计": "Read waveform statistics", "读取辨识结果": "Read identification results", "启动物理辨识": "Start identification",
-    "检索专业资料": "Search engineering references", "浏览知识目录": "Browse knowledge catalogue", "读取知识全文": "Read knowledge documents", "已启动": "Started", "已执行": "Executed",
+    "检索专业资料": "Search engineering references", "浏览知识目录": "Browse knowledge catalogue", "读取知识全文": "Read knowledge documents", "读取图片曲线": "Read image curve", "已启动": "Started", "已执行": "Executed",
     "访问口令不正确，请在连接设置中输入后端 APP_ACCESS_TOKEN。": "Incorrect access code. Enter the backend APP_ACCESS_TOKEN in Connection settings.",
     "请先点击左侧“进入参数辨识”，确认基本信息后再执行辨识。": "Click Open identification on the left and confirm the basic settings before starting identification.",
     "未提供真值，不能计算参数真实误差；波形误差不等于参数误差。": "No ground truth was provided. True parameter errors cannot be calculated; waveform errors are not parameter errors.",
@@ -792,7 +792,7 @@ window.BuckI18n = (() => {
     "历史对话已恢复；CSV 尚未恢复，请重试同步或重新上传原文件。":"Conversation restored; the CSV has not been restored yet. Retry sync or upload the original file again."
   });
   const patterns = [
-    [/^OpenAI HTTP (\d{3})：请检查调用端的 OpenAI 密钥、模型权限、额度及 PDF 大小。$/, "OpenAI HTTP $1. Check the OpenAI key where the request is sent, model access, quota and PDF size."],
+    [/^OpenAI HTTP (\d{3})：请检查调用端的 OpenAI 密钥、模型权限、额度及附件大小。$/, "OpenAI HTTP $1. Check the OpenAI key where the request is sent, model access, quota and attachment size."],
     [/^([^:]+): Value error, (.+)$/, (_, field, message) => `${field}: ${translate(message)}`],
     [/^目标 CSV 不包含指定的 (time|current|voltage|pwm) 列，请明确列映射后重试。$/, "The selected CSV does not contain the specified $1 column. Check the column mapping and try again."],
     [/^请求超时（([\d.]+) 秒）：(.+)$/, "Request timed out after $1 s: $2"],

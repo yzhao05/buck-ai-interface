@@ -4,7 +4,7 @@ import os
 import re
 from copy import deepcopy
 from .agent_policy import Budget, evidence
-from . import openai_relay
+from . import openai_relay, manual_import
 from . import harness_runtime
 from .local_csv import TOOL as LOCAL_CSV_TOOL
 from .diagnosis_notebook import Notebook, TOOLS as DIAGNOSIS_TOOLS
@@ -182,6 +182,8 @@ async def _answer(request, invoke, *, local_files=False):
     task_tools = [*TOOLS, READ_RESULT_TOOL, *HISTORY_TOOLS, *PLECS_TOOLS, *DIAGNOSIS_TOOLS]
     from .simulation_analysis import TOOL as EVALUATE_TOOL
     task_tools.append(EVALUATE_TOOL)
+    if request.chat_model == "gpt-6.1-terra" and request.images and not result_scoped:
+        task_tools.append(manual_import.ATTACHMENT_CURVE_TOOL)
     if request.ui_context and not result_scoped:
         task_tools.extend([CONFIG_TOOL, PLAN_TOOL, CANCEL_TOOL])
         if request.ui_context.plecs_ports is not None:
@@ -290,6 +292,10 @@ async def _answer(request, invoke, *, local_files=False):
     if 'search_local_csv' in allowed_tools:
         messages[0]['content'] += '\n本地文件搜索由你规划。search_local_csv 支持浏览、关键词和分页；文件名只是候选证据，结合用户指令、相对路径和上下文判断。零命中可换词或浏览，不要据一次查询断定文件不存在。用户要求加载且能确定文件时，用本次搜索返回的 ID 提交导入，不必要求手动上传。证据不足时询问；仅加载不启动辨识。界面确认前只能说明已提交。'
         messages[0]['content'] += '\n历史里的前端报错只说明当时页面没有应用操作，不能作为文件已移动、空文件或权限不足的证据。用户再次要求加载时，把它当成本次授权，重新搜索并用本轮候选提交；即使 ID 与上次相同也有效。配置工具会在提交前实际读取本地 CSV；只有本轮工具报错才能据此解释读取失败。'
+    if "read_image_curve" in allowed_tools:
+        messages[0]["content"] += ("\nFor numerical readings from a plotted curve in the current attachment, call read_image_curve. "
+                                  "Use its pixel evidence and printed ticks. Report unreadable and outside_sampled_range explicitly. "
+                                  "Never fill missing image readings from memory or the knowledge base.")
     plecs_catalog_read = False
     plecs_catalog = {}
     experiment_reports = []
@@ -305,7 +311,7 @@ async def _answer(request, invoke, *, local_files=False):
             if not isinstance(arguments,dict):
                 raise ValueError('Tool arguments must be an object')
             if ui_action is not None and name not in {
-                'search_knowledge','list_knowledge','read_knowledge','search_conversation','read_conversation_message',
+                'search_knowledge','list_knowledge','read_knowledge','read_image_curve','search_conversation','read_conversation_message',
                 'get_experiment_history','read_experiment_results','get_analysis_history','read_diagnosis',
                 'check_plecs_connection','search_plecs_models',
             }:
@@ -343,6 +349,8 @@ async def _answer(request, invoke, *, local_files=False):
                 output = notebook.update(arguments)
             elif name in {'search_conversation','read_conversation_message'}:
                 output = conversation.invoke(name, arguments)
+            elif name == 'read_image_curve':
+                output = await manual_import.read_image_curve(request.images, **arguments)
             elif name == 'list_knowledge':
                 if set(arguments) - {'category', 'offset', 'limit', 'manual_id'}:
                     raise ValueError('Unknown knowledge catalogue arguments')

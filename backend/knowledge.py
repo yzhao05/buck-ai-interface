@@ -138,7 +138,7 @@ BROWSE_TOOLS = [
         'parameters': {'type': 'object', 'properties': {
             'ids': {'type': 'array', 'items': {'type': 'string', 'minLength': 1}, 'minItems': 1, 'maxItems': 8},
             'dc_current_A': {'type': 'number', 'description': 'TDK 470M 原有直流偏置查值，输入单位 A。'},
-            'x_value': {'type': 'number', 'description': '单个厂家曲线的横轴数值，单位见条目。返回采样值、相邻点或越界状态。'}},
+            'x_value': {'type': 'number', 'description': '单个厂家曲线的横轴数值，单位见条目。根据曲线来源返回像素列读数、采样点、插值、相邻点或越界状态；引用曲线页及返回的料号证据页。'}},
             'required': ['ids'], 'additionalProperties': False}}},
 ]
 
